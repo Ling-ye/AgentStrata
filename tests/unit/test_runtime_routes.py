@@ -8,7 +8,6 @@ import pytest
 from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.model import ModelSpec
 from chatcopilot.contracts.model_runtime import (
-    ApiKeyAuthRef,
     ChatGPTAuthRef,
     ModelToolCall,
     ResolvedModelRoute,
@@ -25,10 +24,10 @@ from chatcopilot.core.model_routes import resolve_model_config
 from chatcopilot.core.responses_client import responses_chat
 
 
-def test_subscription_selection_ignores_api_key_and_stays_nonsecret():
+def test_subscription_selection_ignores_api_key_and_stays_nonsecret(model_settings):
     config = resolve_model_config(
-        ModelSpec(provider="openai", model="test-model", auth=ChatGPTAuthRef()),
-        fallback=LLMConfig(api_key="do-not-use"),
+        ModelSpec(binding="bot.lingye-copilot-qq.chat"),
+        fallback=LLMConfig(model="gpt-4o-mini", api_key="do-not-use"),
         prefix="MODEL",
         environment={"MODEL_API_KEY": "other-secret"},
     )
@@ -43,10 +42,14 @@ def test_subscription_selection_ignores_api_key_and_stays_nonsecret():
         )
 
 
-def test_key_mode_uses_explicit_environment_reference():
+def test_key_mode_uses_explicit_environment_reference(model_settings):
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    data["connections"]["responses"]["auth"]["key_env"] = "TEST_KEY"
+    write_models(model_settings, data)
     config = resolve_model_config(
-        ModelSpec(provider="openai", auth=ApiKeyAuthRef("TEST_KEY")),
-        fallback=LLMConfig(),
+        ModelSpec(binding="responses-main"),
+        fallback=LLMConfig(model="gpt-4o-mini", ),
         prefix="TEST",
         environment={"TEST_KEY": "private-value"},
     )
@@ -121,7 +124,7 @@ def test_codex_does_not_create_a_host_main_model_client_at_assembly(monkeypatch)
     )
     monkeypatch.setattr(
         runtime_module,
-        "LLMClient",
+        "create_model_client",
         lambda _config: pytest.fail("Codex assembly constructed a host main-model client"),
     )
     runtime = build_agent_runtime(
@@ -177,7 +180,7 @@ def test_responses_returns_calls_only_after_terminal_response(monkeypatch):
         "chatcopilot.core.responses_client.requests.post",
         lambda *a, **kw: (sent.append(kw), response)[1],
     )
-    config = LLMConfig(provider="openai", api="openai_responses", api_key="secret")
+    config = LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="secret")
     result = responses_chat(config, [{"role": "user", "content": "read"}], [])
     assert result.tool_calls[0]["id"] == "c1"
     assert json.loads(result.tool_calls[0]["function"]["arguments"]) == {"path": "a"}
@@ -195,7 +198,7 @@ def test_stream_disconnection_is_not_replayed(monkeypatch):
         )[1],
     )
     with pytest.raises(RuntimeError, match="not replayed"):
-        responses_chat(LLMConfig(provider="openai", api="openai_responses", api_key="key"), [], [])
+        responses_chat(LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="key"), [], [])
     assert len(calls) == 1
 
 
@@ -228,7 +231,7 @@ def test_duplicate_response_tool_call_ids_fail_before_tool_execution(monkeypatch
     )
     with pytest.raises(ValueError, match="duplicate tool call"):
         responses_chat(
-            LLMConfig(provider="openai", api="openai_responses", api_key="fixture"), [], []
+            LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="fixture"), [], []
         )
 
 
@@ -308,7 +311,7 @@ def test_native_responses_loop_executes_tools_and_keeps_continuation_private(mon
     )
     session = AgentSession(
         session_id="native",
-        llm=LLMClient(LLMConfig(provider="openai", api="openai_responses", api_key="private-key")),
+        llm=LLMClient(LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="private-key")),
         executor=ToolExecutor(tools=[tool], caller_role_hint="user"),
         tools_schema=[build_openai_schema(tool)],
         prompt_plan=prompt_plan("host"),

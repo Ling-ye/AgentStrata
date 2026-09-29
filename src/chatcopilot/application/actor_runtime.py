@@ -642,14 +642,14 @@ class ActorTurnExecutor:
                         command_result = AgentResult(final_text="模型选择仅限 Owner。", stop_reason="end_turn")
                     else:
                         base = self.factory.agent_runtime.runtime_config.llm.model_route()
-                        profiles = self.factory.runtime.spec.llm.chat.profiles
+                        profiles = self.factory.agent_runtime.runtime_config.model_profiles
                         selection = state.one_shot_model_selection or state.model_selection or ModelSelection(base)
                         if len(parts) == 2 and parts[1] == "default":
                             state = self.factory._store_actor(replace(state, model_selection=None, one_shot_model_selection=None))
                             selection = ModelSelection(base)
                         elif len(parts) in {2, 3} and parts[1] in profiles and (len(parts) == 2 or parts[2] == "once"):
                             profile = profiles[parts[1]]
-                            selection = ModelSelection(replace(base, model=profile.model, reasoning_effort=profile.reasoning_effort),
+                            selection = ModelSelection(replace(base, model=profile.model, reasoning_effort=profile.reasoning_effort or None),
                                 scope="once" if len(parts) == 3 else "session", source="profile", profile=parts[1])
                             state = self.factory._store_actor(replace(state, **{
                                 "one_shot_model_selection" if selection.scope == "once" else "model_selection": selection}))

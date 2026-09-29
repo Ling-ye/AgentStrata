@@ -288,3 +288,5 @@ def test_persona_draft_failure_preserves_old_hash_and_cannot_pass(
     assert receipt["next_turn_prompt_persona_layer_count"] == 0
     assert receipt["next_turn_prompt_contains_marker"] is False
     assert list(workspace.iterdir()) == []
+
+pytestmark = pytest.mark.usefixtures("api_model_settings")

@@ -467,6 +467,7 @@ async def _run_owned_roundtrip(
             }
         )
 
+        turn_env["AGENTSTRATA_LLM_CONFIG"] = os.environ["AGENTSTRATA_LLM_CONFIG"]
         with patch.dict(os.environ, turn_env, clear=True):
             _write_message_attestation(
                 inputs,
@@ -480,6 +481,7 @@ async def _run_owned_roundtrip(
             client = _CapturingClient()
             host = AcpChatAgent(runtime=runtime)
             host._agent_runtime = deterministic_runtime
+            host._chat_config = deterministic_runtime.runtime_config
             host.on_connect(client)
             created = await host.new_session(cwd=str(inputs.shared_workspace))
             session_id = str(created.session_id)
@@ -1176,6 +1178,21 @@ async def _run_persona_roundtrip(
     )
 
 
+
+def _synthetic_models(runtime):
+    bindings = {runtime.spec.llm.chat.binding: "fixture", runtime.spec.llm.research.binding: "fixture",
+                runtime.spec.llm.code.binding: "worker"}
+    budgets = (runtime.subagents.defaults, runtime.subagents.search_budget, runtime.subagents.research_budget,
+               *runtime.subagents.agents.values(), *(item.budget for item in runtime.subagents.custom))
+    bindings.update({budget.model_binding: "fixture" for budget in budgets if budget.model_binding})
+    models = {"connections": {
+        "fixture": {"kind": "openai_responses", "auth": {"mode": "api_key", "key_env": "SYNTHETIC_MODEL_KEY"}},
+        "worker": {"kind": "codex", "auth": {"mode": "chatgpt", "profile": "worker"}}},
+        "profiles": {"fixture": {"connection": "fixture", "model": "qq-flow-controlled"},
+                     "worker": {"connection": "worker", "model": "qq-flow-controlled"}},
+        "bindings": bindings}
+    return models
+
 def run_qq_flow_scenario(
     case: EvalCaseDefinition,
     *,
@@ -1191,7 +1208,8 @@ def run_qq_flow_scenario(
         private_root = Path(raw_root)
         private_root.chmod(0o700)
         inputs = _synthetic_inputs(runtime, private_root)
-        with patch.dict(os.environ, dict(inputs.env), clear=True):
+        from chatcopilot.core.model_settings import frozen_settings
+        with patch.dict(os.environ, dict(inputs.env), clear=True), frozen_settings(_synthetic_models(runtime)):
             if case.case_id == "qq-synthetic-roundtrip":
                 return asyncio.run(_run_owned_roundtrip(runtime, inputs))
             if case.case_id == "qq-attestation-mismatch-denied":

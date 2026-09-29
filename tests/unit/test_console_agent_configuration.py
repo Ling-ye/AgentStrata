@@ -18,56 +18,65 @@ def bot(tmp_path, runtime_id="codex", **agents):
     (tmp_path / "identity.md").write_text("Fixture identity")
     data = {"id": "fixture", "display_name": "Fixture", "prompts": {"schema_version": 2, "identity": "identity.md", "response_style": "identity.md"},
             "gateway": {}, "channels": {"qq": {"type": "qq_personal", "provider": "onebot_v11"}},
-            "llm": {"chat": {"env_prefix": "CHATCOPILOT_FIXTURE"}, "research": {"env_prefix": "CHATCOPILOT_FIXTURE_RESEARCH", "model": "research-default"},
-                    "code": {"enabled": True, "model": "codex-default", "reasoning_effort": "medium",
-                             "profiles": {"worker": {"model": "worker-default", "reasoning_effort": "high"}}, "code_task_profile": "worker"}},
+            "llm": {"chat": {"env_prefix": "CHATCOPILOT_FIXTURE", "binding": "chat"},
+                    "research": {"binding": "research"}, "code": {"enabled": True, "binding": "code"}},
             "agents": {"runtime": runtime_id, **agents}}
     path = tmp_path / "bot.yaml"
     path.write_text(yaml.safe_dump(data))
+    from tests.model_settings_fixture import test_model_document, write_models
+    write_models(tmp_path / "models.json", test_model_document())
     return path
 
 
 def projected(path, values):
-    data = expected_configuration(path, values, home=path.parent)
+    data = expected_configuration(path, {"AGENTSTRATA_LLM_CONFIG": str(path.parent / "models.json"), **values}, home=path.parent)
     return {item["id"]: item for item in data["entities"]}
 
 
 @pytest.mark.parametrize("backend,model", [("codex", "chat-fixture"), ("native", "chat-fixture"), ("langgraph", "chat-fixture")])
 def test_instance_models_match_backend_and_full_environment_overrides(tmp_path, monkeypatch, backend, model):
     path = bot(tmp_path, backend)
-    monkeypatch.setenv("CHATCOPILOT_FIXTURE_MODEL", "unrelated-console-model")
+    settings = path.parent / "models.json"
+    data = json.loads(settings.read_text())
+    data["connections"]["api"].update(kind="openai_responses", base_url="https://api.openai.com/v1", timeout=41)
+    data["connections"]["research"] = {"kind": "openai_compatible", "base_url": "https://example.invalid/v1", "timeout": 17,
+        "auth": {"mode": "api_key", "key_env": "FIXTURE_KEY"}}
+    data["profiles"]["chat"]["model"] = "chat-fixture"
+    data["profiles"]["research"] = {"connection": "research", "model": "research-override"}
+    data["profiles"]["changed"] = {"connection": "worker", "model": "worker-override", "reasoning_effort": "medium"}
+    data["bindings"]["code"] = "changed"
+    settings.write_text(json.dumps(data))
     before = dict(os.environ)
-    values = {"CHATCOPILOT_FIXTURE_MODEL": "chat-fixture", "CHATCOPILOT_FIXTURE_BASE_URL": "https://example.invalid/v1", "CHATCOPILOT_FIXTURE_API_KEY": "fixture-key",
-              "CHATCOPILOT_FIXTURE_TIMEOUT": "41", "CHATCOPILOT_FIXTURE_RESEARCH_MODEL": "research-override", "CHATCOPILOT_FIXTURE_RESEARCH_TIMEOUT": "17",
-              "CHATCOPILOT_FIXTURE_CODE_MODEL": "codex-override", "CHATCOPILOT_FIXTURE_CODE_REASONING_EFFORT": "high",
-              "CHATCOPILOT_FIXTURE_CODE_PROFILES_JSON": json.dumps({"changed": {"model": "worker-override", "reasoning_effort": "medium"}}),
-              "CHATCOPILOT_FIXTURE_CODE_TASK_PROFILE": "changed"}
-    rows = projected(path, values)
+    rows = projected(path, {"FIXTURE_KEY": "fixture-key"})
     assert rows["agent:main"]["effective_config"]["model"] == model
     research = rows["model-slot:research"]["effective_config"]
     assert {key: research[key] for key in ("base_url", "model", "timeout")} == {
         "base_url": "https://example.invalid/v1", "model": "research-override", "timeout": 17}
     assert "api_key" not in research and "fixture-key" not in json.dumps(research)
-    assert rows["model-slot:research"]["field_sources"]["base_url"] == "继承基础模型 · chat"
-    assert "CHATCOPILOT_FIXTURE_RESEARCH_MODEL" in rows["model-slot:research"]["field_sources"]["model"]
-    code = rows["model-slot:code"]["effective_config"]
-    assert set(code["profiles"]) == {"changed"}
-    assert code["code_task_profile"] == "changed"
+    assert rows["model-slot:research"]["field_sources"]["model"] == "统一模型配置"
+    assert rows["model-slot:code"]["effective_config"]["code_task_profile"] == "changed"
     assert rows["agent:code-task"]["effective_config"]["model"] == "worker-override"
     assert rows["agent:code-task"]["configured"] is False
     assert dict(os.environ) == before
-    assert projected(path, {"CHATCOPILOT_FIXTURE_MODEL": "second-model"})["model-slot:chat"]["effective_config"]["model"] == "second-model"
+    data["profiles"]["chat"]["model"] = "second-model"
+    settings.write_text(json.dumps(data))
+    assert projected(path, {})["model-slot:chat"]["effective_config"]["model"] == "second-model"
 
 
 def test_inspection_definitions_and_budgets_match_runtime_resolver(tmp_path, monkeypatch):
     path = bot(tmp_path, presets=["mcp_query"], defaults={"max_tool_calls": 11, "timeout_seconds": 150},
         mcp_query={"timeout_seconds": 42, "context_policy": {"max_context_tokens": 2400}},
         custom=[{"name": "custom_reader", "tool_name": "read_custom", "summary": "Read fixture", "prompt": {"role": "identity.md"},
-                 "selector": {"any": [{"names": ["read_file"]}]}, "budget": {"model_env_prefix": "CHATCOPILOT_ALT", "max_tool_calls": 2}}])
+                 "selector": {"any": [{"names": ["read_file"]}]}, "budget": {"model_binding": "CHATCOPILOT_ALT", "max_tool_calls": 2}}])
     def forbid(*args, **kwargs):
         pytest.fail("inspection must not construct an LLM client")
     monkeypatch.setattr("chatcopilot.core.llm_client.LLMClient.__init__", forbid)
-    rows = projected(path, {"CHATCOPILOT_FIXTURE_MODEL": "chat-fixture", "CHATCOPILOT_ALT_MODEL": "custom-model"})
+    settings = path.parent / "models.json"
+    data = json.loads(settings.read_text())
+    data["profiles"]["custom"] = {"connection": "api", "model": "custom-model"}
+    data["bindings"]["CHATCOPILOT_ALT"] = "custom"
+    settings.write_text(json.dumps(data))
+    rows = projected(path, {})
     spec = load_botspec(path)
     for definition, budget in iter_definitions(spec.agents):
         row = rows["subagent:" + definition.name]
@@ -99,7 +108,7 @@ def test_defaults_disabled_providers_and_fixed_policy_remain_visible(tmp_path):
 def test_presentation_metadata_does_not_change_declaration_fingerprints(tmp_path):
     path = bot(tmp_path)
     spec = load_botspec(path)
-    values = {"CHATCOPILOT_FIXTURE_MODEL": "fixture-model"}
+    values = {"AGENTSTRATA_LLM_CONFIG": str(path.parent / "models.json")}
     original = configuration_projection(spec, environment=values)
     enriched = copy.deepcopy(original)
     enrich_agent_configuration(enriched, spec, values)
@@ -110,27 +119,29 @@ def test_presentation_metadata_does_not_change_declaration_fingerprints(tmp_path
 
 def test_core_loader_has_explicit_environment_and_config_search_context(tmp_path, monkeypatch):
     config = tmp_path / "config.yaml"
-    config.write_text("llm:\n  model: file-model\nruntime:\n  max_context_tokens: 1234\n")
+    config.write_text("runtime:\n  max_context_tokens: 1234\n")
     monkeypatch.setenv("CHATCOPILOT_FIXTURE_MODEL", "console-model")
     sources = {}
     loaded = load_config(env_prefix="CHATCOPILOT_FIXTURE", environment={}, default_paths=(config,), sources=sources)
-    assert loaded.llm.model == "file-model"
+    assert loaded.llm.model == "gpt-4o-mini"
     assert loaded.runtime.max_context_tokens == 1234
-    assert "配置文件" in sources["llm.model"]
-    loaded = load_config(env_prefix="CHATCOPILOT_FIXTURE", environment={"CHATCOPILOT_FIXTURE_MODEL": "instance-model"}, default_paths=())
-    assert loaded.llm.model == "instance-model"
-    assert loaded.runtime.max_context_tokens == 16000
-    loaded = load_config(env_prefix="CHATCOPILOT_FIXTURE", environment={"CHATCOPILOT_FIXTURE_CONFIG": "config.yaml"},
-                         default_paths=(), working_directory=tmp_path)
-    assert loaded.llm.model == "file-model"
+    with pytest.raises(ValueError, match="旧模型"):
+        load_config(env_prefix="CHATCOPILOT_FIXTURE", environment={"CHATCOPILOT_FIXTURE_MODEL": "instance-model"})
+    config.write_text("llm:\n  model: retired\n")
+    with pytest.raises(ValueError, match="旧模型"):
+        load_config(config, environment={})
 
 
 def test_unexported_model_override_is_explained_without_changing_deployment_rules(tmp_path):
-    path = bot(tmp_path, presets=["mcp_query"], mcp_query={"model_env_prefix": "NONEXPORTED"})
-    rows = projected(path, {"CHATCOPILOT_FIXTURE_MODEL": "base-model", "NONEXPORTED_MODEL": "saved-only"})
-    custom = rows["subagent:mcp_query"]
+    path = bot(tmp_path, presets=["mcp_query"], mcp_query={"model_binding": "custom"})
+    settings = path.parent / "models.json"
+    data = json.loads(settings.read_text())
+    data["profiles"]["custom"] = {"connection": "api", "model": "saved-only"}
+    data["bindings"]["custom"] = "custom"
+    settings.write_text(json.dumps(data))
+    custom = projected(path, {})["subagent:mcp_query"]
     assert custom["effective_config"]["model"] == "saved-only"
-    assert "NONEXPORTED_MODEL" in custom["field_sources"]["model"]
+    assert custom["field_sources"]["model"] == "统一模型配置"
 
 
 def test_search_provider_ids_do_not_collide_with_search_controls(tmp_path):

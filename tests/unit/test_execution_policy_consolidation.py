@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 import json
 from pathlib import Path
 import shlex
@@ -228,11 +230,11 @@ def test_readonly_resource_projection_uses_one_instance_environment(tmp_path, mo
 
     runtime = _runtime()
     runtime.tool_packs = ("filesystem.windows.read",)
-    first = project_agent_runtime(runtime, chat_config=ChatConfig(), environment={
+    first = project_agent_runtime(runtime, chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), environment={
         "CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS": str(tmp_path),
     })
     monkeypatch.setenv("CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS", str(tmp_path / "later"))
-    second = project_agent_runtime(runtime, chat_config=ChatConfig(), environment={})
+    second = project_agent_runtime(runtime, chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), environment={})
     assert first.readonly_roots == (tmp_path,)
     assert second.readonly_roots == ()
     assert not first.project_roots
@@ -247,7 +249,7 @@ def test_subagent_stops_at_declared_model_budget_without_hidden_extension():
 
     tool = _make_tool()
     llm = _FakeLLM([ChatResult(tool_calls=[_tool_call(tool.name, {"value": str(i)})]) for i in range(6)])
-    runner = SubagentRunner(main_llm=llm, main_config=ChatConfig(), tools=(tool,))
+    runner = SubagentRunner(main_llm=llm, main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), tools=(tool,))
     result = runner.run(session_id="budget", subagent_name="helper", task=TaskPack(objective="inspect"),
                         role_prompt="inspect", allow_tool=lambda _: True, caller_role="owner",
                         config=SubagentRuntimeConfig(None, 2, 10, 30, 6000))

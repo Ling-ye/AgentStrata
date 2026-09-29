@@ -1,5 +1,7 @@
 """Pinned checker parity, fail-closed data and no-Agent model execution."""
 
+from chatcopilot.core.config import LLMConfig
+
 from types import SimpleNamespace
 import json
 
@@ -89,7 +91,7 @@ def test_direct_call_uses_neither_agent_nor_bot_persona_and_closes_client(monkey
     )
     with capture():
         result = _execute_trial(
-            case, chat_config=SimpleNamespace(llm=SimpleNamespace(model="fixture-model"))
+            case, chat_config=SimpleNamespace(llm=LLMConfig(model="fixture-model"))
         )
     assert requests[0]["tools"] is None and len(requests) == 1 and closed == [True]
     assert requests[0]["messages"][-1] == {"role": "user", "content": case.input}

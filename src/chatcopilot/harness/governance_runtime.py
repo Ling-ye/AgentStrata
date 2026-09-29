@@ -7,9 +7,10 @@ class GovernanceTasks:
     def __init__(self, controller):
         self.controller = controller
 
-    def preflight_model(self, model, reasoning_effort):
+    def preflight_model(self, model, reasoning_effort, *, model_settings=None, model_profile=""):
         from chatcopilot.harness.codex_adapter import preflight_worker_model
-        preflight_worker_model(self.controller.settings, self.controller.repository, model, reasoning_effort)
+        preflight_worker_model(self.controller.settings, self.controller.repository, model, reasoning_effort,
+                               model_settings=model_settings, model_profile=model_profile)
 
     def start(self, run, sequence, options):
         return self.controller._start_code_health_task(options,

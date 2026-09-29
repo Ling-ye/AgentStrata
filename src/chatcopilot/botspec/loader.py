@@ -4,7 +4,6 @@ from __future__ import annotations
 import ipaddress
 import re
 import stat
-from dataclasses import fields
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -18,10 +17,6 @@ from chatcopilot.contracts.subagents import (
     SearchProviderSpec,
     ToolMatchRule,
     ToolSelectorSpec,
-)
-from chatcopilot.contracts.model_selection import (
-    CODEX_REASONING_EFFORTS,
-    WorkerModelProfile,
 )
 from chatcopilot.botspec.model import (
     BotSpec,
@@ -74,7 +69,6 @@ _QQ_CHANNEL_FIELDS = frozenset(
     }
 )
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
-_CODE_MODEL_PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _SEARCH_PROVIDER_ID_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 _SEARCH_PROVIDER_KINDS = frozenset({"tavily", "brave", "searxng"})
 _SEARCH_PROVIDER_FIELDS = frozenset(
@@ -97,7 +91,7 @@ _SEARCH_PROVIDER_OFFICIAL_ENDPOINTS = {
     "brave": "https://api.search.brave.com/res/v1/web/search",
 }
 _SUBAGENT_BUDGET_FIELDS = {
-    "model_env_prefix",
+    "model_binding",
     "max_model_turns",
     "max_tool_calls",
     "timeout_seconds",
@@ -222,7 +216,7 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
                 "prompts.response_style",
             )
         )
-    _validate_llm_spec(spec, issues)
+    issues.extend(validate_model_bindings(spec))
 
     _check_prompt_file(spec, spec.prompts.identity, "prompts.identity", issues)
     _check_prompt_file(spec, spec.prompts.response_style, "prompts.response_style", issues)
@@ -485,112 +479,27 @@ def _validate_gateway_channels(
         )
 
 
-def _parse_model_spec(raw: dict):
+def _parse_model_spec(raw: dict, default_binding: str = "chat"):
     from chatcopilot.botspec.model import ModelSpec
-    from chatcopilot.contracts.model_runtime import parse_auth
-    auth = parse_auth(_mapping(raw["auth"], "model.auth")) if "auth" in raw else None
-    return ModelSpec(inherit_env_prefix=_optional_str(raw.get("inherit_env_prefix")),
-                     provider=_optional_str(raw.get("provider")), model=_optional_str(raw.get("model")),
-                     api=_optional_str(raw.get("api")), base_url=_optional_str(raw.get("base_url")),
-                     auth=auth, reasoning_effort=_optional_str(raw.get("reasoning_effort")),
-                     timeout=_strict_positive_int(raw["timeout"], "model.timeout", 120) if "timeout" in raw else None,
-                     profiles=_parse_code_model_profiles(raw.get("profiles", {})))
+    return ModelSpec(binding=str(raw.get("binding") or default_binding))
 
 
-def _validate_llm_spec(spec: BotSpec, issues: list[ValidationIssue]) -> None:
+def validate_model_bindings(spec: BotSpec) -> tuple[ValidationIssue, ...]:
+    issues: list[ValidationIssue] = []
     raw_llm = spec.raw.get("llm") or {}
-    for slot, allowed in (
-        ("chat", {"env_prefix", "inherit_env_prefix", "provider", "model", "api", "base_url", "auth", "reasoning_effort", "timeout", "profiles"}),
-        ("research", {"env_prefix", "inherit_env_prefix", "provider", "model", "api", "base_url", "auth", "reasoning_effort", "timeout", "profiles"}),
-        ("code", {item.name for item in fields(CodeLLMSpec)} | {"default_route"}),
-    ):
-        raw = raw_llm.get(slot) or {}
-        for name in sorted(set(raw) - allowed):
-            issues.append(ValidationIssue("error", f"llm.{slot}.{name} 不是当前模型槽配置字段", f"llm.{slot}.{name}"))
+    for name in set(raw_llm) - {"chat", "research", "code"}:
+        issues.append(ValidationIssue("error", "旧模型配置已移除", "llm." + name))
+    for slot, allowed in (("chat", {"binding", "env_prefix"}), ("research", {"binding"}),
+                          ("code", {"binding", "enabled", "env_prefix", "command", "timeout_seconds"})):
+        for name in sorted(set(raw_llm.get(slot) or {}) - allowed):
+            issues.append(ValidationIssue("error", "旧模型字段已移除，请使用统一模型配置中的 binding", f"llm.{slot}.{name}"))
+        binding = getattr(spec.llm, slot).binding
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]*", binding):
+            issues.append(ValidationIssue("error", "模型用途引用无效", f"llm.{slot}.binding"))
     if not _ENV_PREFIX_RE.fullmatch(spec.llm.env_prefix):
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.chat.env_prefix 必须是大写环境变量前缀",
-                "llm.chat.env_prefix",
-            )
-        )
-    if (
-        spec.llm.research_env_prefix is not None
-        and not _ENV_PREFIX_RE.fullmatch(spec.llm.research_env_prefix)
-    ):
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.research.env_prefix 必须是大写环境变量前缀",
-                "llm.research.env_prefix",
-            )
-        )
-    code = spec.llm.code
-    raw_llm = spec.raw.get("llm") if isinstance(spec.raw, dict) else None
-    raw_code = raw_llm.get("code") if isinstance(raw_llm, dict) else None
-    if isinstance(raw_code, dict) and "default_route" in raw_code:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.code.default_route is removed; select the instance runtime with agents.runtime",
-                "llm.code.default_route",
-            )
-        )
-    if code.provider != "codex_cli":
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.code.provider 当前仅支持 codex_cli",
-                "llm.code.provider",
-            )
-        )
-    if code.reasoning_effort not in CODEX_REASONING_EFFORTS:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.code.reasoning_effort is not supported",
-                "llm.code.reasoning_effort",
-            )
-        )
-    for name, profile in code.profiles.items():
-        field = f"llm.code.profiles.{name}"
-        if name == "default" or not _CODE_MODEL_PROFILE_NAME_RE.fullmatch(name):
-            issues.append(
-                ValidationIssue(
-                    "error",
-                    "Codex profile name must be kebab-case and cannot be default",
-                    field,
-                )
-            )
-        if not profile.model.strip():
-            issues.append(
-                ValidationIssue("error", "Codex profile model must not be empty", field)
-            )
-        if profile.reasoning_effort not in CODEX_REASONING_EFFORTS:
-            issues.append(
-                ValidationIssue(
-                    "error",
-                    "Codex profile reasoning_effort is not supported",
-                    field,
-                )
-            )
-    if code.code_task_profile and code.code_task_profile not in code.profiles:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "llm.code.code_task_profile must reference a configured profile",
-                "llm.code.code_task_profile",
-            )
-        )
-    if "dev.code_tasks" in spec.tools.packs and not code.code_task_profile:
-        issues.append(
-            ValidationIssue(
-                "error",
-                "dev.code_tasks requires an explicit llm.code.code_task_profile",
-                "llm.code.code_task_profile",
-            )
-        )
+        issues.append(ValidationIssue("error", "运行预算环境前缀无效", "llm.chat.env_prefix"))
+
+    return tuple(issues)
 
 
 def _load_yaml(path: Path) -> dict[str, Any]:
@@ -660,13 +569,11 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     chat_env_prefix = str(
         llm_chat.get("env_prefix", llm.get("env_prefix", "CHATCOPILOT_CHAT"))
     ).strip() or "CHATCOPILOT_CHAT"
-    research_env_prefix = _optional_str(
-        llm_research.get("env_prefix", llm.get("research_env_prefix"))
-    )
+    research_binding = str(llm_research.get("binding") or "research")
     agents = _parse_subagents(
         _mapping(data.get("agents", {}), "agents"),
         field_prefix="agents",
-        research_env_prefix=research_env_prefix,
+        research_binding=research_binding,
     )
 
     bot_id = str(data.get("id", "")).strip()
@@ -755,9 +662,8 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         ),
         llm=LLMSpec(
             env_prefix=chat_env_prefix,
-            research_env_prefix=research_env_prefix,
             chat=_parse_model_spec(llm_chat),
-            research=_parse_model_spec(llm_research),
+            research=_parse_model_spec(llm_research, "research"),
             code=CodeLLMSpec(
                 env_prefix=_optional_str(llm_code.get("env_prefix")),
                 enabled=_strict_bool(
@@ -765,20 +671,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                     "llm.code.enabled",
                     False,
                 ),
-                provider=str(llm_code.get("provider", "codex_cli")).strip().lower()
-                or "codex_cli",
-                model=str(llm_code.get("model", "gpt-5.5")).strip() or "gpt-5.5",
-                reasoning_effort=str(
-                    llm_code.get("reasoning_effort", "medium")
-                ).strip().lower()
-                or "medium",
-                profiles=_parse_code_model_profiles(
-                    llm_code.get("profiles", {}),
-                ),
-                code_task_profile=(
-                    str(llm_code.get("code_task_profile") or "").strip().lower()
-                    or None
-                ),
+                binding=str(llm_code.get("binding") or "code"),
                 command=str(
                     llm_code.get(
                         "command", "codex exec --model {model} --cd {workdir}"
@@ -948,32 +841,13 @@ def _optional_str(value: Any) -> str | None:
     return text or None
 
 
-def _parse_code_model_profiles(raw: Any) -> dict[str, WorkerModelProfile]:
-    profiles = _mapping(raw, "llm.code.profiles")
-    parsed: dict[str, WorkerModelProfile] = {}
-    for raw_name, raw_profile in profiles.items():
-        name = str(raw_name or "").strip().lower()
-        profile = _mapping(raw_profile, f"llm.code.profiles.{name}")
-        model = str(profile.get("model") or "").strip()
-        effort = str(profile.get("reasoning_effort") or "medium").strip().lower()
-        try:
-            parsed[name] = WorkerModelProfile(
-                model=model,
-                reasoning_effort=effort,
-            )
-        except ValueError:
-            # Preserve invalid values for validate_botspec() to report with a field path.
-            parsed[name] = object.__new__(WorkerModelProfile)
-            object.__setattr__(parsed[name], "model", model)
-            object.__setattr__(parsed[name], "reasoning_effort", effort)
-    return parsed
 
 
 def _parse_subagents(
     raw: dict[str, Any],
     *,
     field_prefix: str = "agents",
-    research_env_prefix: str | None = None,
+    research_binding: str | None = None,
 ) -> SubagentSpec:
     include = tuple(_str_list(raw.get("presets", raw.get("include", []))))
     supported_fields = {
@@ -1020,7 +894,7 @@ def _parse_subagents(
     for name in include:
         block = _mapping(raw.get(name, {}), f"{field_prefix}.{name}")
         preset_base = (
-            _with_model_env_prefix(defaults, research_env_prefix)
+            _with_model_binding(defaults, research_binding)
             if name in {"browser_reader"}
             else defaults
         )
@@ -1035,7 +909,7 @@ def _parse_subagents(
     custom = _parse_custom_subagents(raw.get("custom", []), defaults, field_prefix=field_prefix)
     search_budget = _parse_subagent_budget(
         _mapping(raw.get("search_budget", {}), f"{field_prefix}.search_budget"),
-        _with_model_env_prefix(defaults, research_env_prefix),
+        _with_model_binding(defaults, research_binding),
     )
     research_router = _mapping(
         raw.get("unified_search", raw.get("research_router", {})),
@@ -1043,7 +917,7 @@ def _parse_subagents(
     )
     research_budget = _parse_subagent_budget(
         research_router,
-        _with_model_env_prefix(defaults, research_env_prefix),
+        _with_model_binding(defaults, research_binding),
     )
     search_providers = _parse_search_providers(
         research_router.get("providers", []),
@@ -1136,14 +1010,14 @@ def _parse_codex_main_session_policy(
     return CodexMainSessionPolicy()
 
 
-def _with_model_env_prefix(
+def _with_model_binding(
     budget: SubagentBudgetSpec,
-    model_env_prefix: str | None,
+    model_binding: str | None,
 ) -> SubagentBudgetSpec:
-    if budget.model_env_prefix is not None or model_env_prefix is None:
+    if budget.model_binding is not None or model_binding is None:
         return budget
     return SubagentBudgetSpec(
-        model_env_prefix=model_env_prefix,
+        model_binding=model_binding,
         max_model_turns=budget.max_model_turns,
         max_tool_calls=budget.max_tool_calls,
         timeout_seconds=budget.timeout_seconds,
@@ -1265,11 +1139,13 @@ def _parse_selector(raw: Any) -> ToolSelectorSpec:
 
 
 def _parse_subagent_budget(raw: dict[str, Any], base: SubagentBudgetSpec) -> SubagentBudgetSpec:
+    if "model_env_prefix" in raw:
+        raise ValueError("model_env_prefix 已移除，请使用 model_binding")
     return SubagentBudgetSpec(
-        model_env_prefix=(
-            _optional_str(raw.get("model_env_prefix"))
-            if "model_env_prefix" in raw
-            else base.model_env_prefix
+        model_binding=(
+            _optional_str(raw.get("model_binding"))
+            if "model_binding" in raw
+            else base.model_binding
         ),
         max_model_turns=_as_int(raw.get("max_model_turns"), base.max_model_turns),
         max_tool_calls=_as_int(raw.get("max_tool_calls"), base.max_tool_calls),

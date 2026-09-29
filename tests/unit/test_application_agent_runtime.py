@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from chatcopilot.botspec.model import ContextSpec, LLMSpec, ModelSpec
 
 from dataclasses import fields
@@ -23,9 +25,8 @@ def _runtime() -> SimpleNamespace:
         spec=SimpleNamespace(
             context=ContextSpec(),
             llm=LLMSpec(
-                chat=ModelSpec(provider="openai", api="openai_responses"),
-                research_env_prefix=None,
-                research=ModelSpec(model="research-model"),
+                chat=ModelSpec(binding="responses-main"),
+                research=ModelSpec(binding="research"),
             ),
         ),
         tool_packs=("workspace.read_write", "persona.control", "memory.chat"),
@@ -39,13 +40,13 @@ def _runtime() -> SimpleNamespace:
 
 
 def test_interactive_projection_preserves_selected_bot_runtime() -> None:
-    chat_config = ChatConfig()
+    chat_config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
 
     projection = project_agent_runtime(_runtime(), chat_config=chat_config)
 
-    assert projection.chat_config == replace(chat_config, llm=replace(chat_config.llm, provider="openai", api="openai_responses"))
+    assert projection.chat_config.llm.model_route() == replace(chat_config.llm, provider="openai", api="openai_responses").model_route()
     assert projection.chat_config is not chat_config
-    assert projection.research_llm_config.model == "research-model"
+    assert projection.research_llm_config.model == "research-default"
     assert projection.tool_packs == (
         "workspace.read_write",
         "persona.control",
@@ -65,7 +66,7 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
 
     projection = project_agent_runtime(
         _runtime(),
-        chat_config=ChatConfig(),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         profile=AgentRuntimeAssemblyProfile.DETACHED,
         overrides=AgentRuntimeOverrides(
             rag_sources=(),
@@ -87,7 +88,7 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
 def test_detached_override_cannot_reintroduce_interactive_only_pack() -> None:
     projection = project_agent_runtime(
         _runtime(),
-        chat_config=ChatConfig(),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         profile=AgentRuntimeAssemblyProfile.DETACHED,
         overrides=AgentRuntimeOverrides(
             tool_packs=("persona.control", "memory.chat"),
@@ -100,7 +101,7 @@ def test_detached_override_cannot_reintroduce_interactive_only_pack() -> None:
 def test_explicit_empty_tool_pack_override_wins_over_profile() -> None:
     projection = project_agent_runtime(
         _runtime(),
-        chat_config=ChatConfig(),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         profile=AgentRuntimeAssemblyProfile.DETACHED,
         overrides=AgentRuntimeOverrides(tool_packs=()),
     )
@@ -109,7 +110,7 @@ def test_explicit_empty_tool_pack_override_wins_over_profile() -> None:
 
 
 def test_materialization_forwards_the_complete_projection(monkeypatch) -> None:
-    projection = project_agent_runtime(_runtime(), chat_config=ChatConfig())
+    projection = project_agent_runtime(_runtime(), chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     expected = object()
     captured = {}
 
@@ -160,7 +161,7 @@ def test_assemble_uses_projection_and_materialization(monkeypatch) -> None:
 
     result = assemble_agent_runtime(
         _runtime(),
-        chat_config=ChatConfig(),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         profile=AgentRuntimeAssemblyProfile.DETACHED,
     )
 

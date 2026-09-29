@@ -333,6 +333,12 @@ def _write_managed_comparison_bootstrap(
         "seed": parsed.seed,
     }
     output.mkdir()
+    from chatcopilot.core.model_settings import read_settings
+    from chatcopilot.contracts.model_runtime import digest
+    models = read_settings()
+    stored_request["model_settings_sha256"] = digest(models)
+    (output / "llm.json").write_text(json.dumps(models))
+    (output / "llm.json").chmod(0o600)
     (output / "request.json").write_text(
         json.dumps(stored_request),
         encoding="utf-8",
@@ -1113,6 +1119,12 @@ def test_managed_suite_bootstrap_includes_complete_effective_request(
         "created_at": "2026-08-17T00:00:00+00:00",
         "core_request": evaluation_module._runnable_request_dict(parsed),
     }
+    from chatcopilot.core.model_settings import read_settings
+    from chatcopilot.contracts.model_runtime import digest
+    models = read_settings()
+    stored_request["model_settings_sha256"] = digest(models)
+    (output / "llm.json").write_text(json.dumps(models))
+    (output / "llm.json").chmod(0o600)
     (output / "request.json").write_text(json.dumps(stored_request), encoding="utf-8")
     (output / "state.json").write_text(
         json.dumps(
@@ -2089,7 +2101,7 @@ def test_private_runtime_fingerprint_ignores_removed_group_list_and_binds_privat
             context=ContextSpec(), llm=LLMSpec(env_prefix="TEST_EVAL_GROUP")
         ),
     )
-    config = ChatConfig(llm=LLMConfig(api_key="fallback-eval-key-123456"))
+    config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="fallback-eval-key-123456"))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
     monkeypatch.setenv("QQ_ALLOW_FROM", "10017")
@@ -2120,7 +2132,7 @@ def _configure_private_runtime(
             context=ContextSpec(), llm=LLMSpec(env_prefix="TEST_EVAL_PRIVATE")
         ),
     )
-    config = ChatConfig(llm=LLMConfig(api_key=api_key))
+    config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key=api_key))
     monkeypatch.setattr(evaluation_module, "load_evaluation_runtime", lambda _bot: runtime)
     monkeypatch.setattr(evaluation_module, "load_config", lambda **_kwargs: config)
     monkeypatch.setattr(evaluation_module, "collect_env_secrets", lambda: ())
@@ -3329,7 +3341,7 @@ def test_cli_freezes_bot_environment_before_validation_and_execution(
         "  chat:\n"
         "    env_prefix: CHATCOPILOT_TESTBOT\n"
         "  code:\n"
-        "    model: gpt-test-snapshot\n",
+        "    binding: code\n",
         encoding="utf-8",
     )
     local_env = bot_dir / "local.env"
@@ -3346,7 +3358,7 @@ def test_cli_freezes_bot_environment_before_validation_and_execution(
     def _run(_args: object, _request: dict[str, object]) -> int:
         observed["before"] = os.environ["CHATCOPILOT_TEST_SNAPSHOT"]
         observed["marker"] = os.environ["CHATCOPILOT_EVALUATION_ENV_SNAPSHOT"]
-        observed["model"] = os.environ["CHATCOPILOT_TESTBOT_CODE_MODEL"]
+        observed["binding"] = os.environ["CHATCOPILOT_CODE_BINDING"]
         observed["auth_root"] = os.environ["CHATCOPILOT_CODEX_BOT_HOME"]
         local_env.write_text(
             "export CHATCOPILOT_TEST_SNAPSHOT=changed-after-preflight\n",
@@ -3374,7 +3386,7 @@ def test_cli_freezes_bot_environment_before_validation_and_execution(
     assert observed == {
         "before": "initial",
         "marker": "1",
-        "model": "gpt-test-snapshot",
+        "binding": "code",
         "auth_root": str(Path.home() / "codex-bot"),
         "after": "initial",
     }

@@ -1,6 +1,7 @@
 import { ConfigFields, Disclosure, FIELD_NAMES, TextPreview } from "./ObservationContent";
 import type { InspectionEntity } from "./workbenchModel";
 import AgentConfigurationValues from "./AgentConfigurationValues";
+import ModelProfileSelect from "../llm/ModelProfileSelect";
 
 export function ConfigurationValues({ value }: { value: unknown }) {
   if (value == null) return <span className="obs-muted">未配置</span>;
@@ -51,6 +52,8 @@ export default function ConfigurationFields({ entity, inline = false }: { entity
   const schema = parameters && typeof parameters === "object" ? parameters as Record<string, unknown> : null;
   const properties = schema?.properties && typeof schema.properties === "object" ? schema.properties as Record<string, Record<string, unknown>> : null;
   return <>
+    {entity.id.startsWith("model-slot:") && typeof config.binding === "string" &&
+      <ModelProfileSelect purpose={config.binding} worker={entity.id === "model-slot:code"} persistBinding />}
     {inline && !entity.field_sources && <p className="config-field-source">{entity.configured == null ? "来源：运行时发现；不代表所有调用者均可使用" : "来源：实例声明与组件目录"}</p>}
     {entity.field_sources ? <AgentConfigurationValues entity={entity} /> : <ConfigurationValues value={fields} />}
     {!entity.field_sources && !!Object.keys(remainder).length && <ConfigurationValues value={remainder} />}

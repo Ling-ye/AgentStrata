@@ -21,34 +21,14 @@ channels:
 llm:
   chat:
     env_prefix: CHATCOPILOT_LINGYE_MAIN
-    provider: openai
-    model: gpt-5.6-sol
-    reasoning_effort: medium
-    profiles:
-      sol-max:
-        model: gpt-5.6-sol
-        reasoning_effort: max
-    auth:
-      mode: chatgpt
-      profile: main
+    binding: bot.lingye-copilot-qq.chat
   research:
-    inherit_env_prefix: CHATCOPILOT_LINGYE
-    env_prefix: CHATCOPILOT_LINGYE_RESEARCH
-    model: gpt-6-sol
+    binding: bot.lingye-copilot-qq.research
   code:
     env_prefix: CHATCOPILOT_LINGYE
     enabled: true
-    model: gpt-6-sol
-    reasoning_effort: medium
-    profiles:
-      sol-medium:
-        model: gpt-6-sol
-        reasoning_effort: medium
-      sol-max:
-        model: gpt-5.6-sol
-        reasoning_effort: max
-    code_task_profile: sol-medium
     timeout_seconds: 21600
+    binding: bot.lingye-copilot-qq.code
 
 prompts:
   schema_version: 2

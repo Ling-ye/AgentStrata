@@ -9,17 +9,15 @@
 """
 from __future__ import annotations
 
-import json
 import os
-import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 
+from chatcopilot.core.model_config import LLMConfig as LLMConfig
 from chatcopilot.project import CHAT_ENV_PREFIX, DEFAULT_CONFIG_DIR
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.model_selection import (
-    CODEX_REASONING_EFFORTS,
     WorkerModelProfile,
 )
 
@@ -28,7 +26,6 @@ _DEFAULT_CONFIG_NAMES = (
     _CHAT_DIR / "config.yaml",
     DEFAULT_CONFIG_DIR / "chat.yaml",
 )
-_CODE_MODEL_PROFILE_NAME_RE = re.compile(r"^[a-z][a-z0-9-]{0,62}$")
 
 
 def load_command_timeouts(
@@ -45,27 +42,6 @@ def load_command_timeouts(
         except (TypeError, ValueError) as exc:
             raise ValueError("CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX must be a positive integer") from exc
     return CommandTimeouts(timeout_default=timeout_default, timeout_max=timeout_max)
-
-
-@dataclass
-class LLMConfig:
-    base_url: str = "https://api.openai.com/v1"
-    model: str = "gpt-4o-mini"
-    api_key: str = field(default="", repr=False, metadata={"secret": True})
-    timeout: int = 120
-    provider: str = "openai_compatible"
-    api: str = "chat_completions"
-    auth_mode: str = "api_key"
-    auth_profile: str = "main"
-    key_env: str = "CHATCOPILOT_CHAT_API_KEY"
-    reasoning_effort: str | None = None
-    credential_root: str = field(default="", repr=False, metadata={"private": True})
-
-    def model_route(self):
-        from chatcopilot.contracts.model_runtime import ApiKeyAuthRef, ChatGPTAuthRef, ResolvedModelRoute
-        auth = ChatGPTAuthRef(self.auth_profile) if self.auth_mode == "chatgpt" else ApiKeyAuthRef(self.key_env)
-        return ResolvedModelRoute(self.provider, self.model, self.api, self.base_url,
-                                  auth, self.reasoning_effort, self.timeout)
 
 
 @dataclass
@@ -87,7 +63,6 @@ class RuntimeConfig:
     # 主 LLM 调用前的话题相关性路由。默认关闭，避免旧实例无感增加一次模型调用。
     topic_classifier_enabled: bool = False
     topic_classifier_mode: str = "off"
-    topic_model: str = ""
     topic_uncertain_mode: str = "continue"
     topic_related_threshold: float = 0.70
     topic_unrelated_threshold: float = 0.75
@@ -101,7 +76,7 @@ class RuntimeConfig:
 @dataclass
 class RoutingConfig:
     code_provider: str = 'codex_cli'
-    code_model: str = 'gpt-5.5'
+    code_model: str = ''
     code_reasoning_effort: str = 'medium'
     code_profiles: dict[str, WorkerModelProfile] = field(default_factory=dict)
     code_task_profile: str = ''
@@ -113,6 +88,8 @@ class ChatConfig:
     llm: LLMConfig = field(default_factory=LLMConfig)
     runtime: RuntimeConfig = field(default_factory=RuntimeConfig)
     routing: RoutingConfig = field(default_factory=RoutingConfig)
+    model_profiles: dict = field(default_factory=dict)
+    model_settings: dict = field(default_factory=dict, repr=False, metadata={"private": True})
     codex_extensions: str = field(default="", repr=False, metadata={"private": True})
     codex_extension_env: dict[str, str] = field(default_factory=dict, repr=False, metadata={"secret": True})
 
@@ -186,40 +163,6 @@ def _coerce_float(raw: Any, fallback: float) -> float:
         return fallback
 
 
-def _coerce_code_profiles(
-    raw: Any,
-    fallback: dict[str, WorkerModelProfile],
-    *,
-    field: str,
-) -> dict[str, WorkerModelProfile]:
-    if raw is None or raw == "":
-        return dict(fallback)
-    if isinstance(raw, str):
-        try:
-            data = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"{field} must be valid JSON") from exc
-    else:
-        data = raw
-    if not isinstance(data, dict):
-        raise ValueError(f"{field} must be an object")
-    profiles: dict[str, WorkerModelProfile] = {}
-    for raw_name, raw_profile in data.items():
-        name = str(raw_name or "").strip().lower()
-        if (
-            name == "default"
-            or not _CODE_MODEL_PROFILE_NAME_RE.fullmatch(name)
-        ):
-            raise ValueError(f"{field} contains an invalid profile name: {raw_name!r}")
-        if not isinstance(raw_profile, dict):
-            raise ValueError(f"{field}.{name} must be an object")
-        profiles[name] = WorkerModelProfile(
-            model=str(raw_profile.get("model") or "").strip(),
-            reasoning_effort=str(
-                raw_profile.get("reasoning_effort") or "medium"
-            ).strip().lower(),
-        )
-    return profiles
 
 
 def _resolve_config_path(
@@ -254,11 +197,12 @@ def load_config(
     sources: dict[str, str] | None = None,
     working_directory: Path | None = None,
 ) -> ChatConfig:
-    """读取配置；缺省时返回内置默认值，environ 永远具备最高优先级。"""
+    """Resolve host budgets and centrally configured model bindings."""
     cfg = ChatConfig()
-    cfg.llm.key_env = f"{env_prefix}_API_KEY"
     env = os.environ if environment is None else environment
     data: dict[str, Any] = {}
+    from chatcopilot.core.model_settings import reject_model_overrides
+    reject_model_overrides(env, env_prefix)
 
     yaml_path = _resolve_config_path(config_path, env_prefix=env_prefix, environment=env,
                                     default_paths=default_paths, working_directory=working_directory)
@@ -267,11 +211,9 @@ def load_config(
         llm_raw = data.get("llm", {}) or {}
         rt_raw = data.get("runtime", {}) or {}
         routing_raw = data.get("routing", {}) or {}
+        if llm_raw or "topic_model" in rt_raw or set(routing_raw) & {"code_model", "code_provider", "code_reasoning_effort", "code_profiles", "code_task_profile"}:
+            raise ValueError("旧模型文件配置已移除，请使用统一模型配置")
 
-        cfg.llm.base_url = str(llm_raw.get("base_url", cfg.llm.base_url) or cfg.llm.base_url)
-        cfg.llm.model = str(llm_raw.get("model", cfg.llm.model) or cfg.llm.model)
-        cfg.llm.api_key = str(llm_raw.get("api_key", cfg.llm.api_key) or cfg.llm.api_key)
-        cfg.llm.timeout = _coerce_int(llm_raw.get("timeout"), cfg.llm.timeout)
 
         cfg.runtime.max_tool_retries = _coerce_int(
             rt_raw.get("max_tool_retries"), cfg.runtime.max_tool_retries
@@ -310,7 +252,6 @@ def load_config(
             rt_raw.get("topic_classifier_mode", cfg.runtime.topic_classifier_mode)
             or cfg.runtime.topic_classifier_mode
         ).strip().lower()
-        cfg.runtime.topic_model = str(rt_raw.get("topic_model", cfg.runtime.topic_model) or "").strip()
         cfg.runtime.topic_uncertain_mode = str(
             rt_raw.get("topic_uncertain_mode", cfg.runtime.topic_uncertain_mode)
             or cfg.runtime.topic_uncertain_mode
@@ -340,31 +281,6 @@ def load_config(
             cfg.runtime.topic_previous_assistant_max_chars,
         )
 
-        cfg.routing.code_provider = str(
-            routing_raw.get('code_provider', cfg.routing.code_provider) or cfg.routing.code_provider
-        ).strip().lower()
-        cfg.routing.code_model = str(
-            routing_raw.get('code_model', cfg.routing.code_model) or cfg.routing.code_model
-        ).strip()
-        cfg.routing.code_reasoning_effort = str(
-            routing_raw.get(
-                'code_reasoning_effort',
-                cfg.routing.code_reasoning_effort,
-            )
-            or cfg.routing.code_reasoning_effort
-        ).strip().lower()
-        cfg.routing.code_profiles = _coerce_code_profiles(
-            routing_raw.get('code_profiles'),
-            cfg.routing.code_profiles,
-            field="routing.code_profiles",
-        )
-        cfg.routing.code_task_profile = str(
-            routing_raw.get(
-                'code_task_profile',
-                cfg.routing.code_task_profile,
-            )
-            or cfg.routing.code_task_profile
-        ).strip().lower()
         cfg.routing.code_command = str(
             routing_raw.get('code_command', cfg.routing.code_command) or cfg.routing.code_command
         ).strip()
@@ -376,12 +292,6 @@ def load_config(
         if "code_allowed_roles" in routing_raw:
             raise ValueError("routing.code_allowed_roles is retired; model control is Owner-only")
 
-    cfg.llm.base_url = env.get(f"{env_prefix}_BASE_URL", cfg.llm.base_url) or cfg.llm.base_url
-    cfg.llm.model = env.get(f"{env_prefix}_MODEL", cfg.llm.model) or cfg.llm.model
-    cfg.llm.api_key = (
-        env.get(f"{env_prefix}_API_KEY", cfg.llm.api_key) or cfg.llm.api_key
-    )
-    cfg.llm.timeout = _coerce_int(env.get(f"{env_prefix}_TIMEOUT"), cfg.llm.timeout)
     cfg.runtime.max_tool_retries = _coerce_int(
         env.get(f"{env_prefix}_MAX_RETRIES"), cfg.runtime.max_tool_retries
     )
@@ -421,10 +331,6 @@ def load_config(
         env.get(f"{env_prefix}_TOPIC_CLASSIFIER_MODE", cfg.runtime.topic_classifier_mode)
         or cfg.runtime.topic_classifier_mode
     ).strip().lower()
-    cfg.runtime.topic_model = (
-        env.get(f"{env_prefix}_TOPIC_MODEL", cfg.runtime.topic_model)
-        or cfg.runtime.topic_model
-    ).strip()
     cfg.runtime.topic_uncertain_mode = (
         env.get(f"{env_prefix}_TOPIC_UNCERTAIN_MODE", cfg.runtime.topic_uncertain_mode)
         or cfg.runtime.topic_uncertain_mode
@@ -458,33 +364,6 @@ def load_config(
         cfg.runtime.topic_previous_assistant_max_chars,
     )
 
-    cfg.routing.code_provider = (
-        env.get(f'{env_prefix}_CODE_PROVIDER', cfg.routing.code_provider)
-        or cfg.routing.code_provider
-    ).strip().lower()
-    cfg.routing.code_model = (
-        env.get(f'{env_prefix}_CODE_MODEL', cfg.routing.code_model)
-        or cfg.routing.code_model
-    ).strip()
-    cfg.routing.code_reasoning_effort = (
-        env.get(
-            f'{env_prefix}_CODE_REASONING_EFFORT',
-            cfg.routing.code_reasoning_effort,
-        )
-        or cfg.routing.code_reasoning_effort
-    ).strip().lower()
-    cfg.routing.code_profiles = _coerce_code_profiles(
-        env.get(f'{env_prefix}_CODE_PROFILES_JSON'),
-        cfg.routing.code_profiles,
-        field=f"{env_prefix}_CODE_PROFILES_JSON",
-    )
-    cfg.routing.code_task_profile = (
-        env.get(
-            f'{env_prefix}_CODE_TASK_PROFILE',
-            cfg.routing.code_task_profile,
-        )
-        or cfg.routing.code_task_profile
-    ).strip().lower()
     cfg.routing.code_command = (
         env.get(f'{env_prefix}_CODE_COMMAND', cfg.routing.code_command)
         or cfg.routing.code_command
@@ -505,11 +384,27 @@ def load_config(
         cfg.runtime.topic_uncertain_mode = "continue"
     cfg.runtime.topic_related_threshold = max(0.0, min(1.0, cfg.runtime.topic_related_threshold))
     cfg.runtime.topic_unrelated_threshold = max(0.0, min(1.0, cfg.runtime.topic_unrelated_threshold))
+    from chatcopilot.core.model_settings import read_settings, resolve_binding, profile_choices
+    cfg.model_settings = read_settings(env)
+    binding = env.get("CHATCOPILOT_LLM_BINDING", "chat")
+    if binding in cfg.model_settings["bindings"]:
+        cfg.llm = resolve_binding(binding, document=cfg.model_settings, environment=env)
+        cfg.model_profiles = profile_choices(document=cfg.model_settings, base=cfg.llm.model_route(), connection_id=cfg.llm.connection_id)
+    code_binding = env.get("CHATCOPILOT_CODE_BINDING", "code")
+    if code_binding in cfg.model_settings["bindings"]:
+        code = resolve_binding(code_binding, document=cfg.model_settings, environment=env)
+        cfg.routing.code_model = code.model
+        cfg.routing.code_reasoning_effort = code.reasoning_effort or ""
+        cfg.routing.code_profiles = profile_choices(document=cfg.model_settings, worker=True, connection_id=code.connection_id)
+        cfg.routing.code_task_profile = code.profile_id
     _validate_routing_config(cfg.routing)
 
     if sources is not None:
         for section in ("llm", "runtime", "routing"):
             for name in vars(getattr(cfg, section)):
+                if section == "llm" or (section == "routing" and name in {"code_model", "code_reasoning_effort", "code_profiles", "code_task_profile"}):
+                    sources[f"{section}.{name}"] = "统一模型配置"
+                    continue
                 suffix = {"max_tool_retries": "MAX_RETRIES", "code_profiles": "CODE_PROFILES_JSON"}.get(name, name.upper())
                 key = f"{env_prefix}_{suffix}"
                 if env.get(key) not in (None, ""):
@@ -522,56 +417,17 @@ def load_config(
     return cfg
 
 
-def load_llm_profile(
-    env_prefix: str,
-    *,
-    fallback: LLMConfig,
-    environment: Mapping[str, str] | None = None,
-) -> LLMConfig:
-    """Overlay one optional model slot on an existing LLM configuration."""
-
-    from dataclasses import replace
-    cfg = replace(fallback)
-    env = os.environ if environment is None else environment
-    values = {
-        "base_url": env.get(f"{env_prefix}_BASE_URL"),
-        "model": env.get(f"{env_prefix}_MODEL"),
-        "api_key": env.get(f"{env_prefix}_API_KEY"),
-        "timeout": env.get(f"{env_prefix}_TIMEOUT"),
-    }
-    if values["base_url"]:
-        cfg.base_url = str(values["base_url"]).strip()
-    if values["model"]:
-        cfg.model = str(values["model"]).strip()
-    if values["api_key"] and cfg.auth_mode == "api_key":
-        cfg.api_key = str(values["api_key"]).strip()
-        cfg.key_env = f"{env_prefix}_API_KEY"
-    if values["timeout"] not in {None, ""}:
-        cfg.timeout = _coerce_positive_int_strict(
-            values["timeout"],
-            cfg.timeout,
-            field=f"{env_prefix}_TIMEOUT",
-        )
-    return cfg
+def load_llm_profile(binding: str, *, fallback: LLMConfig, environment: Mapping[str, str] | None = None, document: dict | None = None) -> LLMConfig:
+    """Resolve an explicit central binding; never overlay ambient model fields."""
+    from chatcopilot.core.model_settings import resolve_binding
+    return resolve_binding(binding, environment=environment, document=document)
 
 
 def _validate_routing_config(config: RoutingConfig) -> None:
     if config.code_provider != "codex_cli":
         raise ValueError("routing.code_provider must be codex_cli")
-    if config.code_reasoning_effort not in CODEX_REASONING_EFFORTS:
-        expected = ", ".join(sorted(CODEX_REASONING_EFFORTS))
-        raise ValueError(
-            "routing.code_reasoning_effort must be one of: "
-            f"{expected}; got {config.code_reasoning_effort!r}"
-        )
-    if (
-        config.code_task_profile
-        and config.code_task_profile not in config.code_profiles
-    ):
-        raise ValueError(
-            "routing.code_task_profile must reference a configured profile; "
-            f"got {config.code_task_profile!r}"
-        )
+    if config.code_task_profile and config.code_task_profile not in config.code_profiles:
+        raise ValueError("code binding must select a worker Codex profile")
 
 
 def example_config_path() -> Path:

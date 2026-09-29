@@ -9,7 +9,6 @@ import shlex
 import shutil
 import subprocess
 import sys
-import tempfile
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -33,7 +32,7 @@ from chatcopilot.external_tools.codex_cli import (
     credential_lease,
     validate_auth_root_path,
 )
-from chatcopilot.external_tools.codex_cli import AppServerProcess, build_app_server_command
+from chatcopilot.external_tools.codex_cli import build_app_server_command
 from chatcopilot.harness.models import HarnessError, RepairOptions, CodingOptions, review_decision
 from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
@@ -48,9 +47,9 @@ class CodexCoder:
     def __init__(self, trace_publisher: Callable[[Path, dict[str, Any]], None] | None = None) -> None:
         self.trace_publisher = trace_publisher
 
-    def preflight(self) -> tuple[Path, Path]:
+    def preflight(self, model_config=None) -> tuple[Path, Path]:
         require_bubblewrap()
-        raw = os.environ.get("CHATCOPILOT_CODEX_BIN", "")
+        raw = model_config.codex_bin if model_config is not None else os.environ.get("CHATCOPILOT_CODEX_BIN", "")
         if not raw or not Path(raw).is_absolute():
             raise HarnessError(
                 "codex_unconfigured", "请配置 CHATCOPILOT_CODEX_BIN 为原生 Codex 可执行文件"
@@ -63,7 +62,7 @@ class CodexCoder:
                 raise HarnessError(
                     "codex_unavailable", "独立 worker 需要 Linux 原生 Codex 二进制文件"
                 )
-        auth = validate_auth_root_path(os.environ.get("CHATCOPILOT_CODEX_BOT_HOME", ""))
+        auth = validate_auth_root_path(model_config.credential_root if model_config is not None else os.environ.get("CHATCOPILOT_CODEX_BOT_HOME", ""))
         return binary, auth
 
     def execute(self, worktree: Path, call: AgentCall, options: RepairOptions | CodingOptions,
@@ -81,7 +80,14 @@ class CodexCoder:
         return {**result.payload, **review_decision(standard), "execution": result.execution}
 
     def _execute_impl(self, worktree: Path, call: AgentCall, options, output: Path, check_cancel):
-        binary, auth = self.preflight()
+        if options.model_settings:
+            from chatcopilot.core.model_settings import resolve_profile
+            cfg = resolve_profile(options.model_profile, document=options.model_settings)
+            binary, auth = self.preflight(cfg)
+            if (cfg.model, cfg.reasoning_effort or "") != (options.model, options.reasoning_effort):
+                raise HarnessError("model_configuration", "冻结模型与任务参数不一致")
+        else:
+            binary, auth = self.preflight()
         role, evidence = call.role, call.evidence
         task_root = worktree.parent
         private_directory(output)
@@ -279,52 +285,24 @@ def require_available_model(models: list[dict], model: str, effort: str) -> None
     if entry is None:
         raise HarnessError("model_unavailable", f"Harness worker 当前不可使用模型 {model}；请核对 Codex CLI 版本和 worker 凭据")
     efforts = entry.get("supportedReasoningEfforts")
-    if not isinstance(efforts, list):
+    if effort and not isinstance(efforts, list):
         raise HarnessError("model_probe_unavailable", "Codex 模型目录缺少推理强度信息")
-    if effort not in {row.get("reasoningEffort") for row in efforts if isinstance(row, dict)}:
+    if effort and effort not in {row.get("reasoningEffort") for row in efforts if isinstance(row, dict)}:
         raise HarnessError("model_effort_unsupported", f"Harness worker 的模型 {model} 不支持推理强度 {effort}")
 
 
 def worker_models(settings: Mapping[str, str], repository: Path) -> list[dict]:
-    """Use the same Linux binary and credential lane as the repair worker."""
+    from chatcopilot.external_tools.codex_cli import codex_models
     try:
-        binary = Path(settings["CHATCOPILOT_CODEX_BIN"]).resolve(strict=True)
-        auth = validate_auth_root_path(settings["CHATCOPILOT_CODEX_BOT_HOME"])
-        if not binary.is_file() or not os.access(binary, os.X_OK):
-            raise RuntimeError("Codex binary is unavailable")
-        with binary.open("rb") as stream:
-            if stream.read(4) != b"\x7fELF":
-                raise RuntimeError("Codex binary is not a Linux ELF")
-        with tempfile.TemporaryDirectory(prefix="agentstrata-model-") as temporary:
-            home = Path(temporary) / "codex-home"
-            with credential_lease(auth, "worker", home, blocking=False):
-                command = [str(binary), "app-server", "--listen", "stdio://", "--strict-config",
-                           "--config", "project_doc_max_bytes=0", "--config", "mcp_servers={}",
-                           "--config", "features.hooks=false", "--config", "features.apps=false",
-                           "--config", "features.image_generation=false", "--config", "features.multi_agent=false"]
-                environment = build_codex_subprocess_env(str(binary), runtime_home=home)
-                with AppServerProcess(command, cwd=repository, env=environment, timeout_seconds=20,
-                                      on_notification=lambda _method, _params: None, on_poll=lambda: None) as rpc:
-                    rpc.initialize()
-                    models: list[dict] = []
-                    cursor = None
-                    for _ in range(10):
-                        result = rpc.request("model/list", {"limit": 100, "includeHidden": True,
-                                                            **({"cursor": cursor} if cursor else {})})
-                        rows = result.get("data")
-                        if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-                            raise RuntimeError("invalid Codex model catalog")
-                        models.extend(rows)
-                        cursor = result.get("nextCursor")
-                        if cursor is None:
-                            return models
-                        if not isinstance(cursor, str) or not cursor:
-                            raise RuntimeError("invalid Codex model cursor")
-                    raise RuntimeError("Codex model catalog exceeds ten pages")
+        return codex_models({"kind": "codex", "auth": {"mode": "chatgpt", "profile": "worker"}}, settings, repository)
     except (KeyError, OSError, RuntimeError, ValueError, subprocess.SubprocessError) as exc:
-        raise HarnessError("model_probe_unavailable",
-                           "无法查询 Harness worker 的模型目录；请检查 Codex CLI、worker 凭据与网络") from exc
+        raise HarnessError("model_probe_unavailable", "无法查询 worker 的模型目录；请检查 Codex、凭据与网络") from exc
 
 
-def preflight_worker_model(settings: Mapping[str, str], repository: Path, model: str, effort: str) -> None:
+def preflight_worker_model(settings: Mapping[str, str], repository: Path, model: str, effort: str,
+                           *, model_settings=None, model_profile="") -> None:
+    if model_settings:
+        from chatcopilot.core.model_settings import resolve_profile
+        cfg = resolve_profile(model_profile, document=model_settings, environment={**os.environ, **settings})
+        settings = {**settings, "CHATCOPILOT_CODEX_BIN": cfg.codex_bin, "CHATCOPILOT_CODEX_BOT_HOME": cfg.credential_root}
     require_available_model(worker_models(settings, repository), model, effort)

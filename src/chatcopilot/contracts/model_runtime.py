@@ -151,7 +151,7 @@ class ModelSelection:
 
     @property
     def reasoning_effort(self) -> str:
-        return self.route.reasoning_effort or "medium"
+        return self.route.reasoning_effort or ""
 
     def to_payload(self) -> dict[str, Any]:
         return {

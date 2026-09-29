@@ -44,7 +44,6 @@ from chatcopilot.contracts.identity import (
 )
 from chatcopilot.contracts.model_selection import (
     CODE_MODEL_LANE,
-    CODEX_REASONING_EFFORTS,
     WorkerModelProfile,
     WorkerModelSelection,
     MODEL_SELECTION_SCOPE_ONCE,
@@ -166,7 +165,6 @@ __all__ = [
     "BUILTIN_SUBAGENT_WORKFLOWS",
     "BotRuntimePlan",
     "CODE_MODEL_LANE",
-    "CODEX_REASONING_EFFORTS",
     "CODE_TASK_ACTIVE_STATUSES",
     "CODE_TASK_RESUMABLE_STATUSES",
     "CODE_TASK_TERMINAL_STATUSES",

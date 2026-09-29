@@ -64,6 +64,7 @@ class SessionState:
     llm_model: str | None = None
     routing_config: RoutingConfig | None = None
     main_model_route: ResolvedModelRoute | None = None
+    model_profiles: dict = field(default_factory=dict)
     execution_session_id: str | None = None
     model_selection: ModelSelection | None = None
     model_once: ModelSelection | None = None

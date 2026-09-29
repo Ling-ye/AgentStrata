@@ -3,9 +3,9 @@ import type { RepairTask } from "./api";
 
 export type GovernanceStop = { mode: "time"; seconds: number } | { mode: "findings"; count: number };
 export interface GovernanceOptions {
-  model: string; reasoning_effort: string; max_attempts: number; stop_condition: GovernanceStop;
+  model_profile?: string; model: string; reasoning_effort: string; max_attempts: number; stop_condition: GovernanceStop;
 }
-export interface GovernanceModel { model: string; reasoning_efforts: string[] }
+export interface GovernanceRequest { profile: string; max_attempts: number; stop_condition: GovernanceStop }
 export interface GovernanceRun {
   run_id: string; options: GovernanceOptions; status: string; stop_reason: string; message?: string;
   current_task_id: string | null; sequence: number; found_count: number; merged_count: number; failed_count: number;
@@ -37,19 +37,18 @@ export interface GovernanceReport {
 }
 export interface GovernanceSchedule {
   enabled: boolean; interval_hours: number;
-  options: GovernanceOptions | null;
+  options: GovernanceRequest | null;
   last_run?: { status: string; run_id?: string; at: number; message?: string; reason?: string };
   last_error?: string; unit?: string; timer?: Record<string, string>;
 }
 export const governanceApi = {
-  start: (value: GovernanceOptions & { request_id: string }) => harnessRequest<GovernanceRun>("/code-health/runs", {
+  start: (value: GovernanceRequest & { request_id: string }) => harnessRequest<GovernanceRun>("/code-health/runs", {
     method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(value) }),
   runs: (page: number, search: string, status: string, signal?: AbortSignal) =>
     harnessRequest<{ runs: GovernanceRun[]; total: number }>(`/code-health/runs?${new URLSearchParams({ page: String(page), search, status })}`, { signal, cache: "no-store" }),
   run: (id: string, signal?: AbortSignal) => harnessRequest<GovernanceRun>(`/code-health/runs/${encodeURIComponent(id)}`, { signal, cache: "no-store" }),
   action: (id: string, action: "cancel" | "resume") => harnessRequest<GovernanceRun>(`/code-health/runs/${encodeURIComponent(id)}/${action}`, { method: "POST" }),
-  config: (signal?: AbortSignal) => harnessRequest<{ default_model: string }>("/code-health/config", { signal }),
-  models: (signal?: AbortSignal) => harnessRequest<GovernanceModel[]>("/code-health/models", { signal, cache: "no-store" }),
+  config: (signal?: AbortSignal) => harnessRequest<{ default_profile: string }>("/code-health/config", { signal }),
   report: (id: string, signal?: AbortSignal) => harnessRequest<{ state: string; base_commit: string; report: GovernanceReport | null }>(
     `/tasks/${encodeURIComponent(id)}/governance`, { signal, cache: "no-store" }),
   schedule: (signal?: AbortSignal) => harnessRequest<GovernanceSchedule>("/code-health/schedule", { signal, cache: "no-store" }),

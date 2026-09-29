@@ -34,7 +34,6 @@ from chatcopilot.botspec.loader import is_valid_bot_id, load_botspec, validate_b
 from chatcopilot.botspec.provisioning import (
     ProvisioningError,
     build_provision_plan,
-    is_allowed_llm_base_url,
     patch_local_env,
     read_local_env_for_provision,
     read_private_env_file,
@@ -141,8 +140,7 @@ _STARTER_LOCAL_ENV_TEMPLATE = """# Generic QQ starter private configuration.
 # local.env securely and never prints secret values.
 
 export CHATCOPILOT_CHAT_API_KEY=""
-export CHATCOPILOT_CHAT_BASE_URL=""
-export CHATCOPILOT_CHAT_MODEL=""
+export AGENTSTRATA_LLM_CONFIG="$HOME/.config/agentstrata/llm.json"
 export CHATCOPILOT_ADD_OWNER_IDS=""
 
 export CHATCOPILOT_GATEWAY_PORT="18789"
@@ -332,9 +330,7 @@ def _render_bot_yaml(
 # bot configure
 # ---------------------------------------------------------------------------
 _GUIDED_PROMPT_FIELDS = (
-    "chat_base_url",
-    "chat_model",
-    "chat_api_key",
+    "llm_config",
     "qq_account",
     "add_owner_ids",
 )
@@ -393,7 +389,7 @@ def _cmd_configure(args: argparse.Namespace) -> int:
 
     by_id = {item.field: item for item in plan.fields}
     updates: dict[str, str] = {}
-    print("请填写 QQ 与 OpenAI-compatible LLM 配置。已配置字段留空表示保留。")
+    print("请填写 QQ 与统一模型配置文件位置。已配置字段留空表示保留。")
     try:
         for field_id in _GUIDED_PROMPT_FIELDS:
             item = by_id.get(field_id)
@@ -415,19 +411,7 @@ def _cmd_configure(args: argparse.Namespace) -> int:
         item = by_id[field_id]
         if value:
             effective[item.env_key] = value
-    prefix = spec.llm.env_prefix
-    base_url = str(effective.get(f"{prefix}_BASE_URL", "") or "").strip()
-    model = str(effective.get(f"{prefix}_MODEL", "") or "").strip()
     owner_id = str(effective.get("CHATCOPILOT_ADD_OWNER_IDS", "") or "").strip()
-    if not base_url:
-        print("[ERR] LLM Base URL 必填；local.env 未修改")
-        return 1
-    if not is_allowed_llm_base_url(base_url):
-        print("[ERR] LLM Base URL 只允许 HTTPS，或回环地址的 HTTP；local.env 未修改")
-        return 1
-    if not model:
-        print("[ERR] LLM 模型 ID 必填；local.env 未修改")
-        return 1
     if not owner_id.isdigit():
         print("[ERR] Owner QQ 号必须是稳定数字 ID；local.env 未修改")
         return 1
@@ -704,7 +688,7 @@ def _cmd_route_explain(args: argparse.Namespace) -> int:
     defaults = llm_runtime_env_defaults(spec.llm)
     relevant_prefixes = tuple(
         prefix
-        for prefix in (spec.llm.env_prefix, spec.llm.research_env_prefix)
+        for prefix in (spec.llm.env_prefix,)
         if prefix
     )
     actual_env = {
@@ -718,13 +702,11 @@ def _cmd_route_explain(args: argparse.Namespace) -> int:
 
     with _temporary_environment(effective_env):
         config = load_config(env_prefix=spec.llm.env_prefix)
+        from chatcopilot.core.model_routes import resolve_model_config
+        config.llm = resolve_model_config(spec.llm.chat, fallback=config.llm, prefix=None, environment=os.environ)
         research_config = load_research_llm_config(spec.llm, fallback=config.llm)
 
-    research_agent_source = (
-        spec.llm.research_env_prefix
-        if spec.llm.research_env_prefix and research_config != config.llm
-        else "chat"
-    )
+    research_agent_source = spec.llm.research.binding
     print(f"runtime_id={spec.agents.runtime}")
     print("selection_scope=instance")
     print("cross_runtime_routing=false")
@@ -734,7 +716,7 @@ def _cmd_route_explain(args: argparse.Namespace) -> int:
     print(f"research.source={research_agent_source}")
     print(f"research.model={research_config.model}")
     print(f"main.model={config.llm.model}")
-    print(f"main.reasoning_effort={config.llm.reasoning_effort or 'medium'}")
+    print(f"main.reasoning_effort={config.llm.reasoning_effort or ''}")
     print(
         "worker.profiles="
         + (",".join(sorted(config.routing.code_profiles)) or "-")
@@ -1046,7 +1028,7 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
             print(f"[ERR] {error}")
         print(f"      请检查：{local_env_path}")
         return 1
-    ordered = runtime_environment_keys(spec)
+    ordered = runtime_environment_keys(spec, environment=values)
 
     env_file = Path(values["CHATCOPILOT_ENV_FILE"]).expanduser()
     if args.dry_run:

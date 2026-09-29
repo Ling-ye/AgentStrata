@@ -25,9 +25,9 @@ from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object
 
 def _runtime_route(runtime_id: str) -> ResolvedRuntimeRoute:
     config = (
-        LLMConfig(provider="openai", api="openai_responses", api_key="fixture")
+        LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="fixture")
         if runtime_id == "codex"
-        else ChatConfig().llm
+        else ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ).llm
     )
     return ResolvedRuntimeRoute(runtime_id, config.model_route())  # type: ignore[arg-type]
 
@@ -395,7 +395,7 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
         main_model_client=_FakeLLM("{}"),
         tools=(web_fetch, _tool("normal_tool")),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=_runtime_route("native"),
         subagents=SubagentSpec(
             research_enabled=True,
@@ -432,7 +432,7 @@ def test_native_and_langgraph_expose_search_information_for_direct_provider(
         main_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         subagents=SubagentSpec(
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),
@@ -469,7 +469,7 @@ def test_codex_backend_constructs_configured_search_and_delegate_agents() -> Non
         subagent_default_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         subagents=SubagentSpec(
             include=("browser_reader",),
             research_enabled=True,
@@ -518,7 +518,7 @@ def test_codex_eval_policy_exposes_real_unified_search_tool() -> None:
         subagent_default_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         subagents=SubagentSpec(
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),
@@ -581,7 +581,7 @@ def test_codex_backend_uses_current_personal_workspace_root(tmp_path) -> None:
         subagent_default_model_client=_FakeLLM("{}"),
         tools=(_tool("normal_tool"),),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=_runtime_route("codex"),
     )
 
@@ -625,7 +625,7 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
         main_model_client=_FakeLLM("{}"),
         tools=(web_fetch,),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=_runtime_route("native"),
         subagents=SubagentSpec(
             research_enabled=True,

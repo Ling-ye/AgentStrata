@@ -68,7 +68,8 @@ class HarnessController:
 
     @property
     def default_model(self) -> str:
-        return self.settings.get("CHATCOPILOT_HARNESS_MODEL", "")
+        from chatcopilot.core.model_settings import resolve_binding
+        return resolve_binding("harness", environment={**os.environ, **self.settings}).model
 
     def start_request(self, request, *, launch: bool = True):
         if request.source_kind == "robot_task":
@@ -217,7 +218,14 @@ class HarnessController:
         request_id = request_id or uuid.uuid4().hex
         if not re.fullmatch(r"[A-Za-z0-9_-]{1,100}", request_id):
             raise ValueError("invalid request ID")
-        request_digest = _digest({**identity, "options": asdict(options)})
+        request_options = asdict(options)
+        request_options.pop("model_settings", None)
+        if options.model_profile:
+            # A profile is a mutable reference. Retrying the same submitted
+            # request must return its first captured route, even after a save.
+            request_options.pop("model", None)
+            request_options.pop("reasoning_effort", None)
+        request_digest = _digest({**identity, "options": request_options})
         previous = self.store.by_request(request_id)
         if previous is not None:
             if previous["request_digest"] != request_digest:
@@ -506,18 +514,11 @@ class HarnessController:
                 "report": ArtifactRepository(self.store.root / "jobs" / task_id).read(reference) if reference else None}
 
     def governance_config(self):
-        return {"default_model": self.default_model, "reasoning_effort": "medium", "max_attempts": 3,
+        from chatcopilot.core.model_settings import read_settings
+        data = read_settings({**os.environ, **self.settings})
+        return {"default_profile": data["bindings"].get("code_health", ""), "max_attempts": 3,
                 "stop_condition": {"mode": "time", "seconds": 3600}, "interval_hours": 24}
 
-    def governance_models(self):
-        from chatcopilot.harness.codex_adapter import worker_models
-        return [{"model": row.get("model", row.get("id")),
-                 "reasoning_efforts": [effort["reasoningEffort"] for effort in row.get("supportedReasoningEfforts", [])
-                                       if isinstance(effort, dict) and isinstance(effort.get("reasoningEffort"), str)]}
-                for row in worker_models(self.settings, self.repository)
-                if isinstance(row.get("model", row.get("id")), str)
-                and row.get("model", row.get("id"))
-                and isinstance(row.get("supportedReasoningEfforts"), list)]
 
     def governance_schedule(self):
         from chatcopilot.harness.schedule_runtime import GovernanceScheduler

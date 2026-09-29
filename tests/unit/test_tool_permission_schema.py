@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from tests.prompt_plan_fixture import prompt_input, runtime_route
 
 from dataclasses import replace
@@ -50,7 +52,7 @@ def _runtime(*tools: ToolDef) -> AgentRuntime:
         main_model_client=object(),  # type: ignore[arg-type]
         tools=tuple(tools),
         tools_schema=tuple(build_openai_schema(tool) for tool in tools),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
     )
 

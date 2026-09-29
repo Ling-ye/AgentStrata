@@ -139,7 +139,7 @@ def build_search_subagent(
         unavailable_message=f"{name}_unavailable: {server_id} MCP is not connected.",
     )
     runtime_config = SubagentRuntimeConfig(
-        model_env_prefix=budget.model_env_prefix,
+        model_binding=budget.model_binding,
         max_model_turns=budget.max_model_turns,
         max_tool_calls=budget.max_tool_calls,
         timeout_seconds=budget.timeout_seconds,

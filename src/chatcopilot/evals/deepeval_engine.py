@@ -6,8 +6,10 @@ model. The service can inspect requirements without initializing the SDK.
 
 from __future__ import annotations
 
+from chatcopilot.core.model_routes import create_model_client
+
 from contextlib import contextmanager, redirect_stdout
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from importlib.metadata import PackageNotFoundError, version
 import json
 import math
@@ -33,24 +35,19 @@ class JudgeConfig:
     api_key: str
     timeout: float = 60
     reasoning_effort: str | None = None
+    llm_config: LLMConfig | None = field(default=None, repr=False)
 
     @classmethod
     def from_environment(cls, env: Mapping[str, str] | None = None) -> JudgeConfig:
+        from chatcopilot.core.model_settings import resolve_binding
         values = os.environ if env is None else env
-        model = values.get(_PREFIX + "MODEL", "").strip()
-        base_url = values.get(_PREFIX + "BASE_URL", "").strip()
-        key = values.get(_PREFIX + "API_KEY", "").strip()
-        if not model or not base_url or not key:
-            raise ValueError(
-                "请配置独立评分模型 CHATCOPILOT_EVALUATION_JUDGE_MODEL / BASE_URL / API_KEY"
-            )
-        timeout = float(values.get(_PREFIX + "TIMEOUT", "60"))
-        if not math.isfinite(timeout) or timeout <= 0 or timeout > 600:
-            raise ValueError("CHATCOPILOT_EVALUATION_JUDGE_TIMEOUT must be in (0, 600]")
-        effort = values.get(_PREFIX + "REASONING_EFFORT", "").strip().lower() or None
-        if effort is not None and effort not in {"none", "minimal", "low", "medium", "high", "xhigh", "max"}:
-            raise ValueError("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT is unsupported")
-        return cls(model, base_url, key, timeout, effort)
+        retired = ("MODEL", "BASE_URL", "TIMEOUT", "REASONING_EFFORT")
+        if any(_PREFIX + key in values for key in retired):
+            raise ValueError("旧 Judge 模型配置已移除，请配置 evaluation.judge 用途")
+        cfg = resolve_binding("evaluation.judge", environment=values)
+        if cfg.auth_mode == "api_key" and not cfg.api_key:
+            raise ValueError("评分模型的 API 凭据未配置")
+        return cls(cfg.model, cfg.base_url, cfg.api_key, cfg.timeout, cfg.reasoning_effort, cfg)
 
     def public_snapshot(self) -> dict[str, Any]:
         # Credentials and private endpoints never enter durable scoring metadata.
@@ -210,8 +207,8 @@ def _model(config: JudgeConfig) -> Any:
             super().__init__(model=config.model)
 
         def load_model(self) -> Any:
-            return LLMClient(
-                LLMConfig(
+            return create_model_client(
+                config.llm_config or LLMConfig(
                     model=config.model,
                     base_url=config.base_url,
                     api_key=config.api_key,

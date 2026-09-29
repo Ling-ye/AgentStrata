@@ -13,6 +13,8 @@ rubric (if present) anchor the evaluation.
 
 from __future__ import annotations
 
+from chatcopilot.core.model_routes import create_model_client
+
 import json
 import logging
 from typing import Any
@@ -58,9 +60,8 @@ def judge_llm_rubric(
         )
 
     try:
-        from chatcopilot.core.llm_client import LLMClient
 
-        llm = LLMClient(chat_config.llm)
+        llm = create_model_client(chat_config.llm)
         messages = [
             {"role": "system", "content": _JUDGE_SYSTEM},
             {

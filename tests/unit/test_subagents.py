@@ -170,7 +170,7 @@ class SubagentTests(unittest.TestCase):
             session_id="sid",
             subagents=SubagentSpec(search_budget=SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1)),
             main_llm=_FakeLLM(ChatResult(content="unused")),
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(xhs,),
             mcp_configs=(
                 McpServerConfig(
@@ -507,7 +507,7 @@ class SubagentTests(unittest.TestCase):
             subagent_default_model_client=_FakeLLM(ChatResult(content="done")),
             tools=(_tool("start_code_task", category="development.task.write"),),
             tools_schema=(),
-            runtime_config=ChatConfig(),
+            runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             subagents=SubagentSpec(
                 include=("adapter_forge", "mcp_query"),
                 agents={
@@ -555,7 +555,7 @@ class SubagentTests(unittest.TestCase):
             subagent_default_model_client=_FakeLLM(ChatResult(content="done")),
             tools=(_tool("start_code_task", category="development.task.write"),),
             tools_schema=(),
-            runtime_config=ChatConfig(),
+            runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             subagents=SubagentSpec(
                 include=("adapter_forge", "mcp_query"),
                 agents={
@@ -621,7 +621,7 @@ class SubagentTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1)},
             ),
             main_llm=fake_llm,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(
                 _tool("read_file", category="dev.files"),
                 _tool("read_text_head", category="agent.workspace"),
@@ -662,7 +662,7 @@ class SubagentTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=2, max_tool_calls=2)},
             ),
             main_llm=scripted,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
@@ -687,7 +687,7 @@ class SubagentTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1)},
             ),
             main_llm=fake_llm,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
@@ -733,7 +733,7 @@ class SubagentTests(unittest.TestCase):
                 },
             ),
             main_llm=scripted,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(browser_close,),
         )
 
@@ -759,7 +759,7 @@ class SubagentTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1)},
             ),
             main_llm=fake_llm,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(_tool("read_file", category="dev.files"), sender),
         )
 
@@ -851,7 +851,7 @@ class SubagentTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=2, max_tool_calls=3)},
             ),
             main_llm=scripted,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 
@@ -895,7 +895,7 @@ class SubagentTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=2, max_tool_calls=3)},
             ),
             main_llm=scripted,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(_tool("read_file", category="dev.files"),),
         )
 

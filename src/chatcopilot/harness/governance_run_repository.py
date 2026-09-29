@@ -39,7 +39,11 @@ class GovernanceRunRepository:
             yield
 
     def create(self, repository, options, request_id):
-        digest = hashlib.sha256(json_text({"repository": repository, "options": options}).encode()).hexdigest()
+        identity_options = {key: value for key, value in options.items() if key != "model_settings"}
+        if options.get("model_profile"):
+            identity_options.pop("model", None)
+            identity_options.pop("reasoning_effort", None)
+        digest = hashlib.sha256(json_text({"repository": repository, "options": identity_options}).encode()).hexdigest()
         with self.store.database.connect(write=True) as connection:
             old = connection.execute("SELECT payload FROM governance_runs WHERE request_id=?", (request_id,)).fetchone()
             if old:

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from tests.prompt_plan_fixture import prompt_input, prompt_plan, runtime_route
 
 import json
@@ -77,7 +79,7 @@ class CurrentDatePromptTests(unittest.TestCase):
             main_model_client=_FakeLLM(),
             tools=(),
             tools_schema=(),
-            runtime_config=ChatConfig(),
+            runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             route=runtime_route(),
         )
         with patch("chatcopilot.agent.context.prompt_plan.date") as mocked_date:
@@ -101,7 +103,7 @@ class CurrentDatePromptTests(unittest.TestCase):
     def test_runtime_refresh_replaces_persona_and_memory_without_duplication(self) -> None:
         runtime = AgentRuntime(
             main_model_client=_FakeLLM(), tools=(), tools_schema=(),
-            runtime_config=ChatConfig(), route=runtime_route()
+            runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), route=runtime_route()
         )
         old_input = prompt_input("stable")
         old_input = old_input.__class__(

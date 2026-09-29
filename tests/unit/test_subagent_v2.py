@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 import json
 import unittest
 from dataclasses import replace
@@ -243,7 +245,7 @@ class SubagentV2Tests(unittest.TestCase):
             session_id="sid-cache-v2",
             subagents=SubagentSpec(custom=(custom_sub,)),
             main_llm=llm,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(_tool("read_file", category="dev.files"),),
         )
         executor = ToolExecutor(caller_role_hint="owner", tools=list(tools))
@@ -290,7 +292,7 @@ class SubagentV2Tests(unittest.TestCase):
             session_id="sid-writer-v2",
             subagents=custom,
             main_llm=llm,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(writer, sender),
         )
 
@@ -320,7 +322,7 @@ class SubagentV2Tests(unittest.TestCase):
             session_id="sid-no-legacy-research",
             subagents=SubagentSpec(workflows=("research",)),
             main_llm=_ScriptedLLM([_done()]),
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(),
         )
 

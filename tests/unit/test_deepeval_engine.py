@@ -74,7 +74,7 @@ def test_low_quality_and_judge_error_are_distinct(deepeval_judge):
 def test_preflight_rejects_missing_judge_without_importing_sdk(monkeypatch):
     for key in ("MODEL", "BASE_URL", "API_KEY"):
         monkeypatch.delenv("CHATCOPILOT_EVALUATION_JUDGE_" + key, raising=False)
-    with pytest.raises(ValueError, match="独立评分模型"):
+    with pytest.raises(ValueError, match="评分模型"):
         engine.preflight([case()])
 
 
@@ -150,21 +150,19 @@ def test_missing_framework_metric_is_an_error(monkeypatch, deepeval_judge):
 
 
 @pytest.mark.parametrize("effort", [None, "medium"])
-def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monkeypatch, effort):
+def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monkeypatch, effort, model_settings):
     import json
 
     from chatcopilot.core.llm_client import ChatResult, LLMClient
 
-    for key, value in {
-        "MODEL": "configured-judge",
-        "BASE_URL": "https://judge.example.test/v1",
-        "API_KEY": "controlled-judge-key",
-    }.items():
-        monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_" + key, value)
-    if effort is None:
-        monkeypatch.delenv("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT", raising=False)
-    else:
-        monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT", effort)
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    data["connections"]["judge"] = {"kind": "openai_compatible", "base_url": "https://judge.example.test/v1", "timeout": 60,
+        "auth": {"mode": "api_key", "key_env": "CHATCOPILOT_EVALUATION_JUDGE_API_KEY"}}
+    data["profiles"]["judge"] = {"connection": "judge", "model": "configured-judge", **({"reasoning_effort": effort} if effort else {})}
+    data["bindings"]["evaluation.judge"] = "judge"
+    write_models(model_settings, data)
+    monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_API_KEY", "controlled-judge-key")
     requests = []
 
     def chat(client, **kwargs):
@@ -193,14 +191,15 @@ def test_real_judge_adapter_builds_prompt_plan_and_scores_with_host_client(monke
     assert "controlled-judge-key" not in content
 
 
-def test_judge_reasoning_config_is_validated_and_changes_snapshot():
-    env = {"CHATCOPILOT_EVALUATION_JUDGE_MODEL": "fixture",
-           "CHATCOPILOT_EVALUATION_JUDGE_BASE_URL": "https://judge.example.test/v1",
-           "CHATCOPILOT_EVALUATION_JUDGE_API_KEY": "fixture-key"}
-    original = engine.JudgeConfig.from_environment(env).public_snapshot()
-    env["CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT"] = "medium"
-    current = engine.JudgeConfig.from_environment(env).public_snapshot()
+def test_judge_reasoning_config_is_validated_and_changes_snapshot(model_settings):
+    import json
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    environment = {"CHATCOPILOT_CHAT_API_KEY": "fixture-key"}
+    original = engine.JudgeConfig.from_environment(environment).public_snapshot()
+    data["profiles"]["chat"]["reasoning_effort"] = "medium"
+    write_models(model_settings, data)
+    current = engine.JudgeConfig.from_environment(environment).public_snapshot()
     assert current["reasoning_effort"] == "medium" and current != original
-    env["CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT"] = "invalid"
-    with pytest.raises(ValueError, match="REASONING_EFFORT"):
-        engine.JudgeConfig.from_environment(env)
+    with pytest.raises(ValueError, match="旧 Judge"):
+        engine.JudgeConfig.from_environment({**environment, "CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT": "high"})

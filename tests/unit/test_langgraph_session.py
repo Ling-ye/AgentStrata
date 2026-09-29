@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from tests.prompt_plan_fixture import prompt_input, prompt_plan, runtime_route
 
 import importlib.util
@@ -79,7 +81,7 @@ class LangGraphRuntimeTests(unittest.TestCase):
             main_model_client=_FakeLLM([]),  # type: ignore[arg-type]
             tools=(tool,),
             tools_schema=(build_openai_schema(tool),),
-            runtime_config=ChatConfig(),
+            runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             route=runtime_route("langgraph"),
         )
 

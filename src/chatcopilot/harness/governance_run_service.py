@@ -100,7 +100,7 @@ class GovernanceRuns:
             if existing is None:
                 if self.store.active_governance(self.repository):
                     raise HarnessError("governance_active", "仓库仍有活动或未确认停止的熵回收任务或交付")
-                self.tasks.preflight_model(options.model, options.reasoning_effort)
+                self.tasks.preflight_model(options.model, options.reasoning_effort, model_settings=options.model_settings, model_profile=options.model_profile)
             run, _ = self.runs.create(self.repository, options.to_payload(), request_id)
             self._advance(run["run_id"], preflighted=existing is None)
             return self.get(run["run_id"])
@@ -221,8 +221,8 @@ class GovernanceRuns:
                         source = learning_source(task, self.store.attempts(task["task_id"]))
                         if source:
                             options = GovernanceOptions.from_payload(run["options"])
-                            child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800)
-                            self.tasks.preflight_model(options.model, options.reasoning_effort)
+                            child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800, options.model_settings, options.model_profile)
+                            self.tasks.preflight_model(options.model, options.reasoning_effort, model_settings=options.model_settings, model_profile=options.model_profile)
                             child = self.tasks.start_learning(run, run["sequence"] + 1, child_options, source)
                             if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                                 raise HarnessError("governance_active", "Skill 学习任务不属于当前回收批次")
@@ -253,9 +253,9 @@ class GovernanceRuns:
                 raise HarnessError("governance_active", "仓库仍有未完成的代码熵回收任务或交付")
             options = GovernanceOptions.from_payload(run["options"])
             child_options = RepairOptions(options.model, options.reasoning_effort, options.max_attempts,
-                                          math.ceil(remaining) if remaining is not None else None)
+                                          math.ceil(remaining) if remaining is not None else None, options.model_settings, options.model_profile)
             if not preflighted:
-                self.tasks.preflight_model(options.model, options.reasoning_effort)
+                self.tasks.preflight_model(options.model, options.reasoning_effort, model_settings=options.model_settings, model_profile=options.model_profile)
             child = self.tasks.start(run, run["sequence"] + 1, child_options)
             if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
                 raise HarnessError("governance_active", "创建结果不属于当前回收批次，未启动任务")

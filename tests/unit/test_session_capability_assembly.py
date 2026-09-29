@@ -57,7 +57,7 @@ def _context() -> SessionCapabilityContext:
         runtime_id="native",
         main_llm=llm,
         research_llm=llm,
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         subagents=SubagentSpec(),
         base_tools=(),
         subagent_tools=(),
@@ -272,7 +272,7 @@ def test_runtime_threads_detached_profile_into_session_materialization(
         main_model_client=llm,
         tools=(),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
         assembly_profile="detached",
         session_capability_packs=("tests.session",),
@@ -305,7 +305,7 @@ def test_direct_runtime_does_not_select_future_session_capabilities_by_default(
         main_model_client=cast(LLMClient, object()),
         tools=(),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
     )
 
@@ -329,7 +329,7 @@ def test_invalid_profile_fails_before_mcp_materialization(
 
     with pytest.raises(ValueError, match="assembly profile"):
         runtime_module.build_agent_runtime(
-            chat_config=ChatConfig(),
+            chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             route=runtime_route(),
             mcp_servers=(cast(Any, object()),),
             assembly_profile=cast(Any, "invalid"),
@@ -347,7 +347,7 @@ def test_detached_runtime_rejects_reintroduced_interactive_provider() -> None:
 
     with pytest.raises(ValueError, match="persona.control"):
         runtime_module.build_agent_runtime(
-            chat_config=ChatConfig(),
+            chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             route=runtime_route(),
             tool_packs=(),
             runtime_providers=(persona_provider,),
@@ -363,8 +363,8 @@ def test_detached_runtime_allows_unknown_local_provider_pack() -> None:
     )
 
     runtime = runtime_module.build_agent_runtime(
-        chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
-        route=runtime_route("native", LLMConfig(api_key="test-key")),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="test-key")),
+        route=runtime_route("native", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
         tool_packs=(),
         runtime_providers=(local_provider,),
         assembly_profile="detached",
@@ -399,8 +399,8 @@ def test_runtime_closes_mcp_when_loaded_provider_fails_validation(
 
     with pytest.raises(ToolMaterializationError, match="invalid_tool_audiences"):
         runtime_module.build_agent_runtime(
-            chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
-            route=runtime_route("native", LLMConfig(api_key="test-key")),
+            chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="test-key")),
+            route=runtime_route("native", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
             tool_packs=(),
             mcp_servers=(McpServerConfig(id="invalid-provider"),),
         )
@@ -431,8 +431,8 @@ def test_successful_runtime_owns_mcp_until_close(
     monkeypatch.setattr(runtime_module, "McpToolProvider", ValidMcpProvider)
 
     runtime = runtime_module.build_agent_runtime(
-        chat_config=ChatConfig(llm=LLMConfig(api_key="test-key")),
-        route=runtime_route("native", LLMConfig(api_key="test-key")),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="test-key")),
+        route=runtime_route("native", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
         tool_packs=(),
         mcp_servers=(McpServerConfig(id="valid-provider"),),
     )

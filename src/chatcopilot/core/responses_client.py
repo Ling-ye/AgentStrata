@@ -85,7 +85,7 @@ def responses_chat(
         "store": False,
         "tools": [{"type": "function", **entry["function"]} for entry in tools],
     }
-    effort = reasoning_effort or route.reasoning_effort
+    effort = route.reasoning_effort if reasoning_effort is None else reasoning_effort
     if effort:
         payload["reasoning"] = {"effort": effort}
     payload["include"] = ["reasoning.encrypted_content"]

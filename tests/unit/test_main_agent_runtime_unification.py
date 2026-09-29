@@ -139,7 +139,7 @@ class BackendRegistryTests(TestCase):
         answer = "我能解释运行框架；没有回执不能声称文件已修改、消息已发送或任务已完成。"
         llm = mock.Mock(model="fixture-model")
         llm.chat.return_value = ChatResult(content=answer)
-        backend = build_runtime_adapter(runtime_route(), tool_names=set(), llm=llm, runtime_config=ChatConfig(),
+        backend = build_runtime_adapter(runtime_route(), tool_names=set(), llm=llm, runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
                                 tool_executor=ToolExecutor(caller_role_hint="owner", tools=[]), tools_schema=[])
         session = backend.open_session(RuntimeOpenRequest(
             session_id="integrity", prompt_plan=prompt_plan("system"), route=runtime_route()
@@ -182,7 +182,7 @@ class BackendRegistryTests(TestCase):
                     runtime_route(runtime_id),
                     tool_names=set(),
                     llm=llm,
-                    runtime_config=ChatConfig(),
+                    runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
                     tool_executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                 )

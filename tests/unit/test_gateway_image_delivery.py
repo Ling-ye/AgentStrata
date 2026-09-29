@@ -1,4 +1,6 @@
 """Production composition sends workspace images through the real Channel and OneBot driver."""
+
+from chatcopilot.core.config import LLMConfig
 import asyncio
 import base64
 
@@ -31,7 +33,7 @@ def test_production_factory_injects_a_causally_connected_sender(tmp_path, monkey
     def driver(cfg, on_event):
         return OneBotForwardWebSocketDriver(cfg, on_event, connection_factory=connect)
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *a, **kw: agent)
-    monkeypatch.setattr(runtime_module, "load_config", lambda **kw: ChatConfig())
+    monkeypatch.setattr(runtime_module, "load_config", lambda **kw: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", driver)
     monkeypatch.setattr(runtime_module, "GatewayWebSocketServer", _FakeServer)
     host = runtime_module.build_gateway_runtime_host(config, environ=_environment(tmp_path))

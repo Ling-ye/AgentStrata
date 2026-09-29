@@ -807,7 +807,7 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
         "codex_adapter", "evaluation_adapter", "local_verifier", "github_delivery")}
     public_symbols = {
         prefix + "api": {"HarnessController"},
-        prefix + "governance_types": {"GovernanceOptions", "GovernanceSchedule"},
+        prefix + "governance_types": {"GovernanceOptions", "GovernanceSchedule", "ScheduledGovernanceOptions"},
         prefix + "models": {"HarnessError", "RepairOptions", "RepairFeedback", "RepairRequest"},
     }
     violations: dict[str, list[str]] = {}

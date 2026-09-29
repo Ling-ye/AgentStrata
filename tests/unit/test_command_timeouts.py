@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 import asyncio
 from contextlib import asynccontextmanager
 from dataclasses import FrozenInstanceError, replace
@@ -33,7 +35,7 @@ def _projection(*, default=60, maximum=300, environment=None):
         dev, shell=replace(dev.shell, timeout_default=default, timeout_max=maximum),
     ))
     return project_agent_runtime(
-        runtime, chat_config=ChatConfig(),
+        runtime, chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         environment={} if environment is None else environment,
     )
 

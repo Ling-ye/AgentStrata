@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.botspec.model import LLMSpec
 
 import asyncio
@@ -256,7 +258,7 @@ def _build_fake_host(
 ) -> tuple[Any, _FakeAgentRuntime]:
     _LIFECYCLE.clear()
     agent = _FakeAgentRuntime(_LIFECYCLE)
-    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig())
+    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *_, **__: agent)
     monkeypatch.setattr(runtime_module, "ActorSessionFactory", _FakeActorFactory)
     monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", _FakeDriver)
@@ -501,7 +503,7 @@ def test_agent_assembly_failure_does_not_fence_existing_writer_generation(
     state_root = Path(environ["CHATCOPILOT_GATEWAY_STATE_ROOT"])
     existing = GatewayStateStore(state_root, trusted_anchor=state_root.parent)
     assert existing.acquire_writer_generation(now=1.0) == 1
-    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig())
+    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
 
     def fail_assembly(*args: Any, **kwargs: Any) -> Any:
         del args, kwargs
@@ -524,7 +526,7 @@ def test_build_failure_after_generation_releases_instance_lease(
     environ = _environment(tmp_path)
     agent = _FakeAgentRuntime(_LIFECYCLE)
     _LIFECYCLE.clear()
-    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig())
+    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(
         runtime_module,
         "assemble_agent_runtime",
@@ -605,7 +607,7 @@ def test_build_hydrates_then_closes_recovery_required_run(
 
     _LIFECYCLE.clear()
     agent = _FakeAgentRuntime(_LIFECYCLE)
-    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig())
+    monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *_, **__: agent)
     monkeypatch.setattr(runtime_module, "ActorSessionFactory", _FakeActorFactory)
     monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", _FakeDriver)

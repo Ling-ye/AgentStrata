@@ -192,7 +192,16 @@ def declared_configuration(path: Path, environment: Mapping[str, str], *,
                 }
             )
     _context_details(spec, projection, environment)
-    enrich_agent_configuration(projection, spec, environment, saved_environment=saved_environment)
+    from chatcopilot.core.model_settings import ModelSettingsError
+    try:
+        enrich_agent_configuration(projection, spec, environment, saved_environment=saved_environment)
+    except (ModelSettingsError, ValueError) as exc:
+        projection["model_configuration_error"] = str(exc)
+        projection["model"] = None
+        projection["runtime_id"] = spec.agents.runtime
+        for entity in projection["entities"]:
+            if entity["id"].startswith("model-slot:"):
+                entity.update(configured=False, available=False, effective_config=None, configuration_error=str(exc))
     return public_configuration(projection, secrets=collect_observability_secrets(environment))
 
 
@@ -200,7 +209,7 @@ def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) 
     spec = load_botspec(path)
     source_root = _source_root(path)
     provisioned = deployment_environment(spec, saved, source_root=source_root, home=home)
-    exported = exported_environment(provisioned, runtime_environment_keys(spec))
+    exported = exported_environment(provisioned, runtime_environment_keys(spec, environment=provisioned))
     effective = resolve_runtime_environment(spec, exported, source_root=source_root)
     current = declared_configuration(path, saved)
     expected = declared_configuration(path, effective, saved_environment=saved)

@@ -6,6 +6,8 @@ the orchestration, while each Trial has an independent outcome.
 
 from __future__ import annotations
 
+from chatcopilot.evals.model_settings import freeze_models
+
 from chatcopilot.contracts.execution_scope import RUNTIME_ACCESS_POLICY_VERSION
 from chatcopilot.evals.private_files import validate_private_file_metadata as _validate_private_artifact_metadata
 
@@ -253,6 +255,9 @@ def _execute_trial_with_artifact_guard(
         return trial
 
 
+
+
+@freeze_models(lambda bot: load_evaluation_runtime(bot))
 def run_evaluation(
     request: Mapping[str, Any] | EvaluationRequest,
     *,
@@ -305,6 +310,9 @@ def run_evaluation(
     _ensure_private_dir(output)
     if not resume and not managed:
         _persist_request(parsed, targets, output)
+        from chatcopilot.core.model_settings import read_settings
+        _write_json(output / "llm.json", read_settings())
+    os.environ["AGENTSTRATA_LLM_CONFIG"] = str(output / "llm.json")
 
     started_clock = time.monotonic()
     started_at = checkpoint.started_at or _utc_now()
@@ -2045,7 +2053,7 @@ def _validate_managed_bootstrap(
     request: EvaluationRequest,
     targets: Sequence[EvaluationTarget],
 ) -> None:
-    required = {"request.json", "state.json"}
+    required = {"request.json", "state.json", "llm.json"}
     allowed = {*required, "run.log", ".cancel-requested.json"}
     if not required.issubset(entries) or not set(entries).issubset(allowed):
         raise ValueError("Evaluation output is not a managed service bootstrap directory")
@@ -2064,6 +2072,18 @@ def _validate_managed_bootstrap(
         "created_at": stored_request.get("created_at"),
         "core_request": _runnable_request_dict(request),
     }
+    from chatcopilot.contracts.model_runtime import digest
+    from chatcopilot.core.model_settings import validate_settings
+    model_settings = validate_settings(_read_private_json_object(entries["llm.json"], "Evaluation model settings"))
+    expected["model_settings_sha256"] = digest(model_settings)
+    if "model_profile" in stored_request:
+        from chatcopilot.botspec.loader import load_botspec
+        from chatcopilot.botspec.registry import resolve_bot_spec_path
+        profile = stored_request["model_profile"]
+        binding = load_botspec(resolve_bot_spec_path(request.bot)).llm.chat.binding
+        if not isinstance(profile, str) or model_settings["bindings"].get(binding) != profile:
+            raise ValueError("Evaluation model profile does not match its frozen configuration")
+        expected["model_profile"] = profile
     start_fingerprint = stored_request.get("start_request_fingerprint")
     if start_fingerprint is not None:
         if (
@@ -2275,6 +2295,7 @@ def _resume_checkpoint(
 def _validate_resume_artifact_paths(output: Path) -> None:
     for name in (
         "request.json",
+        "llm.json",
         "state.json",
         "result.json",
         "summary.md",
@@ -2661,7 +2682,6 @@ _RUNTIME_CONFIG_FINGERPRINT_FIELDS = (
     "stall_window_seconds",
     "topic_classifier_enabled",
     "topic_classifier_mode",
-    "topic_model",
     "topic_uncertain_mode",
     "topic_related_threshold",
     "topic_unrelated_threshold",

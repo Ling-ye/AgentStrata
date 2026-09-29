@@ -40,7 +40,7 @@ class RecordedTaskOperations:
         self.started = []
         self.lose_receipt = False
 
-    def preflight_model(self, model, reasoning_effort):
+    def preflight_model(self, model, reasoning_effort, *, model_settings=None, model_profile=""):
         assert (model, reasoning_effort) == ("fixture", "medium")
 
     def start(self, run, sequence, options):

@@ -90,8 +90,13 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         generation = state.acquire_writer_generation()
         values = {'CHATCOPILOT_GATEWAY_STATE_ROOT': str(state.root),
                   'CHATCOPILOT_ADMINS': '100' + f'20030{index}', 'QQ_ALLOW_FROM': '100' + f'40050{index}',
-                  'QQ_ACCESS_TOKEN': 'fixture-' + f'credential-{index}', 'FIXTURE_CHAT_MODEL': f'model-{index}',
+                  'QQ_ACCESS_TOKEN': 'fixture-' + f'credential-{index}',
                   'FIXTURE_CHAT_API_KEY': 'fixture-' + f'llm-value-{index}'}
+        from tests.model_settings_fixture import test_model_document, write_models
+        models = test_model_document()
+        models['connections']['api']['auth']['key_env'] = 'FIXTURE_CHAT_API_KEY'
+        models['profiles']['chat']['model'] = f'model-{index}'
+        values.update(write_models(folder / 'llm.json', models))
         env = folder / 'local.env'
         env.write_text(''.join(f'{key}={value}\n' for key, value in values.items()))
         env.chmod(0o600)

@@ -152,35 +152,10 @@ def build_provision_plan(
             )
         )
 
-    llm_prefix = spec.llm.env_prefix
     starter = is_guided_starter_spec(spec)
-    subscription = spec.llm.chat.auth is not None and spec.llm.chat.auth.mode == "chatgpt"
-    if not subscription:
-        key_env = spec.llm.chat.auth.key_env if spec.llm.chat.auth is not None else f"{llm_prefix}_API_KEY"
-        add(key_env, field="chat_api_key", label="LLM API Key", group="llm", required=True,
-            description="Explicit model API-key credential", secret=True)
-    elif spec.llm.research.inherit_env_prefix:
-        add(f"{spec.llm.research.inherit_env_prefix}_API_KEY", field="research_api_key",
-            label="辅助模型 API Key", group="llm", required=False, secret=True,
-            description="Only auxiliary model calls use this credential; main chat uses subscription auth")
-    add(
-        f"{llm_prefix}_BASE_URL",
-        field="chat_base_url",
-        label="LLM Base URL",
-        group="llm",
-        required=starter,
-        description="OpenAI-compatible API base URL",
-        secret=False,
-    )
-    add(
-        f"{llm_prefix}_MODEL",
-        field="chat_model",
-        label="LLM 模型 ID",
-        group="llm",
-        required=starter,
-        description="Chat model ID",
-        secret=False,
-    )
+    add("AGENTSTRATA_LLM_CONFIG", field="llm_config", label="统一模型配置文件", group="llm",
+        required=False, default="~/.config/agentstrata/llm.json", secret=False,
+        description="在模型配置页面维护连接、模型方案与用途绑定")
     add(
         "CHATCOPILOT_ADD_OWNER_IDS",
         label="Owner QQ 号" if spec.platform.type == "qq" else "Owner ID",
@@ -364,8 +339,6 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and not spec.agents.custom
         and not spec.agents.workflows
         and not spec.llm.code.enabled
-        and spec.llm.research_env_prefix is None
-        and spec.llm.research.model is None
         and spec.context.rag.sources is None
         and not spec.context.wiki.enabled
         and spec.context.codebases.registry is None
@@ -692,17 +665,11 @@ def validate_provision_candidate(
     by_field = {item.field: item for item in plan.fields}
     errors: list[str] = []
 
-    base_url_field = by_field.get("chat_base_url")
-    if base_url_field is not None:
-        base_url = str(values.get(base_url_field.env_key, "") or "").strip()
-        if base_url and not is_allowed_llm_base_url(base_url):
-            errors.append("llm_base_url_invalid")
-
-    model_field = by_field.get("chat_model")
-    if model_field is not None:
-        model = str(values.get(model_field.env_key, "") or "").strip()
-        if model and any(character in model for character in ("\r", "\n", "\x00")):
-            errors.append("llm_model_invalid")
+    config_field = by_field.get("llm_config")
+    if config_field is not None:
+        config_path = str(values.get(config_field.env_key, "") or "").strip()
+        if config_path and not Path(config_path).expanduser().is_absolute():
+            errors.append("llm_config_path_invalid")
 
     owner_field = by_field.get("add_owner_ids")
     if plan.platform == "qq" and owner_field is not None:

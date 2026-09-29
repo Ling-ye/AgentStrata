@@ -89,7 +89,8 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
     result = coder.review(root, {"task_id": task_id, "source": source, "patch": patch.read_text(), **governance_context,
         "reproduction": task.get("evaluations", {}), "verification": verification, "regression": trials},
         CodingOptions(task["options"]["model"], task["options"]["reasoning_effort"], 1,
-                      max(1, int(remaining())) if remaining() is not None else None), directory / "review", check_cancel)
+                      max(1, int(remaining())) if remaining() is not None else None,
+                      task["options"].get("model_settings", {}), task["options"].get("model_profile", "")), directory / "review", check_cancel)
     review = review_decision({key: result[key] for key in ("decision", "problem", "reason", "evidence_refs") if key in result})
     if plan.purpose == "governance" and review["decision"] == "approved":
         from chatcopilot.harness.governance_repository import require_improvement

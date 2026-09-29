@@ -52,7 +52,7 @@ RagSourcePlan = RagSourceConfig
 
 @dataclass(frozen=True)
 class SubagentBudgetPlan:
-    model_env_prefix: str | None = None
+    model_binding: str | None = None
     max_model_turns: int = 3
     max_tool_calls: int = 6
     timeout_seconds: int = 120

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import json
 import os
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,7 +31,10 @@ def fixture(tmp_path, name="fixture"):
             "context": {"rag": {"sources": "rag.yaml"}, "codebases": {"registry": "repos.yaml"}}}
     path = folder / "bot.yaml"
     path.write_text(yaml.safe_dump(data))
-    values = {"CHATCOPILOT_CHAT_MODEL": name + "-model", "QQ_ALLOW_FROM": "*",
+    from tests.model_settings_fixture import test_model_document, write_models
+    models = test_model_document()
+    models["profiles"]["chat"]["model"] = name + "-model"
+    values = {**write_models(folder / "llm.json", models), "QQ_ALLOW_FROM": "*",
               "CHATCOPILOT_RAG_ROOT": str(folder / "documents"), "CHATCOPILOT_REPO_ROOT": str(folder / "repository"),
               "CHATCOPILOT_WIKI_ROOT": "~/wiki", "GITHUB_MCP_AUTHORIZATION": ""}
     return path, values
@@ -61,7 +65,7 @@ def test_expected_matches_actual_export_and_startup_defaults_without_process_pol
     assert by_id["gateway:instance"]["effective_environment"]["CHATCOPILOT_GATEWAY_PORT"] == "18789"
     assert by_id["context:wiki"]["environment"]["CHATCOPILOT_WIKI_ROOT"] == "~/wiki"
     assert by_id["context:wiki"]["effective_environment"]["CHATCOPILOT_WIKI_ROOT"] == str(Path.home() / "wiki")
-    assert by_id["model-slot:chat"]["effective_environment"]["CHATCOPILOT_CHAT_MODEL"] == "fixture-model"
+    assert by_id["model-slot:chat"]["effective_config"]["model"] == "fixture-model"
     assert by_id["rag:docs"]["config"]["exclude"] == ["secret*"]
     assert by_id["codebase:fixture-repo"]["config"]["max_read_bytes"] == 4096
 
@@ -72,7 +76,15 @@ def test_expected_matches_actual_export_and_startup_defaults_without_process_pol
 def test_real_effective_changes_are_pending(tmp_path, monkeypatch, key, value):
     path, values = fixture(tmp_path)
     loaded = loaded_by_startup(path, values, monkeypatch, tmp_path)
-    current = expected_configuration(path, {**values, key: value}, home=Path.home())
+    if key == "CHATCOPILOT_CHAT_MODEL":
+        model_path = Path(values["AGENTSTRATA_LLM_CONFIG"])
+        data = json.loads(model_path.read_text())
+        data["profiles"]["chat"]["model"] = value
+        model_path.write_text(json.dumps(data))
+        changed = values
+    else:
+        changed = {**values, key: value}
+    current = expected_configuration(path, changed, home=Path.home())
     assert configuration_comparison(current, loaded, stale=False)[0] == "pending"
 
 

@@ -432,7 +432,8 @@ def runtime_configuration(runtime: Any, agent: Any, environment: Mapping[str, st
                 entity.update(connected=status["running"], loaded=bool(status["tools_count"]), runtime=status)
     enrich_agent_configuration(config, runtime.spec, environment, chat_config=agent.runtime_config,
         runtime_id=agent.runtime_id, research_config=research_config,
-        search_config=getattr(getattr(agent, "search_model_client", None), "config", None))
+        search_config=getattr(getattr(agent, "search_model_client", None), "config", None),
+        subagent_configs={name: client.config for name, client in agent.subagent_model_clients.items()})
     for entity in config["entities"]:
         if entity["id"].startswith(("agent:", "search:", "subagent:", "workflow:")):
             entity["runtime"] = entity.get("effective_config", entity["config"])

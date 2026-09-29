@@ -44,8 +44,7 @@ def build_codex_command(
         "exec",
         "--model",
         model,
-        "--config",
-        f"model_reasoning_effort={json.dumps(reasoning_effort)}",
+        *(["--config", f"model_reasoning_effort={json.dumps(reasoning_effort)}"] if reasoning_effort else []),
         "--config",
         f"web_search={json.dumps(web_search_mode)}",
     ]
@@ -79,7 +78,7 @@ def build_app_server_command(
     _validate_codex_command_template(configured)
     command = [_resolve_executable(configured[0]), "app-server", "--listen", "stdio://", "--strict-config"]
     for entry in (
-        f"model={json.dumps(model)}", f"model_reasoning_effort={json.dumps(reasoning_effort)}",
+        f"model={json.dumps(model)}", *([f"model_reasoning_effort={json.dumps(reasoning_effort)}"] if reasoning_effort else []),
         'model_reasoning_summary="auto"', f"web_search={json.dumps(web_search_mode)}",
         "project_doc_max_bytes=0", 'approval_policy="never"',
         *_shell_environment_policy(workdir=workdir, inherit_all=False, overrides=shell_env_overrides),

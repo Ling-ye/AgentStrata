@@ -522,17 +522,17 @@ def test_operator_config_does_not_execute_shell(tmp_path, monkeypatch):
 
     config = tmp_path / "harness.env"
     config.write_text(
-        "CHATCOPILOT_CODEX_BIN='$HOME/bin/codex'\nCHATCOPILOT_HARNESS_MODEL=$(invalid-command)\n"
+        "CHATCOPILOT_CODEX_BIN='$HOME/bin/codex'\nAGENTSTRATA_LLM_CONFIG=$(invalid-command)\n"
     )
     config.chmod(0o600)
     monkeypatch.setenv("CHATCOPILOT_HARNESS_ENV", str(config))
     monkeypatch.delenv("CHATCOPILOT_CODEX_BIN", raising=False)
-    monkeypatch.delenv("CHATCOPILOT_HARNESS_MODEL", raising=False)
+    monkeypatch.delenv("AGENTSTRATA_LLM_CONFIG", raising=False)
     values = configuration()
     assert values["CHATCOPILOT_CODEX_BIN"] == str(Path.home() / "bin/codex")
-    assert values["CHATCOPILOT_HARNESS_MODEL"] == "$(invalid-command)"
-    monkeypatch.setenv("CHATCOPILOT_HARNESS_MODEL", "explicit-model")
-    assert configuration()["CHATCOPILOT_HARNESS_MODEL"] == "explicit-model"
+    assert values["AGENTSTRATA_LLM_CONFIG"] == "$(invalid-command)"
+    monkeypatch.setenv("AGENTSTRATA_LLM_CONFIG", "explicit-model")
+    assert configuration()["AGENTSTRATA_LLM_CONFIG"] == "explicit-model"
 
 
 def test_repair_markers_are_not_limited_to_recent_global_history(repository, tmp_path, monkeypatch):

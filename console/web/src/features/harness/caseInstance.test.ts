@@ -27,7 +27,7 @@ describe("Case execution instance", () => {
     vi.stubGlobal("fetch", fetch);
     await harnessApi.load("evaluation", id, "");
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual({ kind: "evaluation", source_id: id, bot_id: "" });
-    const body = { source_kind: "evaluation" as const, case_instance_id: id, model: "test-model", reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 7200, request_id: "one" };
+    const body = { source_kind: "evaluation" as const, case_instance_id: id, profile: "test-model", max_attempts: 3, timeout_seconds: 7200, request_id: "one" };
     await harnessApi.start(body);
     expect(JSON.parse(fetch.mock.calls[1][1].body)).toEqual(body);
   });

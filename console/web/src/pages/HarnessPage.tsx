@@ -7,7 +7,8 @@ import { harnessApi, REPAIR_LABELS, deliveryLabel, repairStatusLabel, sourceLabe
   type RepairTask, type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
 import { caseInstanceId, selectedInstance } from "../features/harness/caseInstance";
 import { RepairDetail } from "../features/harness/RepairDetail";
-import { repairModels } from "../features/harness/repairModels";
+import ModelProfileSelect from "../features/llm/ModelProfileSelect";
+import { llmApi, profileOptions } from "../features/llm/api";
 
 const { Text } = Typography;
 const taskFromHash = () => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("task") ?? "";
@@ -25,7 +26,6 @@ export default function HarnessPage() {
   const [repairHint, setRepairHint] = useState("");
   const [expectedBehavior, setExpectedBehavior] = useState("");
   const [selectedModel, setModel] = useState("");
-  const [effort, setEffort] = useState("xhigh");
   const [attempts, setAttempts] = useState(3);
   const [hours, setHours] = useState(1);
   const [taskId, setTaskId] = useState(taskFromHash);
@@ -35,10 +35,8 @@ export default function HarnessPage() {
   const generation = useRef(0);
   const submitted = useRef({ body: "", requestId: "" });
   const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots });
-  const inspection = useQuery({ queryKey: ["inspection", preview?.bot_id],
-    queryFn: ({ signal }) => api.inspection(preview!.bot_id, undefined, undefined, signal),
-    enabled: !!preview?.bot_id, retry: false, staleTime: 0 });
-  const models = repairModels(inspection.data?.current);
+  const inspection = useQuery({ queryKey: ["llm-config"], queryFn: ({ signal }) => llmApi.config(signal), retry: false });
+  const models = { options: profileOptions(inspection.data, true), error: "", defaultModel: inspection.data?.bindings.harness ?? "" };
   const model = selectedModel || models.defaultModel;
   const history = useQuery({ queryKey: ["harness-history", page, search, status],
     queryFn: ({ signal }) => harnessApi.history(page, search, status, signal, "repair"), retry: false, refetchInterval: 5000 });
@@ -78,7 +76,7 @@ export default function HarnessPage() {
     setKind(sourceKind); setSourceId(id); setBotId(task.source.bot_id ?? "");
     setRepairHint(task.source.feedback?.repair_hint ?? "");
     setExpectedBehavior(task.source.feedback?.expected_behavior ?? "");
-    setModel(task.options.model); setEffort(task.options.reasoning_effort);
+    setModel(task.options.model_profile ?? "");
     setAttempts(task.options.max_attempts); setHours((task.options.timeout_seconds ?? 3600) / 3600);
     submitted.current = { body: "", requestId: "" };
     openTask("");
@@ -94,7 +92,7 @@ export default function HarnessPage() {
       ...((repairHint.trim() || (kind === "robot_task" && expectedBehavior.trim())) ? { feedback: {
         ...(repairHint.trim() ? { repair_hint: repairHint } : {}),
         ...(kind === "robot_task" && expectedBehavior.trim() ? { expected_behavior: expectedBehavior } : {}),
-      } } : {}), model: model.trim(), reasoning_effort: effort,
+      } } : {}), profile: model.trim(),
       max_attempts: attempts, timeout_seconds: Math.round(hours * 3600) };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
@@ -153,11 +151,7 @@ export default function HarnessPage() {
             </Space>
             {(!blocked || kind === "robot_task") && <>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 }}>
-                <div>修复模型<Select aria-label="修复模型" value={model || undefined} disabled={starting || inspection.isFetching || inspection.isError || !!models.error}
-                  loading={inspection.isFetching} onChange={setModel} options={models.options} showSearch placeholder="选择机器人已配置的模型" /></div>
-                <div>推理强度<Select aria-label="修复推理强度" value={effort} disabled={starting} onChange={setEffort} options={[
-                  { value: "low", label: "低" }, { value: "medium", label: "中" }, { value: "high", label: "高" }, { value: "xhigh", label: "极高" },
-                ]} /></div>
+                <div>修复方案<ModelProfileSelect purpose="harness" value={selectedModel} onChange={setModel} worker disabled={starting} /></div>
                 <div>最多候选次数<InputNumber aria-label="最多候选次数" min={1} precision={0} value={attempts} disabled={starting} onChange={setAttempts} style={{ width: "100%" }} /></div>
                 <div>总时间预算（小时）<InputNumber aria-label="修复时间预算" min={0.01} step={0.5} precision={2} value={hours} disabled={starting} onChange={setHours} style={{ width: "100%" }} /></div>
               </div>

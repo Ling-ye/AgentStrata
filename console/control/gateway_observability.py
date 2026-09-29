@@ -160,6 +160,8 @@ def configuration_comparison(current, loaded, *, stale: bool) -> tuple[str, str]
         return "unknown", "运行快照未记录完整的引用文件版本"
     if loaded["reference_revision"] != current.get("reference_revision"):
         return "pending", "上下文配置引用存在尚未加载的变更"
+    if loaded.get("model_configuration_revision") != current.get("model_configuration_revision"):
+        return "pending", "统一模型方案存在尚未加载的变更，请应用配置或重启"
     return "applied", "当前配置与服务上报配置一致"
 
 

@@ -35,21 +35,13 @@ def test_catalog_failure_is_not_treated_as_model_rejection(monkeypatch, tmp_path
     assert error.value.code == "model_probe_unavailable"
 
 
-def test_governance_model_choices_use_worker_catalog(monkeypatch, tmp_path):
-    from types import SimpleNamespace
-
-    from chatcopilot.harness.api import HarnessController
-
-    monkeypatch.setattr("chatcopilot.harness.codex_adapter.worker_models",
-                        lambda settings, repository: [
-                            {"model": "gpt-6-sol", "supportedReasoningEfforts": [
-                                {"reasoningEffort": "medium"}, {"reasoningEffort": "high"}]},
-                            {"id": "alternate", "supportedReasoningEfforts": [{"reasoningEffort": "low"}]},
-                            {"model": "", "supportedReasoningEfforts": []},
-                            {"model": "incomplete"},
-                        ])
-    controller = SimpleNamespace(settings={}, repository=tmp_path)
-    assert HarnessController.governance_models(controller) == [
-        {"model": "gpt-6-sol", "reasoning_efforts": ["medium", "high"]},
-        {"model": "alternate", "reasoning_efforts": ["low"]},
-    ]
+def test_governance_model_choices_use_shared_catalog(tmp_path):
+    from chatcopilot.core.model_catalog import ModelCatalog
+    from chatcopilot.core.model_settings import ModelSettingsStore
+    from console.control.llm import ModelControl
+    store = ModelSettingsStore(tmp_path / "llm.json")
+    connection = {"kind": "codex", "auth": {"mode": "chatgpt", "profile": "worker"}}
+    store.save({"connections": {"worker": connection}, "profiles": {}, "bindings": {}}, revision=store.view()["revision"])
+    catalog = ModelCatalog(lambda _: MODELS, lambda _: "worker")
+    control = ModelControl(tmp_path, store=store, catalog=catalog)
+    assert control.models("worker", refresh=True)["models"][1]["reasoning_efforts"] == ["medium", "high"]

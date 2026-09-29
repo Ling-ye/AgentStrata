@@ -9,7 +9,7 @@ import {
   IconTool,
 } from "@arco-design/web-react/icon";
 
-export type PageKey = "overview" | "services" | "bots" | "tools" | "evals" | "harness" | "code-health" | "schedules" | "settings";
+export type PageKey = "overview" | "services" | "bots" | "tools" | "evals" | "harness" | "code-health" | "schedules" | "models" | "settings";
 
 interface Props {
   current: PageKey;
@@ -25,6 +25,7 @@ const NAV_ITEMS = [
   { itemKey: "evals" as const, text: "测评中心", icon: <IconExperiment /> },
   { itemKey: "harness" as const, text: "AI Harness 修复", icon: <IconTool /> },
   { itemKey: "code-health" as const, text: "代码熵回收", icon: <IconTool /> },
+  { itemKey: "models" as const, text: "模型配置", icon: <IconSettings /> },
   { itemKey: "settings" as const, text: "设置", icon: <IconSettings /> },
 ];
 

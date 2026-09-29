@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from chatcopilot.application.execution_scope import execution_scope
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.execution import TranscriptSnapshot
@@ -322,7 +324,7 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
     )
     agent_runtime = SimpleNamespace(
         retriever=None,
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         project_roots=(),
         command_timeouts=CommandTimeouts(90, 1200),
         open_session=mock.Mock(return_value=agent_session),

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 import json
 from dataclasses import replace
 
@@ -202,7 +204,7 @@ def test_inprocess_backends_share_projection_and_clear_on_close(runtime_id):
         route,
         tool_names={tool.name, reader.name},
         llm=model,
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         tool_executor=executor,
         tools_schema=[],
     )
@@ -237,7 +239,7 @@ def test_runtime_registers_reader_only_with_accessible_sources_and_isolates_acto
     tool = source_tool("actor result", access="owner")
     runtime = AgentRuntime(
         main_model_client=Mock(model="fixture"), tools=(tool,), tools_schema=(),
-        runtime_config=ChatConfig(), route=runtime_route()
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), route=runtime_route()
     )
     owner = runtime.open_session(
         session_id="owner-a", prompt_input=prompt_input("fixture", role="owner")

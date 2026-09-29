@@ -44,28 +44,17 @@ class LlmRuntimeConfigTests(unittest.TestCase):
             "codex exec --model {model} --cd {workdir}",
         )
 
-    def test_env_parses_codex_runtime_configuration(self) -> None:
-        prefix = "CHATCOPILOT_ROUTETEST"
-        env = {
-            prefix + "_CODE_MODEL": "gpt-route-test",
-            prefix + "_CODE_REASONING_EFFORT": "high",
-            prefix + "_CODE_PROFILES_JSON": (
-                '{"sol-high":{"model":"gpt-5.6-sol","reasoning_effort":"high"}}'
-            ),
-            prefix + "_CODE_TASK_PROFILE": "sol-high",
-            prefix + "_CODE_COMMAND": "codex exec --model {model} --cwd {workdir}",
-            prefix + "_CODE_TIMEOUT_SECONDS": "17",
-        }
-        with mock.patch.dict(os.environ, env, clear=False):
-            config = load_config(
-                Path("/tmp/chatcopilot-missing-routing.yaml"),
-                env_prefix=prefix,
-            )
-
+    def test_shared_binding_and_execution_environment_are_separate(self) -> None:
+        import json
+        from chatcopilot.core.model_settings import settings_path
+        path = settings_path()
+        data = json.loads(path.read_text())
+        data["profiles"]["worker"].update(model="gpt-route-test", reasoning_effort="high")
+        path.write_text(json.dumps(data))
+        config = load_config(environment={"CHATCOPILOT_ROUTETEST_CODE_TIMEOUT_SECONDS": "17"}, env_prefix="CHATCOPILOT_ROUTETEST")
         self.assertEqual(config.routing.code_model, "gpt-route-test")
         self.assertEqual(config.routing.code_reasoning_effort, "high")
-        self.assertEqual(config.routing.code_profiles["sol-high"].model, "gpt-5.6-sol")
-        self.assertEqual(config.routing.code_task_profile, "sol-high")
+        self.assertEqual(config.routing.code_task_profile, "worker")
         self.assertEqual(config.routing.code_timeout_seconds, 17)
 
     def test_invalid_codex_runtime_configuration_fails_visibly(self) -> None:
@@ -85,23 +74,12 @@ class LlmRuntimeConfigTests(unittest.TestCase):
                         env_prefix=prefix,
                     )
 
-    def test_research_profile_can_override_only_model(self) -> None:
-        main = LLMConfig(
-            base_url="https://chat.example/v1",
-            model="chat-model",
-            api_key="sk-chat",
-            timeout=120,
-        )
-        with mock.patch.dict(
-            os.environ,
-            {"CHATCOPILOT_PROFILE_RESEARCH_MODEL": "research-model"},
-            clear=False,
-        ):
-            research = load_llm_profile("CHATCOPILOT_PROFILE_RESEARCH", fallback=main)
-
-        self.assertEqual(research.model, "research-model")
-        self.assertEqual(research.base_url, main.base_url)
-        self.assertEqual(research.api_key, main.api_key)
+    def test_research_profile_uses_its_explicit_central_connection(self) -> None:
+        main = LLMConfig(base_url="https://unused.invalid/v1", model="unused", timeout=99)
+        research = load_llm_profile("research", fallback=main, environment={"CHATCOPILOT_CHAT_API_KEY": "test-key"})
+        self.assertEqual(research.model, "research-default")
+        self.assertEqual(research.base_url, "https://api.openai.com/v1")
+        self.assertEqual(research.api_key, "test-key")
 
 
 class LingyeDirectCodexConfigTests(unittest.TestCase):
@@ -125,17 +103,8 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
         self.assertNotIn("codebase.change", spec.tools.packs)
         self.assertIn("dev.code_tasks", spec.tools.packs)
         self.assertNotIn("dev.files", spec.tools.packs)
-        self.assertEqual(spec.llm.code.model, "gpt-6-sol")
-        self.assertEqual(spec.llm.code.reasoning_effort, "medium")
-        self.assertEqual(spec.llm.code.code_task_profile, "sol-medium")
-        self.assertEqual(
-            spec.llm.code.profiles["sol-medium"].model,
-            "gpt-6-sol",
-        )
-        self.assertEqual(
-            spec.llm.code.profiles["sol-medium"].reasoning_effort,
-            "medium",
-        )
+        self.assertEqual(spec.llm.code.binding, "bot.lingye-copilot-qq.code")
+        self.assertNotIn("model", spec.raw["llm"]["code"])
 
     def test_route_explain_reports_instance_runtime_without_secrets(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -155,13 +124,7 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
                         "    env_prefix: CHATCOPILOT_ROUTEDEMO",
                         "  code:",
                         "    enabled: true",
-                        "    model: code-from-botspec",
-                        "    reasoning_effort: medium",
-                        "    profiles:",
-                        "      sol-max:",
-                        "        model: gpt-5.6-sol",
-                        "        reasoning_effort: max",
-                        "    code_task_profile: sol-max",
+                        "    binding: code",
                         "prompts:",
                         "  schema_version: 2",
                         "  identity: persona.md",
@@ -177,7 +140,7 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
             )
             (bot_dir / "local.env").write_text(
                 "export CHATCOPILOT_ROUTEDEMO_API_KEY=sk-secret\n"
-                "export CHATCOPILOT_ROUTEDEMO_MODEL=chat-model\n",
+                "export CHATCOPILOT_LLM_BINDING=chat\n",
                 encoding="utf-8",
             )
             output = StringIO()
@@ -191,11 +154,11 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
         self.assertIn("runtime_id=codex", rendered)
         self.assertIn("selection_scope=instance", rendered)
         self.assertIn("cross_runtime_routing=false", rendered)
-        self.assertIn("main.model=chat-model", rendered)
-        self.assertIn("main.reasoning_effort=medium", rendered)
-        self.assertIn("code_task.profile=sol-max", rendered)
-        self.assertIn("code_task.model=gpt-5.6-sol", rendered)
-        self.assertIn("code_task.reasoning_effort=max", rendered)
+        self.assertIn("main.model=gpt-4o-mini", rendered)
+        self.assertIn("main.reasoning_effort=", rendered)
+        self.assertIn("code_task.profile=worker", rendered)
+        self.assertIn("code_task.model=gpt-6-sol", rendered)
+        self.assertIn("code_task.reasoning_effort=medium", rendered)
         self.assertNotIn("sk-secret", rendered)
 
 

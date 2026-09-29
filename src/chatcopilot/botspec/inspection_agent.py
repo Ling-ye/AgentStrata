@@ -32,25 +32,34 @@ def enrich_agent_configuration(
     *, chat_config: ChatConfig | None = None, sources: dict[str, str] | None = None,
     saved_environment: Mapping[str, str] | None = None,
     runtime_id: str | None = None, research_config: LLMConfig | None = None, search_config: LLMConfig | None = None,
+    subagent_configs: Mapping[str, LLMConfig] | None = None,
 ) -> None:
+    captured = chat_config is not None
     if chat_config is None:
         chat_config, sources = resolve_inspection_config(spec, environment)
+    from chatcopilot.core.model_settings import read_settings
+    document = chat_config.model_settings if captured else read_settings(environment)
     from chatcopilot.core.model_routes import resolve_model_config
     from dataclasses import replace
-    chat_config = replace(chat_config, llm=resolve_model_config(spec.llm.chat, fallback=chat_config.llm,
-        prefix=spec.llm.env_prefix, environment=environment))
-    if spec.llm.code.env_prefix:
-        chat_config.routing = load_config(env_prefix=spec.llm.code.env_prefix, environment=environment).routing
+    if not captured:
+        chat_config = replace(chat_config, llm=resolve_model_config(spec.llm.chat, fallback=chat_config.llm,
+            prefix=spec.llm.env_prefix, environment=environment, document=document))
+        from chatcopilot.core.model_settings import resolve_binding, profile_choices
+        if spec.llm.code.binding in document["bindings"]:
+            code_config = resolve_binding(spec.llm.code.binding, document=document, environment=environment)
+            chat_config.routing.code_model = code_config.model
+            chat_config.routing.code_reasoning_effort = code_config.reasoning_effort or ""
+            chat_config.routing.code_profiles = profile_choices(document=document, worker=True, connection_id=code_config.connection_id)
+            chat_config.routing.code_task_profile = code_config.profile_id
     if spec.agents.native_env_prefix:
         chat_config.runtime = load_config(env_prefix=spec.agents.native_env_prefix, environment=environment).runtime
-    helper_fallback = (load_config(env_prefix=spec.llm.research.inherit_env_prefix, environment=environment).llm
-                       if spec.llm.research.inherit_env_prefix else chat_config.llm)
+    helper_fallback = chat_config.llm
     sources = sources or {}
     saved = environment if saved_environment is None else saved_environment
     entities = {item["id"]: item for item in projection["entities"]}
     prefix = spec.llm.env_prefix
     runtime_id = spec.agents.runtime if runtime_id is None else runtime_id
-    research = research_config or load_research_llm_config(spec.llm, fallback=chat_config.llm, environment=environment)
+    research = research_config or (load_research_llm_config(spec.llm, fallback=chat_config.llm, environment=environment, document=document) if document else LLMConfig())
     raw_agents = spec.raw.get("agents") or {}
 
     def add(identity: str, name: str, config: Any, *, usage: str = "", field_sources=None,
@@ -73,46 +82,39 @@ def enrich_agent_configuration(
             raw = raw[key]
         return "BotSpec · " + path
 
-    def model_sources(model_prefix: str | None, fallback: str, *, research_slot: bool = False) -> dict[str, str]:
-        result = {}
-        for field in ("model", "base_url", "api_key", "timeout"):
-            key = f"{model_prefix}_{field.upper()}" if model_prefix else ""
-            if key and environment.get(key):
-                result[field] = "环境覆盖 " + key
-            elif research_slot and field == "model" and spec.llm.research.model:
-                result[field] = "BotSpec · llm.research.model"
-            else:
-                result[field] = fallback
-            if key and saved.get(key) and not environment.get(key):
-                result[field] += f"；保存的 {key} 未进入运行环境"
-        return result
+    def model_sources(model_prefix, fallback, *, research_slot=False):
+        return {field: "统一模型配置" for field in ("model", "base_url", "api_key", "timeout")}
 
     def budget_sources(raw: dict[str, Any], path: str, budget: Any, *, research_default: bool = False) -> dict[str, str]:
         result = {}
         for key in plain(budget):
             if key in raw:
                 result[key] = f"BotSpec · {path}.{key}"
-            elif key == "model_env_prefix" and research_default and spec.agents.defaults.model_env_prefix is None and spec.llm.research_env_prefix:
-                result[key] = "继承 llm.research.env_prefix"
+            elif key == "model_binding" and research_default and spec.agents.defaults.model_binding is None and spec.llm.research.binding:
+                result[key] = "引用 llm.research.binding"
             else:
                 result[key] = spec_source("agents.defaults." + key)
         return result
 
-    chat = add("model-slot:chat", "基础模型 · chat", plain(chat_config.llm),
+    chat = add("model-slot:chat", "基础模型 · chat", {"binding": spec.llm.chat.binding, **plain(chat_config.llm)},
         usage="当前实例的主模型。Native / LangGraph 直接推理，Codex 由 App Server 执行。",
         field_sources={key: sources.get("llm." + key, "运行装配配置") for key in vars(chat_config.llm)})
-    chat["effective_environment"] = {f"{prefix}_{key.upper()}": environment.get(f"{prefix}_{key.upper()}")
-                                       for key in ("model", "base_url", "timeout", "reasoning_effort")}
-    add("model-slot:research", "研究模型 · research", plain(research),
-        usage="供统一搜索、人格研究等能力使用；未覆盖的连接参数逐字段继承基础模型。",
-        field_sources=model_sources(spec.llm.research_env_prefix, "继承基础模型 · chat", research_slot=True))
+    chat["binding"] = spec.llm.chat.binding
+    chat["effective_environment"] = {}
+    add("model-slot:research", "研究模型 · research", {"binding": spec.llm.research.binding, **plain(research)},
+        usage="供统一搜索、人格研究等能力使用；通过统一配置引用方案。",
+        field_sources=model_sources(spec.llm.research.binding, "继承基础模型 · chat", research_slot=True))
     routing = plain(chat_config.routing)
     code = {key.removeprefix("code_"): value for key, value in routing.items()}
     code["code_task_profile"] = code.pop("task_profile")
     code["enabled"] = spec.llm.code.enabled
+    code["binding"] = spec.llm.code.binding
     code_sources = {}
     for field in code:
-        suffix = "CODE_PROFILES_JSON" if field == "profiles" else "CODE_TASK_PROFILE" if field == "code_task_profile" else "CODE_" + field.upper()
+        if field in {"model", "reasoning_effort", "profiles", "code_task_profile"}:
+            code_sources[field] = "统一模型配置"
+            continue
+        suffix = "CODE_" + field.upper()
         key = f"{spec.llm.code.env_prefix or prefix}_{suffix}"
         code_sources[field] = ("环境覆盖 " + key if field != "enabled" and saved.get(key) else spec_source("llm.code." + field))
     add("model-slot:code", "Codex 模型与配置档 · code", code,
@@ -142,8 +144,8 @@ def enrich_agent_configuration(
         usage="启用宿主管理的 search_information 时关闭重复原生搜索入口。",
         field_sources={"web_search_mode": "宿主固定策略"},
         applicability="适用于 Codex" if runtime_id == "codex" else "当前 Runtime 不适用")
-    search_prefix = spec.agents.research_budget.model_env_prefix
-    search_model = search_config or (load_llm_profile(search_prefix, fallback=research, environment=environment) if search_prefix else research)
+    search_prefix = spec.agents.research_budget.model_binding
+    search_model = search_config or (load_llm_profile(search_prefix, fallback=research, environment=environment, document=document) if search_prefix else research)
     add("agent:unified-search", "统一搜索", {"enabled": spec.agents.research_enabled, "model": search_model.model,
         "budget": plain(spec.agents.research_budget)},
         usage="search_information 的模型与执行预算；provider 的启用状态独立列出。",
@@ -169,7 +171,9 @@ def enrich_agent_configuration(
                        "model": "引用 code 槽配置档", "reasoning_effort": "引用 code 槽配置档"}, refs=["model-slot:code", "pack:dev.code_tasks"])
     custom_names = {item.name for item in spec.agents.custom}
     for definition, limits in iter_definitions(spec.agents):
-        model = load_llm_profile(limits.model_env_prefix, fallback=helper_fallback, environment=environment) if limits.model_env_prefix else chat_config.llm
+        model = (subagent_configs or {}).get(limits.model_binding) if limits.model_binding else chat_config.llm
+        if model is None:
+            model = load_llm_profile(limits.model_binding, fallback=helper_fallback, environment=environment, document=document)
         config = {**plain(definition), "model": model.model, "budget": plain(limits)}
         custom = next((item for item in spec.agents.custom if item.name == definition.name), None)
         override = spec.agents.overrides.get(definition.name)
@@ -178,7 +182,7 @@ def enrich_agent_configuration(
         raw_custom = next((item for item in raw_agents.get("custom", []) if item["name"] == definition.name), None)
         raw_budget = (raw_custom.get("budget") or {}) if raw_custom else (raw_agents.get(definition.name) or {})
         field_sources = {key: origin for key in config}
-        field_sources["model"] = model_sources(limits.model_env_prefix, "继承基础模型 · chat")["model"]
+        field_sources["model"] = model_sources(limits.model_binding, "继承基础模型 · chat")["model"]
         budget_path = f"agents.custom[{definition.name}].budget" if raw_custom else "agents." + definition.name
         field_sources.update({"budget." + key: value for key, value in budget_sources(raw_budget, budget_path, limits,
             research_default=definition.name == "browser_reader" and not raw_custom).items()})
@@ -208,3 +212,19 @@ def enrich_agent_configuration(
         provider_entity["field_sources"]["credential_configured"] = "实例环境 · " + credential_key if credential_key else "此来源不要求凭据"
     projection["runtime_id"] = runtime_id
     projection["model"] = chat_config.llm.model
+    from chatcopilot.core.inspection import fingerprint
+    def model_identity(cfg):
+        return {"route": cfg.model_route().to_payload() if cfg.model else None,
+                "connection": document.get("connections", {}).get(cfg.connection_id),
+                "credential": fingerprint(cfg.api_key), "credential_root": cfg.credential_root,
+                "codex_bin": cfg.codex_bin}
+    used_models = {"chat": model_identity(chat_config.llm), "research": model_identity(research), "search": model_identity(search_model)}
+    for definition, limits in iter_definitions(spec.agents):
+        cfg = (subagent_configs or {}).get(limits.model_binding) if limits.model_binding else chat_config.llm
+        if cfg is None:
+            cfg = load_llm_profile(limits.model_binding, fallback=helper_fallback, environment=environment, document=document)
+        used_models[definition.name] = model_identity(cfg)
+    if spec.llm.code.enabled:
+        used_models["code"] = {"model": chat_config.routing.code_model,
+                               "reasoning_effort": chat_config.routing.code_reasoning_effort}
+    projection["model_configuration_revision"] = fingerprint(used_models)

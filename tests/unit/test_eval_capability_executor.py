@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.botspec.model import LLMSpec, ModelSpec
 
 from chatcopilot.evals.trial_runner import run_case
@@ -659,12 +661,19 @@ class _FakeAgentRuntime:
 
 
 @pytest.fixture
-def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request) -> list[Any]:
+def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request, model_settings) -> list[Any]:
     tasks: list[Any] = []
+    import json
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    data["connections"]["fake"] = {"kind": "openai_responses", "auth": {"mode": "api_key", "key_env": "FIXTURE_API_KEY"}}
+    data["profiles"]["fake-model"] = {"connection": "fake", "model": "fake-model"}
+    data["bindings"]["fake-model"] = "fake-model"
+    write_models(model_settings, data)
     selected_backend = getattr(request, "param", "native")
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(provider="openai", api="openai_responses"))
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(binding="fake-model"))
         ),
         tool_packs=("dev.files", "persona.control"),
         exclude_tools=(),
@@ -678,7 +687,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request) -> list
         capability_policies=(),
     )
     monkeypatch.setattr(executor, "load_evaluation_runtime", lambda _bot: runtime)
-    config = ChatConfig()
+    config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     config.llm.model = "fake-model"
     monkeypatch.setattr(executor, "load_config", lambda **_kwargs: config)
 
@@ -1078,6 +1087,8 @@ def test_quick_acp_scenarios_dispatch_with_selected_bot_policy_without_model(
         runtime_load.update(kwargs)
         return SimpleNamespace(
             platform_type="qq",
+            spec=SimpleNamespace(llm=LLMSpec()),
+            subagents=SubagentSpec(),
             prompt_profile=BotPromptProfile(
                 identity="Evaluation Bot",
                 response_style="简洁回答。",
@@ -1212,11 +1223,11 @@ def test_configured_codex_workdir_is_pinned_to_evaluation_workspace(
     live_source.mkdir()
     monkeypatch.setenv("CHATCOPILOT_DEV_ROOT", str(live_source))
 
-    config = ChatConfig()
+    config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     config.llm.api_key = "eval-local-placeholder"
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
-            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(provider="openai", api="openai_responses"))
+            context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(binding="responses-main"))
         ),
         tool_packs=(),
         exclude_tools=(),

@@ -208,7 +208,7 @@ def test_responses_transport_serializes_only_direct_and_bridge_tools(monkeypatch
 
     monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", post)
     with pytest.raises(RuntimeError, match="HTTP 503"):
-        responses_chat(LLMConfig(provider="openai", api="openai_responses", api_key="fixture"),
+        responses_chat(LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="fixture"),
                        [{"role": "user", "content": "lookup"}], view.model_schemas())
     assert {tool["name"] for tool in captured["tools"]} == {
         "read_memory", "tool_search", "tool_describe", "tool_call",

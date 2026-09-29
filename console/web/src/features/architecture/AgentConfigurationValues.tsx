@@ -7,7 +7,7 @@ const NAMES: Record<string, string> = {
   budget: "执行预算", selector: "工具选择范围", context_policy: "上下文策略", cache_policy: "缓存策略",
   tool_name: "委托工具名", workflow_tags: "Workflow 标签", cleanup_tools: "清理工具", unavailable_message: "不可用时说明",
   role_prompt_source: "角色提示词来源",
-  model_env_prefix: "模型覆盖前缀", max_context_tokens: "上下文预算（Token）", sliding_window_turns: "保留对话轮数",
+  model_binding: "模型用途引用", binding: "模型用途引用", profile_id: "模型方案", connection_id: "模型连接", max_context_tokens: "上下文预算（Token）", sliding_window_turns: "保留对话轮数",
   max_tool_retries: "工具重试次数", tool_result_summary_max_tokens: "工具结果摘要预算（Token）",
   max_tool_iterations: "循环轮数软限制", hard_iteration_cap: "循环轮数硬限制", max_tool_calls: "工具调用硬限制",
   turn_timeout_seconds: "单轮软超时（秒）", hard_timeout_seconds: "单轮硬超时（秒）", stall_window_seconds: "无进展窗口（秒）",
@@ -39,7 +39,7 @@ export function observedConfiguration(entity: InspectionEntity): Record<string, 
 
 function emptyValue(key: string, entity: InspectionEntity) {
   if (UNLIMITED.has(key)) return "未设置限制";
-  if (key === "model_env_prefix") return "继承基础模型";
+  if (key === "model_binding") return "继承基础模型";
   if (key === "sandbox_mode") return "由宿主执行范围决定";
   if (key === "credential_env" || key === "credential_configured") return "无需凭据";
   if (key === "reasoning_effort" && entity.id === "agent:main") return "当前 Backend 不适用";

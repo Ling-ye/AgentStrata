@@ -12,6 +12,8 @@
 """
 from __future__ import annotations
 
+from chatcopilot.core.model_routes import create_model_client
+
 from chatcopilot.core.observation_context import observe
 
 import logging
@@ -580,11 +582,11 @@ def build_agent_runtime(
     if any(server.risk == "search" for server in mcp_servers):
         budgets.append(configured_subagents.search_budget)
     resolved_prefixes = {prefix for prefix, _ in subagent_llm_configs}
-    if any(budget.model_env_prefix and budget.model_env_prefix not in resolved_prefixes
+    if any(budget.model_binding and budget.model_binding not in resolved_prefixes
            for budget in budgets):
         raise ValueError("subagent model profile has not been resolved by the runtime host")
     if (configured_subagents.research_enabled
-            and configured_subagents.research_budget.model_env_prefix
+            and configured_subagents.research_budget.model_binding
             and search_llm_config is None):
         raise ValueError("search model profile has not been resolved by the runtime host")
     for provider in runtime_providers:
@@ -663,9 +665,9 @@ def build_agent_runtime(
                 return client
         if route.runtime_id == "codex" and config == chat_config.llm:
             from chatcopilot.core.deferred_model import DeferredModelClient
-            client = DeferredModelClient(config, LLMClient)
+            client = DeferredModelClient(config, create_model_client)
         else:
-            client = LLMClient(config)
+            client = create_model_client(config)
         clients.append((replace(config), client))
         return client
 

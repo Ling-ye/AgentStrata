@@ -37,8 +37,7 @@ def _runtime() -> SimpleNamespace:
         spec=SimpleNamespace(
             context=ContextSpec(),
             llm=LLMSpec(
-                research_env_prefix="RESEARCH",
-                research=ModelSpec(model="research-default"),
+                research=ModelSpec(binding="research"),
             ),
         ),
         tool_packs=("search.unified", "agent.delegation"),
@@ -48,17 +47,17 @@ def _runtime() -> SimpleNamespace:
         mcp_servers=(McpServerConfig(id="search-source"),),
         subagents=SubagentSpec(
             include=("developer",),
-            defaults=SubagentBudgetSpec(model_env_prefix="DELEGATE"),
-            search_budget=SubagentBudgetSpec(model_env_prefix="SEARCH_AGENT"),
+            defaults=SubagentBudgetSpec(model_binding="DELEGATE"),
+            search_budget=SubagentBudgetSpec(model_binding="SEARCH_AGENT"),
             research_enabled=True,
-            research_budget=SubagentBudgetSpec(model_env_prefix="ROUTER"),
+            research_budget=SubagentBudgetSpec(model_binding="ROUTER"),
             custom=(
                 CustomSubagentSpec(
                     name="custom",
                     tool_name="custom_agent",
                     summary="Test agent",
                     selector=ToolSelectorSpec(),
-                    budget=SubagentBudgetSpec(model_env_prefix="CUSTOM"),
+                    budget=SubagentBudgetSpec(model_binding="CUSTOM"),
                 ),
             ),
             search_providers=(SearchProviderSpec(id="web", kind="tavily"),),
@@ -68,36 +67,38 @@ def _runtime() -> SimpleNamespace:
 
 
 @pytest.mark.parametrize("profile", list(AgentRuntimeAssemblyProfile))
-def test_projection_captures_instance_profiles_before_environment_changes(monkeypatch, profile):
+def test_projection_captures_instance_profiles_before_environment_changes(monkeypatch, profile, model_settings):
+    import json
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    data["connections"]["api"]["timeout"] = 31
+    for purpose, model in {"chat": "chat-a", "research": "research-a", "ROUTER": "router-a", "DELEGATE": "delegate-a", "SEARCH_AGENT": "search-a", "CUSTOM": "chat-a"}.items():
+        data["profiles"][purpose] = {"connection": "api", "model": model}
+        data["bindings"][purpose] = purpose
+    env_a = {**write_models(model_settings, data), "CHATCOPILOT_CHAT_API_KEY": "test-a",
+             "TAVILY_API_KEY": "credential-a", "CHATCOPILOT_SEARCH_QUOTA_MAX_TTL": "400"}
     runtime = _runtime()
-    cfg = ChatConfig(llm=LLMConfig(model="chat-a", api_key="test-a", timeout=31))
-    env_a = {
-        "RESEARCH_MODEL": "research-a", "ROUTER_MODEL": "router-a",
-        "DELEGATE_MODEL": "delegate-a", "SEARCH_AGENT_MODEL": "search-a",
-        "TAVILY_API_KEY": "credential-a", "CHATCOPILOT_SEARCH_QUOTA_MAX_TTL": "400",
-    }
+    cfg = ChatConfig(llm=LLMConfig(model="unused-input"))
     first = project_agent_runtime(runtime, chat_config=cfg, profile=profile, environment=env_a)
-    cfg.llm.model = "chat-b"
-    runtime.subagents.agents["developer"] = SubagentBudgetSpec(model_env_prefix="OTHER")
-    env_a["RESEARCH_MODEL"] = "edited"
+    data["profiles"]["chat"]["model"] = "chat-b"
+    data["profiles"]["research"]["model"] = "research-default"
+    data["bindings"]["ROUTER"] = "research"
+    data["bindings"]["OTHER"] = "chat"
+    write_models(model_settings, data)
+    runtime.subagents.agents["developer"] = SubagentBudgetSpec(model_binding="OTHER")
     monkeypatch.setenv("ROUTER_MODEL", "unrelated-console-model")
     second = project_agent_runtime(runtime, chat_config=cfg, profile=profile, environment={})
-
     assert first.chat_config.llm.model == "chat-a"
     assert first.research_llm_config.model == "research-a"
     assert first.search_llm_config.model == "router-a"
     assert first.search_llm_config.timeout == 31
-    profiles = dict(first.subagent_llm_configs)
-    assert {key: value.model for key, value in profiles.items()} == {
-        "CUSTOM": "chat-a", "DELEGATE": "delegate-a", "SEARCH_AGENT": "search-a",
-    }
-    assert all(value.api_key == "test-a" for value in profiles.values())
+    assert {key: value.model for key, value in first.subagent_llm_configs} == {
+        "CUSTOM": "chat-a", "DELEGATE": "delegate-a", "SEARCH_AGENT": "search-a"}
+    assert all(value.api_key == "test-a" for _, value in first.subagent_llm_configs)
     assert first.search_provider_credentials == (("web", "credential-a"),)
-    assert first.search_quota_max_ttl == 400
-    assert not first.subagents.agents
+    assert first.search_quota_max_ttl == 400 and not first.subagents.agents
     assert second.chat_config.llm.model == "chat-b"
-    assert second.research_llm_config.model == "research-default"
-    assert second.search_llm_config.model == "research-default"
+    assert second.research_llm_config.model == second.search_llm_config.model == "research-default"
     assert second.search_provider_credentials == (("web", ""),)
     assert second.search_quota_max_ttl == 86400
     assert "credential-a" not in repr(first)
@@ -106,19 +107,26 @@ def test_projection_captures_instance_profiles_before_environment_changes(monkey
 def test_removed_capabilities_do_not_resolve_unused_profiles():
     runtime = _runtime()
     projection = project_agent_runtime(
-        runtime, chat_config=ChatConfig(), environment={"DELEGATE_TIMEOUT": "invalid"},
+        runtime, chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), environment={"DELEGATE_TIMEOUT": "invalid"},
         overrides=AgentRuntimeOverrides(subagents=SubagentSpec(), mcp_servers=()),
     )
     assert projection.subagent_llm_configs == ()
     assert projection.search_provider_credentials == ()
 
 
-def test_explicit_empty_environment_does_not_inherit_process_profile(monkeypatch):
+def test_explicit_empty_environment_does_not_inherit_process_profile(monkeypatch, model_settings):
+    import json
+    from tests.model_settings_fixture import write_models
+    from chatcopilot.core.model_settings import ModelSettingsError
     monkeypatch.setenv("SLOT_MODEL", "other-instance")
     fallback = LLMConfig(model="configured")
-    assert load_llm_profile("SLOT", fallback=fallback, environment={}).model == "configured"
-    assert load_llm_profile("SLOT", fallback=fallback).model == "other-instance"
-    assert load_llm_profile("SLOT", fallback=fallback, environment={"SLOT_MODEL": ""}) == fallback
+    with pytest.raises(ModelSettingsError, match="未配置"):
+        load_llm_profile("SLOT", fallback=fallback, environment={})
+    data = json.loads(model_settings.read_text())
+    data["bindings"]["SLOT"] = "research"
+    write_models(model_settings, data)
+    assert load_llm_profile("SLOT", fallback=fallback, environment={}).model == "research-default"
+    assert load_llm_profile("SLOT", fallback=fallback).model == "research-default"
 
 
 def test_router_and_delegate_keep_injected_clients_after_environment_changes(monkeypatch):
@@ -126,8 +134,8 @@ def test_router_and_delegate_keep_injected_clients_after_environment_changes(mon
     router_client = Mock(spec=LLMClient)
     delegate_client = Mock(spec=LLMClient)
     clients = {"DELEGATE": delegate_client}
-    runner = SubagentRunner(main_llm=main, main_config=ChatConfig(), tools=(), llm_profiles=clients)
-    router = SearchRouter(main_llm=router_client, budget=SubagentBudgetSpec(model_env_prefix="ROUTER"))
+    runner = SubagentRunner(main_llm=main, main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), tools=(), llm_profiles=clients)
+    router = SearchRouter(main_llm=router_client, budget=SubagentBudgetSpec(model_binding="ROUTER"))
     clients["DELEGATE"] = main
     monkeypatch.setenv("DELEGATE_MODEL", "late-model")
     monkeypatch.setenv("ROUTER_MODEL", "late-router")
@@ -201,7 +209,7 @@ def test_runtime_reuses_equal_profiles_only_within_each_instance(monkeypatch):
         created.append(value)
         return value
 
-    monkeypatch.setattr(runtime_module, "LLMClient", client)
+    monkeypatch.setattr(runtime_module, "create_model_client", client)
     chat = LLMConfig(model="chat")
     research = replace(chat, model="research")
     options = {
@@ -254,12 +262,12 @@ def test_runtime_assembly_closes_completed_resources_after_failure(monkeypatch, 
             raise RuntimeError("mcp_constructor")
         return mcp
 
-    monkeypatch.setattr(runtime_module, "LLMClient", client)
+    monkeypatch.setattr(runtime_module, "create_model_client", client)
     monkeypatch.setattr(runtime_module, "LocalTextRetriever", create_retriever)
     monkeypatch.setattr(runtime_module, "McpToolProvider", create_mcp)
     with pytest.raises(RuntimeError, match=failure):
         build_agent_runtime(
-            chat_config=ChatConfig(), research_llm_config=LLMConfig(model="different"),
+            chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), research_llm_config=LLMConfig(model="different"),
             route=runtime_route(),
             tool_packs=(), rag_sources=(object(),), mcp_servers=(McpServerConfig(id="test"),),
         )
@@ -276,7 +284,7 @@ def test_runtime_close_continues_after_one_resource_fails():
     llm = SimpleNamespace(close=Mock())
     mcp = SimpleNamespace(close=Mock(side_effect=RuntimeError("close failed")))
     runtime = AgentRuntime(
-        main_model_client=llm, tools=(), tools_schema=(), runtime_config=ChatConfig(),
+        main_model_client=llm, tools=(), tools_schema=(), runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(), mcp_provider=mcp,
         subagent_model_clients={"ALIAS": llm},
     )
@@ -296,7 +304,7 @@ def test_direct_runtime_defaults_do_not_resolve_ambient_profiles(monkeypatch):
         Mock(side_effect=AssertionError("direct runtime read a profile")),
     )
     runtime = AgentRuntime(
-        main_model_client=client, tools=(), tools_schema=(), runtime_config=ChatConfig(),
+        main_model_client=client, tools=(), tools_schema=(), runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
     )
     assert runtime.research_model_client is runtime.search_model_client is client
@@ -307,13 +315,13 @@ def test_direct_runtime_defaults_do_not_resolve_ambient_profiles(monkeypatch):
 @pytest.mark.parametrize("kind", ["subagent", "router"])
 def test_unresolved_model_override_is_rejected_before_materialization(monkeypatch, kind):
     create = Mock(side_effect=AssertionError("constructed before validation"))
-    monkeypatch.setattr(runtime_module, "LLMClient", create)
+    monkeypatch.setattr(runtime_module, "create_model_client", create)
     if kind == "subagent":
-        subagents = SubagentSpec(include=("developer",), defaults=SubagentBudgetSpec(model_env_prefix="MISSING"))
+        subagents = SubagentSpec(include=("developer",), defaults=SubagentBudgetSpec(model_binding="MISSING"))
     else:
-        subagents = SubagentSpec(research_enabled=True, research_budget=SubagentBudgetSpec(model_env_prefix="MISSING"))
+        subagents = SubagentSpec(research_enabled=True, research_budget=SubagentBudgetSpec(model_binding="MISSING"))
     with pytest.raises(ValueError, match="(?i)(profile|resolved|materializ)"):
         build_agent_runtime(
-            chat_config=ChatConfig(), route=runtime_route(), tool_packs=(), subagents=subagents
+            chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ), route=runtime_route(), tool_packs=(), subagents=subagents
         )
     create.assert_not_called()

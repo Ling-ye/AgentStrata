@@ -17,15 +17,7 @@ MODEL_SELECTION_SOURCES = {
     MODEL_SELECTION_SOURCE_DEFAULT,
     MODEL_SELECTION_SOURCE_PROFILE,
 }
-CODEX_REASONING_EFFORTS = {
-    "none",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
-    "max",
-}
+
 
 
 @dataclass(frozen=True)
@@ -38,7 +30,7 @@ class WorkerModelProfile:
     def __post_init__(self) -> None:
         if not self.model.strip():
             raise ValueError("Codex model profile model must not be empty")
-        if self.reasoning_effort not in CODEX_REASONING_EFFORTS:
+        if not isinstance(self.reasoning_effort, str) or any(c.isspace() for c in self.reasoning_effort):
             raise ValueError(
                 "unsupported Codex reasoning effort: "
                 f"{self.reasoning_effort!r}"
@@ -70,7 +62,7 @@ class WorkerModelSelection:
             raise ValueError("model-selection provider must not be empty")
         if not self.model.strip():
             raise ValueError("model-selection model must not be empty")
-        if self.reasoning_effort not in CODEX_REASONING_EFFORTS:
+        if not isinstance(self.reasoning_effort, str) or any(c.isspace() for c in self.reasoning_effort):
             raise ValueError(
                 "unsupported Codex reasoning effort: "
                 f"{self.reasoning_effort!r}"
@@ -112,13 +104,12 @@ class WorkerModelSelection:
             source=str(
                 payload.get("source") or MODEL_SELECTION_SOURCE_DEFAULT
             ).strip().lower(),
-            profile=str(payload.get("profile") or "").strip().lower(),
+            profile=str(payload.get("profile") or "").strip(),
         )
 
 
 __all__ = [
     "CODE_MODEL_LANE",
-    "CODEX_REASONING_EFFORTS",
     "WorkerModelProfile",
     "WorkerModelSelection",
     "MODEL_SELECTION_SCOPE_ONCE",

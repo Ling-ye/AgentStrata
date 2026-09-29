@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shlex
 import stat
 import subprocess
 import tempfile
@@ -1022,7 +1023,7 @@ class CodexRuntimeAdapter:
             extra_config.extend(["features.shell_tool=false", "features.unified_exec=false"])
         extra_config.append("features.default_mode_request_user_input=false")
         command = build_app_server_command(
-            template="codex exec --model {model} --cd {workdir}",
+            template=(shlex.quote(self._runtime_config.llm.codex_bin) if self._runtime_config.llm.codex_bin else "codex") + " exec --model {model} --cd {workdir}",
             model=effective_selection.model,
             workdir=state.workdir,
             reasoning_effort=effective_selection.reasoning_effort,

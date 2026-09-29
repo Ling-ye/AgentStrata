@@ -15,12 +15,12 @@ from unittest.mock import Mock
 import pytest
 
 from chatcopilot.harness.models import HarnessError
-from chatcopilot.harness.governance_types import GovernanceOptions, GovernanceSchedule
+from chatcopilot.harness.governance_types import ScheduledGovernanceOptions, GovernanceSchedule
 from chatcopilot.harness.schedule_runtime import GovernanceScheduler
 
 
 def _settings(*, enabled: bool = True) -> GovernanceSchedule:
-    return GovernanceSchedule(enabled, 24, GovernanceOptions("fixture"))
+    return GovernanceSchedule(enabled, 24, ScheduledGovernanceOptions("worker"))
 
 
 def _scheduler(tmp_path: Path, *, command=None) -> tuple[GovernanceScheduler, SimpleNamespace, Mock]:
@@ -30,6 +30,7 @@ def _scheduler(tmp_path: Path, *, command=None) -> tuple[GovernanceScheduler, Si
         [], 0, "LoadState=loaded\nActiveState=active\n", "",
     ))
     controller = SimpleNamespace(
+        settings={},
         repository=repository,
         active_governance_run=Mock(return_value=None),
         store=SimpleNamespace(root=tmp_path / "private", active_governance=Mock(return_value=None)),

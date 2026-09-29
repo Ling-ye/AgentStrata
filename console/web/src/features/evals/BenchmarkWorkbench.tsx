@@ -1,3 +1,4 @@
+import ModelProfileSelect from "../llm/ModelProfileSelect";
 import { Expectation } from "./Expectation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
@@ -77,6 +78,7 @@ function SubjectCatalog({ botId, suites, active, onCreated, subject }: {
 function SuiteForm({ botId, suite, active, onCreated }: {
   botId: string; suite: EvaluationSuite; active: boolean; onCreated: (record: EvaluationRecord) => void;
 }) {
+  const [modelProfile, setModelProfile] = useState("");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");
   const [testCategory, setTestCategory] = useState("");
@@ -109,10 +111,10 @@ function SuiteForm({ botId, suite, active, onCreated }: {
   const blocked = !botId || !suite?.ready || active || !selectedIds.length || unavailableSelection.length > 0 || !supportsMode || (judgeRequired && !judge) || cases.isFetching || cases.isError;
   const start = useMutation({ mutationFn: () => {
     if (!suite || blocked) throw new Error("请先完成选题并修正阻断项。");
-    return evaluationApi.create(buildSuiteRequest({ botId, suiteId: suite.suite_id, caseIds: selectedIds,
+    return evaluationApi.create({ ...buildSuiteRequest({ botId, suiteId: suite.suite_id, caseIds: selectedIds,
       preset: "custom", repetitions, maxWallSeconds: budget, seed: 0,
       options: suite.track === "qq_message_flow" ? {} : { scoring_mode: mode, ...(benchmark?.rubrics.length ? { quality_rubric: rubric } : {}) },
-      dryRun: false, llmJudge: false, confirmExternalWrite: false }));
+      dryRun: false, llmJudge: false, confirmExternalWrite: false }), ...(modelProfile ? { model_profile: modelProfile } : {}) });
   }, onSuccess: onCreated });
   const prepare = useMutation({ mutationFn: () => evaluationApi.prepareSuite(suite!.suite_id, botId),
     onSuccess: () => Message.info("已提交数据准备任务；完成后刷新目录。") });
@@ -151,7 +153,7 @@ function SuiteForm({ botId, suite, active, onCreated }: {
         {pages > 1 && <Space><Button disabled={safePage === 1} onClick={() => setPage(safePage - 1)}>上一页</Button><Text>{safePage} / {pages}</Text><Button disabled={safePage === pages} onClick={() => setPage(safePage + 1)}>下一页</Button></Space>}
       </section>
       <aside className="eval-benchmark-config" aria-label="评分与运行计划">
-        <Text bold>评分与运行</Text><div className="eval-benchmark-field"><Text type="secondary">实际被测对象</Text><Text>{benchmark?.target_scope || suite.execution_scope}</Text><Text type="secondary">所选机器人的实际模型在创建前预检解析并保存。</Text></div>
+        <Text bold>评分与运行</Text><ModelProfileSelect purpose="" value={modelProfile} onChange={setModelProfile} disabled={active || start.isPending} /><div className="eval-benchmark-field"><Text type="secondary">实际被测对象</Text><Text>{benchmark?.target_scope || suite.execution_scope}</Text><Text type="secondary">所选机器人的实际模型在创建前预检解析并保存。</Text></div>
         <div className="eval-benchmark-field">评分方案<Select aria-label="评分方案" value={mode} onChange={setMode} options={(benchmark?.scoring_modes ?? ["native"]).map(value => ({ value, label: SCORING_LABELS[value] || value }))} /></div>
         <div className="eval-benchmark-field"><Text type="secondary">评分规则</Text><Text>{mode === "geval" ? "strict_mode · 通过 / 不通过 · LLM 判定" : benchmark?.native_method}</Text></div>
         {judgeRequired && <div className="eval-benchmark-field"><Text>LLM-as-a-Judge → G-Eval</Text><Text type="secondary">DeepEval GEval / 多轮按 Case 使用 ConversationalGEval</Text><Text>评分模型：{judge?.model || "未配置"}</Text>

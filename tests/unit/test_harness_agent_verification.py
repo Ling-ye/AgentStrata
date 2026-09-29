@@ -346,3 +346,5 @@ def test_model_confirmation_failure_prevents_acceptance(repository, tmp_path):
     assert result["evaluations"]["verify-1"]["passed_cases"] == ["a", "b", result["source"]["agent_source"]["case_id"]]
     assert result["evaluations"]["confirm-1"]["failed_cases"] == ["b", "c"]
     assert not result.get("local_commit")
+
+pytestmark = pytest.mark.usefixtures("api_model_settings")

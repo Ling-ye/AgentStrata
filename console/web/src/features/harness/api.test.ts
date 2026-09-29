@@ -33,7 +33,7 @@ describe("independent Harness source selection", () => {
     const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ task_id: "repair-example", source: { feedback } }) });
     vi.stubGlobal("fetch", fetch);
     const body = { source_kind: "robot_task" as const, bot_id: "sample", run_id: "run-example", feedback,
-      request_id: "request-example", model: "test-model", reasoning_effort: "medium", max_attempts: 3, timeout_seconds: 7200 };
+      request_id: "request-example", profile: "test-model", max_attempts: 3, timeout_seconds: 7200 };
     const result = await harnessApi.start(body);
     expect(JSON.parse(fetch.mock.calls[0][1].body)).toEqual(body);
     expect(result.source.feedback).toEqual(feedback);

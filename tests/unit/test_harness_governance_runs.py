@@ -41,7 +41,7 @@ class Tasks:
         self.preflight_error = None
         self.preflights = []
 
-    def preflight_model(self, model, reasoning_effort):
+    def preflight_model(self, model, reasoning_effort, *, model_settings=None, model_profile=""):
         self.preflights.append((model, reasoning_effort))
         if self.preflight_error:
             raise self.preflight_error
@@ -316,7 +316,7 @@ def test_controller_run_entrypoint_creates_and_freezes_ordinary_children(tmp_pat
     original = delivery.initialize
     monkeypatch.setattr(delivery, "remote_baseline", baseline)
     monkeypatch.setattr(delivery, "initialize", lambda store, ident: original(store, ident, client=LocalSnapshot()))
-    monkeypatch.setattr("chatcopilot.harness.codex_adapter.preflight_worker_model", lambda *_args: None)
+    monkeypatch.setattr("chatcopilot.harness.codex_adapter.preflight_worker_model", lambda *_args, **_kwargs: None)
     workers = Workers(None)
     controller = HarnessController(repo, root=tmp_path / "private", worker_control=workers, evaluator=Mock())
     workers.store = controller.store

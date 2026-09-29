@@ -26,7 +26,6 @@ from chatcopilot.contracts.cancellation import (
     CancellationProbe,
     CancellationRequested,
 )
-from chatcopilot.project import CHAT_ENV_PREFIX
 from chatcopilot.contracts.chat_result import ChatResult
 
 _LOGGER = logging.getLogger("chatcopilot.core.llm_client")
@@ -94,7 +93,7 @@ class LLMClient:
                 raise ValueError("provider continuation requires its assistant message")
             assistant["_provider_continuation"] = json_value(request.continuation)
         result = self.chat(messages, tools=[json_value(tool) for tool in request.tools],
-                           model=request.route.model, reasoning_effort=request.route.reasoning_effort)
+                           model=request.route.model, reasoning_effort=request.route.reasoning_effort or "")
         usage = result.usage or {}
         return ModelResponse(result.content, tuple(ModelToolCall(call["id"], call["function"]["name"],
             json.loads(call["function"]["arguments"])) for call in result.tool_calls), result.finish_reason,
@@ -111,8 +110,8 @@ class LLMClient:
 
         if not self._cfg.api_key:
             raise RuntimeError(
-                "未配置 LLM api_key。请在 config.yaml 的 llm.api_key 填写，"
-                f"或设置环境变量 {CHAT_ENV_PREFIX}_API_KEY。"
+                "模型连接的 API 凭据未配置。请检查统一模型配置中的 auth.key_env，"
+                f"并在进程环境或连接的私有 env_file 中设置 {self._cfg.key_env}。"
             )
         return OpenAI(
             base_url=self._cfg.base_url,
@@ -140,6 +139,10 @@ class LLMClient:
         """统一入口；首选流式，失败时自动降级非流式。"""
         if self._closed:
             raise RuntimeError("LLM client is closed")
+        # None inherits the configured profile; an explicit empty selection uses
+        # the provider default, including when switching from a profile with effort.
+        if reasoning_effort is None:
+            reasoning_effort = self._cfg.reasoning_effort
         if cancellation is not None:
             cancellation.raise_if_cancelled()
         outbound_messages = _expand_local_image_blocks(messages)
@@ -194,7 +197,7 @@ class LLMClient:
             "model": model or self._cfg.model,
             "messages": messages,
         }
-        if reasoning_effort is not None:
+        if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
         if tools:
             kwargs["tools"] = tools
@@ -254,7 +257,7 @@ class LLMClient:
             "stream": True,
             "stream_options": {"include_usage": True},
         }
-        if reasoning_effort is not None:
+        if reasoning_effort:
             kwargs["reasoning_effort"] = reasoning_effort
         if tools:
             kwargs["tools"] = tools

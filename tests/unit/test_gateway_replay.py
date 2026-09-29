@@ -33,7 +33,7 @@ def runtime(monkeypatch):
             return ChatResult(content="actual reply", tool_calls=[], usage={})
         def close(self):
             pass
-    monkeypatch.setattr("chatcopilot.agent.runtime.LLMClient", Model)
+    monkeypatch.setattr("chatcopilot.agent.runtime.create_model_client", Model)
     return calls
 
 

@@ -19,7 +19,7 @@ def runtime_route(
                 api_key="fixture",
             )
             if runtime_id == "codex"
-            else LLMConfig(api_key="fixture")
+            else LLMConfig(model="gpt-4o-mini", api_key="fixture")
         )
     return ResolvedRuntimeRoute(
         runtime_id,  # type: ignore[arg-type]

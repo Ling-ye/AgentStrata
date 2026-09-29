@@ -295,7 +295,7 @@ def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt
         inputs = [{"type": "text", "text": prompt}]
         inputs.extend({"type": "localImage", "path": path} for path in image_paths)
         turn = rpc.request("turn/start", {"threadId": native_id, "input": inputs,
-            "model": model, "effort": effort, "summary": "auto", "approvalPolicy": approval_policy,
+            "model": model, "effort": effort or None, "summary": "auto", "approvalPolicy": approval_policy,
             **({"outputSchema": output_schema} if output_schema is not None else {})})
         turn_id = (turn.get("turn") or {}).get("id")
         if not isinstance(turn_id, str) or not turn_id or rpc.turn_id and turn_id != rpc.turn_id:

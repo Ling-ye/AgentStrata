@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.botspec.model import LLMSpec
 
 import json
@@ -194,7 +196,7 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
             capability_policies=(),
         )
         load_runtime_context.return_value = context
-        load_config.return_value = ChatConfig()
+        load_config.return_value = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
         workspace_service = object()
 
         with mock.patch.dict(os.environ, {}, clear=False):

@@ -18,12 +18,16 @@ from chatcopilot.evals.models import TrialObservation, to_jsonable
 
 
 @pytest.fixture
-def transport(monkeypatch):
+def transport(monkeypatch, model_settings):
     state = SimpleNamespace(responses=[], requests=[], sleeps=[], now=0.0)
-    for key, value in {"MODEL": "controlled-judge", "BASE_URL": "https://private-judge.test/v1",
-                       "API_KEY": "private-judge-key"}.items():
-        monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_" + key, value)
-    monkeypatch.delenv("CHATCOPILOT_EVALUATION_JUDGE_REASONING_EFFORT", raising=False)
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    data["connections"]["judge"] = {"kind": "openai_compatible", "base_url": "https://private-judge.test/v1", "timeout": 60,
+        "auth": {"mode": "api_key", "key_env": "CHATCOPILOT_EVALUATION_JUDGE_API_KEY"}}
+    data["profiles"]["judge"] = {"connection": "judge", "model": "controlled-judge"}
+    data["bindings"]["evaluation.judge"] = "judge"
+    write_models(model_settings, data)
+    monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_API_KEY", "private-judge-key")
 
     def sleep(seconds):
         state.sleeps.append(seconds)

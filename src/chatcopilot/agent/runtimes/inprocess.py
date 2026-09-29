@@ -145,7 +145,6 @@ def _build_inprocess_runtime_adapter(
         topic_policy = TopicPolicy(
             enabled=bool(getattr(rt, "topic_classifier_enabled", False)),
             mode=getattr(rt, "topic_classifier_mode", "off"),
-            model=getattr(rt, "topic_model", "") or None,
             uncertain_mode=getattr(rt, "topic_uncertain_mode", "continue"),
             related_threshold=getattr(rt, "topic_related_threshold", 0.70),
             unrelated_threshold=getattr(rt, "topic_unrelated_threshold", 0.75),

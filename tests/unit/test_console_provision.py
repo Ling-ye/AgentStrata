@@ -167,7 +167,7 @@ def test_qq_provision_uses_botspec_llm_prefix_and_secret_free_receipt(
         res = operations.write_instance_env(
             inst,
             {
-                "chat_api_key": "sk-test",
+                "llm_config": "/tmp/test-models.json",
                 "QQ_ACCOUNT": "123456789",
                     "CHATCOPILOT_QQ_ONEBOT_WS_URL": "ws://127.0.0.1:3001",
                 "QQ_ACCESS_TOKEN": "a" * 32,
@@ -177,14 +177,14 @@ def test_qq_provision_uses_botspec_llm_prefix_and_secret_free_receipt(
 
     assert res["ok"] is True
     values = load_local_env_values(Path(str(res["local_env_file"])))
-    assert values["CHATCOPILOT_DEMO_API_KEY"] == "sk-test"
+    assert values["AGENTSTRATA_LLM_CONFIG"] == "/tmp/test-models.json"
     assert values["QQ_ACCOUNT"] == "123456789"
     assert values["QQ_ACCESS_TOKEN"] == "a" * 32
     assert "CHATCOPILOT_CHAT_API_KEY" not in values
     assert "sk-test" not in str(res["receipt"])
     assert "a" * 32 not in str(res["receipt"])
     assert res["receipt"]["committed"] is True
-    assert "CHATCOPILOT_DEMO_API_KEY" in res["written_keys"]
+    assert "AGENTSTRATA_LLM_CONFIG" in res["written_keys"]
     assert "QQ_ACCOUNT" in res["written_keys"]
     provision_cmd = run.call_args.args[0]
     assert provision_cmd[-2:] == ["--bot", inst.bot_spec]
@@ -194,7 +194,7 @@ def test_qq_provision_rejects_missing_qq_account_without_writing(
     canonical_console_repo: Path,
 ) -> None:
     inst = _inst(canonical_console_repo, platform="qq")
-    res = operations.write_instance_env(inst, {"chat_api_key": "sk-test"})
+    res = operations.write_instance_env(inst, {"llm_config": "/tmp/test-models.json"})
 
     assert res["ok"] is False
     assert "qq_account" in str(res["error"]).lower()
@@ -210,9 +210,7 @@ def test_starter_console_generates_token_and_defaults_owner_admission(
         res = operations.write_instance_env(
             inst,
             {
-                "chat_api_key": "sk-test",
-                "chat_base_url": "https://example.invalid/v1",
-                "chat_model": "test-model",
+                "llm_config": "/tmp/test-models.json",
                 "add_owner_ids": "987654321",
                 "qq_account": "123456789",
             },
@@ -250,9 +248,7 @@ def test_starter_console_rejects_explicit_host_generated_token(
         res = operations.write_instance_env(
             inst,
             {
-                "chat_api_key": "sk-test",
-                "chat_base_url": "https://example.invalid/v1",
-                "chat_model": "test-model",
+                "llm_config": "/tmp/test-models.json",
                 "add_owner_ids": "987654321",
                 "qq_account": "123456789",
                 "qq_access_token": submitted_token,
@@ -278,7 +274,7 @@ def test_qq_provision_rejects_weak_token_without_echoing_or_writing(
         res = operations.write_instance_env(
             inst,
             {
-                "chat_api_key": "sk-test",
+                "llm_config": "/tmp/test-models.json",
                 "QQ_ACCOUNT": "123456789",
                 "QQ_ACCESS_TOKEN": weak_token,
             },
@@ -314,7 +310,7 @@ def test_runtime_generation_failure_keeps_committed_secret_free_receipt(
         res = operations.write_instance_env(
             inst,
             {
-                "chat_api_key": "sk-test",
+                "llm_config": "/tmp/test-models.json",
                 "qq_account": "123456789",
                 "qq_access_token": "a" * 32,
             },
@@ -358,10 +354,10 @@ def test_empty_secret_preserves_existing_value(
     local_env.chmod(0o600)
 
     with _successful_runtime():
-        res = operations.write_instance_env(inst, {"chat_api_key": ""})
+        res = operations.write_instance_env(inst, {"qq_access_token": ""})
 
     assert res["ok"] is True
-    assert "chat_api_key" in res["receipt"]["preserved_fields"]
+    assert "qq_access_token" in res["receipt"]["preserved_fields"]
     assert "existing-key" in local_env.read_text(encoding="utf-8")
     assert "# keep this comment" in local_env.read_text(encoding="utf-8")
 
@@ -370,14 +366,14 @@ def test_feishu_provision_still_requires_platform_credentials(
     canonical_console_repo: Path,
 ) -> None:
     inst = _inst(canonical_console_repo, platform="feishu")
-    res = operations.write_instance_env(inst, {"chat_api_key": "sk-test"})
+    res = operations.write_instance_env(inst, {"llm_config": "/tmp/test-models.json"})
 
     assert res["ok"] is False
     assert "feishu_app_id" in str(res["error"]).lower()
 
     res = operations.write_instance_env(
         inst,
-        {"chat_api_key": "sk-test", "feishu_app_id": "cli-test"},
+        {"llm_config": "/tmp/test-models.json", "feishu_app_id": "cli-test"},
     )
     assert res["ok"] is False
     assert "feishu_app_secret" in str(res["error"]).lower()
@@ -396,19 +392,10 @@ def test_provision_schema_v2_is_dynamic_and_reports_configured_fields(
     assert schema["schema_version"] == 2
     assert schema["bot_id"] == "sample-qq"
     common_by_key = {field["env_key"]: field for field in schema["common_fields"]}
-    assert common_by_key["CHATCOPILOT_DEMO_API_KEY"] == {
-        "field": "chat_api_key",
-        "env_key": "CHATCOPILOT_DEMO_API_KEY",
-        "label": "LLM API Key",
-        "group": "llm",
-        "required": True,
-        "secret": True,
-        "default": None,
-        "description": "Explicit model API-key credential",
-        "configured": True,
-        "host_generated": False,
-        "value": "configured",
-    }
+    assert "CHATCOPILOT_DEMO_API_KEY" not in common_by_key
+    assert common_by_key["AGENTSTRATA_LLM_CONFIG"]["field"] == "llm_config"
+    assert common_by_key["AGENTSTRATA_LLM_CONFIG"]["secret"] is False
+
     platform_by_key = {field["env_key"]: field for field in schema["fields"]}
     assert platform_by_key["QQ_ACCOUNT"]["required"] is True
     assert schema["setup_actions"][0]["guided_surface"] == "terminal"
@@ -427,7 +414,7 @@ def test_builtin_qq_schema_uses_real_prefix_and_code_worker_requirement() -> Non
     schema = operations.provision_schema(inst)
 
     common_keys = {field["env_key"] for field in schema["common_fields"]}
-    assert "CHATCOPILOT_LINGYE_API_KEY" in common_keys
+    assert "AGENTSTRATA_LLM_CONFIG" in common_keys
     assert "CHATCOPILOT_CHAT_API_KEY" not in common_keys
     assert schema["requires_code_worker"] is True
 
@@ -461,7 +448,7 @@ def test_fake_platform_schema_and_write_need_no_console_branch(
             res = operations.write_instance_env(
                 inst,
                 {
-                    "chat_api_key": "sk-test",
+                    "llm_config": "/tmp/test-models.json",
                     "fake_token": "tok",
                     "FAKE_OPTION": "opt",
                 },
@@ -469,6 +456,6 @@ def test_fake_platform_schema_and_write_need_no_console_branch(
 
     assert res["ok"] is True
     values = load_local_env_values(Path(str(res["local_env_file"])))
-    assert values["CHATCOPILOT_CHAT_API_KEY"] == "sk-test"
+    assert values["AGENTSTRATA_LLM_CONFIG"] == "/tmp/test-models.json"
     assert values["FAKE_TOKEN"] == "tok"
     assert values["FAKE_OPTION"] == "opt"

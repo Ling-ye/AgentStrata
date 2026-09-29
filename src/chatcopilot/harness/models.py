@@ -53,11 +53,13 @@ class RepairOptions:
     reasoning_effort: str = "medium"
     max_attempts: int = 3
     timeout_seconds: int | None = 3600
+    model_settings: dict = field(default_factory=dict, repr=False)
+    model_profile: str = ""
 
     def __post_init__(self) -> None:
         if not self.model.strip() or any(char.isspace() for char in self.model):
             raise ValueError("修复模型必须明确指定")
-        if self.reasoning_effort not in {"minimal", "low", "medium", "high", "xhigh", "max"}:
+        if not isinstance(self.reasoning_effort, str) or any(c.isspace() for c in self.reasoning_effort):
             raise ValueError("不支持的推理强度")
         if type(self.max_attempts) is not int or self.max_attempts < 1:
             raise ValueError("修复次数必须为正整数")
@@ -71,6 +73,8 @@ class CodingOptions:
     reasoning_effort: str
     max_attempts: int
     timeout_seconds: int | None
+    model_settings: dict = field(default_factory=dict, repr=False)
+    model_profile: str = ""
 
 
 @dataclass(frozen=True)

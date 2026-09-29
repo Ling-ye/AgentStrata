@@ -1,3 +1,5 @@
+
+from chatcopilot.core.config import LLMConfig
 from pathlib import Path
 from contextlib import nullcontext
 import os
@@ -365,7 +367,7 @@ def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, runtime_id,
         main_model_client=model,
         tools=tuple(TOOLS),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(runtime_id),
     )
     session = runtime.open_session(
@@ -460,7 +462,7 @@ def test_persona_research_commits_and_next_turn_loads_in_each_backend(
         subagent_default_model_client=model,
         tools=(),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(runtime_id),
     )
     adapter = mock.Mock()

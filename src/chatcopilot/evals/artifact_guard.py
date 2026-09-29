@@ -29,6 +29,7 @@ from chatcopilot.evals.private_files import validate_private_directory_metadata,
 _MAX_CANCEL_MARKER_BYTES: Final = 64 * 1024
 _AUTHORITY_FILES: Final = (
     "request.json",
+    "llm.json",
     "state.json",
     "result.json",
     "summary.md",

@@ -1,6 +1,8 @@
 """Direct model input/output capture and read-only historical output projection."""
 from __future__ import annotations
 
+from chatcopilot.core.model_routes import create_model_client
+
 from copy import deepcopy
 import json
 from typing import Any, Mapping
@@ -9,7 +11,6 @@ from typing import Any, Mapping
 def invoke(case, *, chat_config, messages: list[dict], tools: list[dict] | None) -> dict[str, Any]:
     from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_native_prefix
     from chatcopilot.contracts.prompt import BotPromptProfile
-    from chatcopilot.core.llm_client import LLMClient
     from chatcopilot.evals.trial_capture import record_turn
 
     plan = PromptPlanBuilder().build(PromptBuildInput(
@@ -25,7 +26,7 @@ def invoke(case, *, chat_config, messages: list[dict], tools: list[dict] | None)
     turn = {"turn_index": 0, "conversation_id": case.case_id, "input": case.input,
             "model_request": request, "completed": False}
     record_turn(turn)
-    client = LLMClient(chat_config.llm)
+    client = create_model_client(chat_config.llm)
     try:
         reply = client.chat(messages=request["messages"], tools=request["tools"], stream=False, max_retries=0)
         response = {"content": reply.content or "", "tool_calls": deepcopy(reply.tool_calls or []),

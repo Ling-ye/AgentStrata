@@ -7,7 +7,6 @@ the main ACP process and background workers.
 """
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 from typing import Mapping
@@ -52,30 +51,12 @@ def apply_runtime_env(runtime: BotRuntimeContext) -> None:
 
 
 def llm_runtime_env_defaults(llm: LLMSpec) -> dict[str, str]:
-    """Project the active Codex model and execution settings into runtime env."""
-
-    code = getattr(llm, "code", None)
-    if code is None:
-        return {}
-    prefix = code.env_prefix or llm.env_prefix
-    values = {
-        f"{prefix}_CODE_PROVIDER": code.provider,
-        f"{prefix}_CODE_MODEL": code.model,
-        f"{prefix}_CODE_REASONING_EFFORT": code.reasoning_effort,
-        f"{prefix}_CODE_PROFILES_JSON": json.dumps(
-            {
-                name: profile.to_payload()
-                for name, profile in sorted(code.profiles.items())
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-        ),
-        f"{prefix}_CODE_COMMAND": code.command,
-        f"{prefix}_CODE_TIMEOUT_SECONDS": str(code.timeout_seconds),
-    }
-    if code.code_task_profile:
-        values[f"{prefix}_CODE_TASK_PROFILE"] = code.code_task_profile
-    return values
+    """Only references and host execution settings enter process environment."""
+    prefix = llm.code.env_prefix or llm.env_prefix
+    return {"CHATCOPILOT_LLM_BINDING": llm.chat.binding,
+            "CHATCOPILOT_CODE_BINDING": llm.code.binding,
+            f"{prefix}_CODE_COMMAND": llm.code.command,
+            f"{prefix}_CODE_TIMEOUT_SECONDS": str(llm.code.timeout_seconds)}
 
 
 def load_research_llm_config(
@@ -83,12 +64,13 @@ def load_research_llm_config(
     *,
     fallback: LLMConfig,
     environment: Mapping[str, str] | None = None,
+    document: dict | None = None,
 ) -> LLMConfig:
-    """Resolve the versioned research model default, then apply machine overrides."""
+    """Resolve the research purpose from the shared or captured model settings."""
 
     from chatcopilot.core.model_routes import resolve_model_config
     return resolve_model_config(llm.research, fallback=fallback,
-        prefix=llm.research_env_prefix, environment=os.environ if environment is None else environment)
+        prefix=None, environment=os.environ if environment is None else environment, document=document)
 
 
 def _source_root(source_path: Path) -> Path:
@@ -121,6 +103,8 @@ def _runtime_root(runtime: BotRuntimeContext) -> Path:
 def resolve_runtime_environment(spec: BotSpec, environment: Mapping[str, str], *, source_root: Path) -> dict[str, str]:
     """Resolve startup defaults without changing process environment or tool caches."""
     values = dict(environment)
+    from chatcopilot.core.model_settings import settings_path
+    values["AGENTSTRATA_LLM_CONFIG"] = str(settings_path(environment))
     for key, value in llm_runtime_env_defaults(spec.llm).items():
         values.setdefault(key, value)
     values.setdefault(_SOURCE_ROOT_ENV, str(source_root))

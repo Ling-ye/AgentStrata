@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from pathlib import Path
 
 import pytest
@@ -22,7 +24,7 @@ from tests.prompt_plan_fixture import runtime_route
 @pytest.fixture(autouse=True)
 def _stub_llm_client(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
-        "chatcopilot.agent.runtime.LLMClient",
+        "chatcopilot.agent.runtime.create_model_client",
         lambda _config: object(),
     )
 
@@ -46,7 +48,7 @@ def _skill(root: Path, skill_id: str) -> SkillIndexEntry:
 def test_agent_runtimes_bind_distinct_playbook_indexes(tmp_path: Path) -> None:
     first = _skill(tmp_path, "first")
     second = _skill(tmp_path, "second")
-    config = ChatConfig()
+    config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     first_runtime = build_agent_runtime(
         chat_config=config,
         route=runtime_route("native", config.llm),
@@ -72,7 +74,7 @@ def test_agent_runtimes_bind_distinct_playbook_indexes(tmp_path: Path) -> None:
 def test_duplicate_runtime_pack_selection_is_idempotent(tmp_path: Path) -> None:
     skill = _skill(tmp_path, "deduplicated")
     runtime = build_agent_runtime(
-        chat_config=ChatConfig(),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
         tool_packs=("playbooks.reader", "playbooks.reader"),
         skill_index=(skill,),
@@ -112,7 +114,7 @@ def test_runtime_projects_main_and_subagent_tools_in_both_directions() -> None:
         module=__name__,
     )
     runtime = build_agent_runtime(
-        chat_config=ChatConfig(),
+        chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
         tool_packs=(),
         runtime_providers=(provider,),

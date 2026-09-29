@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 from dataclasses import replace
 from types import SimpleNamespace
 import json
@@ -217,7 +219,7 @@ def controlled_business(monkeypatch):
     monkeypatch.setattr(executor, "load_evaluation_runtime", lambda *a, **kw: runtime)
     from chatcopilot.core.config import ChatConfig
 
-    monkeypatch.setattr(executor, "load_config", lambda **kw: ChatConfig())
+    monkeypatch.setattr(executor, "load_config", lambda **kw: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(
         executor, "assemble_agent_runtime", lambda bot, **kw: ScriptedRuntime(bot, kw["overrides"])
     )
@@ -283,7 +285,7 @@ def test_real_backend_two_model_turns_use_actual_tool_result(backend, tmp_path, 
     runtime = executor.load_evaluation_runtime('lingye-copilot-qq', load_local_environment=False, inherit_environment=False)
     runtime = replace(runtime, runtime_id=backend)
     monkeypatch.setattr(executor, 'load_evaluation_runtime', lambda *a, **kw: runtime)
-    monkeypatch.setattr(executor, 'load_config', lambda **kw: ChatConfig())
+    monkeypatch.setattr(executor, 'load_config', lambda **kw: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     calls = []
     class Model(LLMClient):
         def _build_client(self):
@@ -297,7 +299,7 @@ def test_real_backend_two_model_turns_use_actual_tool_result(backend, tmp_path, 
                 return ChatResult(content='', tool_calls=[{'id': 'lookup-1', 'type': 'function', 'function': {'name': 'tool_call', 'arguments': json.dumps({'name': 'lookup_catalog', 'arguments': {'query': '纸灯'}}, ensure_ascii=False)}}])
             assert any('17' in str(m.get('content')) and m.get('role') == 'tool' for m in messages)
             return ChatResult(content='当前库存 17 件。')
-    monkeypatch.setattr(agent_module, 'LLMClient', Model)
+    monkeypatch.setattr(agent_module, 'create_model_client', Model)
     definition = next(c for c in load_case_definitions(get_manifest(SUITE)) if c.case_id == 'decision-select-tool')
     observation = executor._execute_agent_definition(definition, suite_id=SUITE, bot='controlled', workspace_path=tmp_path, resources_by_id={}, resource_evidence=())
     assert len(calls) == 2

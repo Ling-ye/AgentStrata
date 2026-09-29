@@ -67,7 +67,7 @@ def test_provision_schema_is_adapter_driven(monkeypatch, tmp_path: Path) -> None
     assert schema["platform"] == "mock"
     assert schema["adapter_id"] == "mock_acp"
     assert schema["schema_version"] == 2
-    assert schema["common_fields"][0]["env_key"] == "CHATCOPILOT_MOCK_API_KEY"
+    assert schema["common_fields"][0]["env_key"] == "AGENTSTRATA_LLM_CONFIG"
     assert [field["env_key"] for field in schema["fields"]] == ["MOCK_TOKEN", "MOCK_REGION"]
     assert schema["setup_actions"] == [
         {

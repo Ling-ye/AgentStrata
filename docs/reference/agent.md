@@ -49,7 +49,7 @@ Bot 文本只能形成 identity/style，persona、memory、journal、网页和�
 
 认证使用互斥的 `auth: {mode: chatgpt, profile: main}` 或 `auth: {mode: api_key, key_env: ENV_NAME}`。BotSpec、配置快照和 DTO 只保存引用；订阅 token 不会发送到自定义端点，也不会被环境 API Key 覆盖。请求序列化完成后才生成 Responses 模型输入观察，私有 continuation 只用于协议回传。
 
-`llm.chat.profiles` 形成主模型选择白名单。Owner 使用 `/model <profile> [once]` 或 `/model default`；不会改变认证、runtime 或 worker。启用 `dev.code_tasks` 时，仍须用 `llm.code.code_task_profile` 引用 worker profile。worker 使用 `llm.code.env_prefix`，与主会话超时、命令和选模隔离。
+主模型方案由统一模型配置维护。Owner 使用 `/model <profile> [once]` 或 `/model default`，候选只包含同一连接的方案；不会改变认证、runtime 或 worker。独立 code worker 使用 `llm.code.binding`，执行命令和预算仍与主会话隔离。参见[模型配置](configuration.md#llm)。
 
 ## 能力与结构化交接
 

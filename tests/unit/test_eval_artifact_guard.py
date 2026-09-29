@@ -16,6 +16,7 @@ from chatcopilot.evals.artifact_guard import (
 
 _AUTHORITY_FILES = (
     "request.json",
+    "llm.json",
     "state.json",
     "result.json",
     "summary.md",

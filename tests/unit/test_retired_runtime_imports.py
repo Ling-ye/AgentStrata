@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from chatcopilot.core.config import LLMConfig
+
 import importlib
 from pathlib import Path
 
@@ -34,7 +36,7 @@ def test_current_exports_remain_usable_without_runtime_materialization() -> None
     from chatcopilot.component_catalog.subagents import BUILTIN_SUBAGENTS
     from chatcopilot.external_tools.mcp_admin.tools import TOOLS
 
-    assert ChatConfig().llm is not None
+    assert ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ).llm is not None
     assert callable(LLMClient) and callable(FileTokenLimiter)
     assert callable(load_mcp_catalog)
     assert AgentTask("input").text == "input"

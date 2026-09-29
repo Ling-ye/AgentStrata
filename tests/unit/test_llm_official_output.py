@@ -1,4 +1,6 @@
 """Official scorer boundaries, model evidence, and unavailable data behavior."""
+
+from chatcopilot.core.config import LLMConfig
 from copy import deepcopy
 from dataclasses import replace
 from types import SimpleNamespace
@@ -131,9 +133,9 @@ def test_model_capture_actual_messages_and_client_close(monkeypatch, fail):
     with capture() as observed:
         if fail:
             with pytest.raises(RuntimeError):
-                invoke(case, chat_config=SimpleNamespace(llm=SimpleNamespace(model="synthetic")), messages=messages, tools=official.tools_for(case.metadata["functions"]))
+                invoke(case, chat_config=SimpleNamespace(llm=LLMConfig(model="synthetic")), messages=messages, tools=official.tools_for(case.metadata["functions"]))
         else:
-            result = invoke(case, chat_config=SimpleNamespace(llm=SimpleNamespace(model="synthetic")), messages=messages, tools=official.tools_for(case.metadata["functions"]))
+            result = invoke(case, chat_config=SimpleNamespace(llm=LLMConfig(model="synthetic")), messages=messages, tools=official.tools_for(case.metadata["functions"]))
             assert result["metadata"]["model_response"]["finish_reason"] == "tool_calls"
             assert result["metadata"]["model_response"]["tool_calls"] == [call()]
     assert state["closed"]

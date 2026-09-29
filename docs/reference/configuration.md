@@ -2,7 +2,7 @@
 
 修改实例能力、模型或环境投影时阅读。使用方法见 [实例运维](../guides/instances.md)，字段解释以 BotSpec 类型与解析器为准。
 
-统一模型配置与自动发现的待实施设计见[架构草案](../../specs/unified-llm-configuration/spec.md)。
+统一模型配置与自动发现的设计边界见[架构规格](../../specs/unified-llm-configuration/spec.md)。
 
 ## 最小示例
 
@@ -16,7 +16,10 @@ platform:
 
 llm:
   chat:
+    binding: bot.my-bot.chat
     env_prefix: MY_BOT
+  research:
+    binding: bot.my-bot.research
 
 prompts:
   schema_version: 2
@@ -119,39 +122,53 @@ OneBot provider 不解释私聊名单或分配角色。Gateway 先认证 transpo
 
 ### `llm`
 
-- `llm.chat`：所有 runtime 的主模型。声明 provider、model、api、base_url、auth、reasoning_effort、timeout 和 profiles；`env_prefix` 提供机器覆盖前缀。
-- `llm.research`：研究模型槽；`model` 是纳入版本管理的默认模型，`env_prefix` 指向机器覆盖配置；
-  未提供的 base URL、API key 和 timeout 继承 `chat`。统一搜索路由和 `PersonaDraftAgent` 使用该槽，
-  不能误用主 Codex 模型名或日常模型槽。
-- `llm.code`：只控制独立 worker 的模型、profile、执行命令与超时；可通过独立 `env_prefix` 保留原配置。主模型命令不依赖 worker 开关。
+模型连接、参数与用途引用集中维护在 Console「模型配置」页面。宿主配置默认位于
+`~/.config/agentstrata/llm.json`，`AGENTSTRATA_LLM_CONFIG` 可指定绝对路径；机器人、
+Console、Harness 和测评服务必须使用同一配置来源。
 
-主 Agent 由 `agents.runtime` 选择。模型槽不再提供 `llm.code.mode/prefixes/chat_prefixes/workdir_env`
-或 `llm.research.execution/prefixes/web_search`；搜索策略由 `agents.unified_search` 管理。
-Core 不再解析无执行消费者的 `runtime.default_auto_mode/stream` 与旧路由开关，也不再
-导出对应环境默认值或把它们计入测评行为指纹。Codex 工作区由宿主执行请求确定。配置清理范围见
-[配置收敛规格](../../specs/obsolete-configuration-removal/spec.md)。
+| 配置 | 内容 |
+| --- | --- |
+| connections | Codex／Responses／OpenAI 兼容连接、端点、认证引用、请求超时 |
+| profiles | 连接引用、接口返回的模型与可选推理强度 |
+| bindings | 实例及后台用途对应的方案 |
 
-启用 `dev.code_tasks` 时必须用 `llm.code.code_task_profile` 引用已声明 profile。机器
-环境变量优先级高于 BotSpec 默认值；secret 只进入 `local.env` 或 credential store。
-
-订阅认证示例（把 runtime 改成 codex 即由 Codex 执行 loop，模型槽不变）：
+BotSpec 通过用途引用选择模型：
 
 ```yaml
-agents:
-  runtime: native
 llm:
   chat:
-    provider: openai
-    model: gpt-5.6-terra
-    reasoning_effort: medium
-    auth:
-      mode: chatgpt
-      profile: main
+    binding: bot.example.chat
+    env_prefix: MY_BOT
+  research:
+    binding: bot.example.research
+  code:
+    binding: bot.example.code
+    enabled: true
 ```
 
-API Key 模式使用 `auth: {mode: api_key, key_env: CHATCOPILOT_LINGYE_API_KEY}`；两种 auth 不能混填。兼容服务显式声明 `provider: openai_compatible`、`api: chat_completions` 和 base_url。订阅模式仅接受官方 ChatGPT Responses 端点。OAuth 秘密不得写入 YAML。
+`chat.env_prefix` 仅继续用于既有运行预算。子 Agent 使用 `model_binding` 指定用途；
+未指定时使用宿主装配的模型。独立 code worker 的命令、执行超时仍由 `llm.code` 管理。
+后台用途为 `harness`、`code_health`、`evaluation.judge`，可与机器人引用同一方案。
+独立代码任务和 Harness 需要 worker 订阅通道的 Codex 方案。
 
-`agents.runtime_options.codex.turn_timeout_seconds` 控制主 Codex 整轮截止时间；Native loop 的预算仍由 Native 解析。`agents.runtime_options.native.env_prefix` 仅用于独立保留 Native 预算配置。可选的 `codex.extensions` 指向实例审核的原生扩展 TOML，具体限制见 [Agent](agent.md)。
+认证使用 `auth: {mode: api_key, key_env: SOME_API_KEY}` 或 Codex 的
+`auth: {mode: chatgpt, profile: main}`／`worker`。秘密保留在现有凭据存储或私有环境
+文件中；连接的 `env_file` 可引用一份共用环境文件。Codex 可执行文件与凭据根目录
+默认引用 `CHATCOPILOT_CODEX_BIN`、`CHATCOPILOT_CODEX_BOT_HOME`。
+
+先配置连接、获取模型目录，再保存方案和用途引用。模型专属参数只接受接口明确返回
+的能力；未知参数不可配置，上下文窗口只读。新任务冻结配置；常驻机器人保存后需
+应用配置或重启。`/model <方案> [once]` 只切换同一连接认证范围内的集中方案。
+
+旧 `model`、`profiles`、`reasoning_effort`、`inherit_env_prefix` 等 BotSpec 字段，
+`*_MODEL`／`*_BASE_URL`／`*_REASONING_EFFORT` 模型覆盖，以及旧 Harness/Judge
+模型设置已退役。重新配置，不自动迁移或回退；API Key 环境变量作为凭据引用保留。
+未配置用途明确显示未配置。完整边界见[统一模型配置规格](../../specs/unified-llm-configuration/spec.md)。
+
+主 Agent 仍由 `agents.runtime` 选择；Codex 整轮时限使用
+`agents.runtime_options.codex.turn_timeout_seconds`。原生扩展 TOML 与权限归属见[Agent](agent.md)。
+
+旧运行策略字段的清理边界见[配置收敛规格](../../specs/obsolete-configuration-removal/spec.md)。
 
 ### `prompts`
 

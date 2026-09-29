@@ -64,7 +64,7 @@ _TERMINAL_FAILURE_STOPS = {
 
 @dataclass(frozen=True)
 class SubagentRuntimeConfig:
-    model_env_prefix: str | None
+    model_binding: str | None
     max_model_turns: int
     max_tool_calls: int
     timeout_seconds: int
@@ -292,7 +292,7 @@ class SubagentRunner:
         allowed_tools = list(tool_snapshot.tools)
 
         pfp = hashlib.sha256(role_prompt.encode("utf-8")).hexdigest()[:16]
-        llm = self._resolve_llm(config.model_env_prefix)
+        llm = self._resolve_llm(config.model_binding)
         main_llm_config = getattr(self._main_config, "llm", None)
         model_name = (
             getattr(getattr(llm, "config", None), "model", "")
@@ -503,13 +503,13 @@ class SubagentRunner:
             lifecycle_intents=lifecycle_intents,
         )
 
-    def _resolve_llm(self, model_env_prefix: str | None) -> LLMClient:
-        if not model_env_prefix:
+    def _resolve_llm(self, model_binding: str | None) -> LLMClient:
+        if not model_binding:
             return self._main_llm
         try:
-            return self._llm_profiles[model_env_prefix]
+            return self._llm_profiles[model_binding]
         except KeyError as exc:
-            raise ValueError(f"subagent LLM profile was not materialized: {model_env_prefix}") from exc
+            raise ValueError(f"subagent LLM profile was not materialized: {model_binding}") from exc
 
 
 def _extract_partial_findings(session: AgentSession) -> list[dict]:

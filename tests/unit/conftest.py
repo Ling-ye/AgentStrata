@@ -4,15 +4,18 @@ import pytest
 
 
 @pytest.fixture
-def deepeval_judge(monkeypatch):
+def deepeval_judge(monkeypatch, model_settings):
     from chatcopilot.evals import deepeval_engine as engine
 
-    for key, value in {
-        "MODEL": "controlled-judge",
-        "BASE_URL": "https://judge.example.test/v1",
-        "API_KEY": "evaluation-fixture",
-    }.items():
-        monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_" + key, value)
+    import json
+    from tests.model_settings_fixture import write_models
+    data = json.loads(model_settings.read_text())
+    data["connections"]["judge"] = {"kind": "openai_compatible", "base_url": "https://judge.example.test/v1",
+        "auth": {"mode": "api_key", "key_env": "CHATCOPILOT_EVALUATION_JUDGE_API_KEY"}}
+    data["profiles"]["judge"] = {"connection": "judge", "model": "controlled-judge"}
+    data["bindings"]["evaluation.judge"] = "judge"
+    write_models(model_settings, data)
+    monkeypatch.setenv("CHATCOPILOT_EVALUATION_JUDGE_API_KEY", "evaluation-fixture")
     with engine._local_sdk():
         from deepeval.models import DeepEvalBaseLLM
 

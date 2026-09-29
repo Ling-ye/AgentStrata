@@ -885,7 +885,7 @@ def test_group_runtime_state_is_outside_member_visible_shared_root(
         subagent_default_model_client=object(),  # type: ignore[arg-type]
         tools=(),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route("codex"),
     )
     with mock.patch("chatcopilot.agent.runtime.build_runtime_adapter", return_value=_Backend()):
@@ -1644,7 +1644,7 @@ def test_group_owner_deterministic_controls_keep_owner_permissions(
         role=Role.OWNER,
         assistant_mode=AssistantMode.PERFORMANCE,
         runtime=SimpleNamespace(access=SimpleNamespace(owner_only_project_access=False)),
-        routing_config=ChatConfig().routing,
+        routing_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ).routing,
     )
     state.bind_group_turn(
         identity=TurnIdentity(
@@ -1892,7 +1892,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
     canary_retriever = object()
     fake_agent_runtime = SimpleNamespace(
         retriever=canary_retriever,
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         project_roots=(),
         command_timeouts=CommandTimeouts(75, 900),
         runtime_id="native",
@@ -1977,7 +1977,7 @@ def test_agent_runtime_none_retriever_override_is_explicit_disable() -> None:
         main_model_client=mock.Mock(),
         tools=(),
         tools_schema=(),
-        runtime_config=ChatConfig(),
+        runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         route=runtime_route(),
         retriever=mock.Mock(),
     )

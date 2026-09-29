@@ -88,7 +88,7 @@ def test_retired_backend_metadata_does_not_restrict_owner() -> None:
 
 def test_write_capable_delegates_are_owner_tools_for_every_backend() -> None:
     config = SubagentRuntimeConfig(
-        model_env_prefix=None,
+        model_binding=None,
         max_model_turns=1,
         max_tool_calls=1,
         timeout_seconds=10,

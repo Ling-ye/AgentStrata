@@ -540,6 +540,7 @@ def _build_session_for_workspace(
     routing_config: Any | None = None,
     execution_session_id: str | None = None,
     main_model_route: Any = None,
+    model_profiles: Any = None,
 ) -> SessionState:
     """Build a side-effect-free control session, then optionally materialize it."""
     platform_type = _runtime_platform_type(runtime)
@@ -560,6 +561,7 @@ def _build_session_for_workspace(
         llm_model=llm_model,
         routing_config=routing_config,
         main_model_route=main_model_route,
+        model_profiles=dict(model_profiles or {}),
         execution_session_id=execution_session_id,
         debug_mode=False,
     )
@@ -585,6 +587,7 @@ def _materialize_session_for_workspace(
         return state
     runtime = state.runtime
     state.main_model_route = agent_runtime.runtime_config.llm.model_route()
+    state.model_profiles = dict(agent_runtime.runtime_config.model_profiles)
     platform_type = _runtime_platform_type(runtime)
     adapter = _platform_router.get_adapter(platform_type)
     effective_role = state.role

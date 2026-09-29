@@ -176,7 +176,7 @@ class _Tasks:
         self.started = []
         self.preflights = []
 
-    def preflight_model(self, model, reasoning_effort):
+    def preflight_model(self, model, reasoning_effort, *, model_settings=None, model_profile=""):
         self.preflights.append((model, reasoning_effort))
 
     def start(self, run, sequence, options):

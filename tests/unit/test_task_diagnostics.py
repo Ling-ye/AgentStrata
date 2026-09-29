@@ -203,8 +203,11 @@ def test_code_task_submitter_requires_and_persists_instance_id(
     assert not (workspace.root / "jobs").exists()
 
     monkeypatch.setenv("CHATCOPILOT_INSTANCE_ID", "test-instance")
-    monkeypatch.setenv("CHATCOPILOT_CODE_MODEL", "gpt-worker")
-    monkeypatch.setenv("CHATCOPILOT_CODE_REASONING_EFFORT", "high")
+    from chatcopilot.core.model_settings import settings_path
+    model_path = settings_path()
+    data = json.loads(model_path.read_text())
+    data["profiles"]["worker"].update(model="gpt-worker", reasoning_effort="high")
+    model_path.write_text(json.dumps(data))
     job = job_submitter.submit_tool_job(
         tool_name="start_code_task",
         args=args,
@@ -219,8 +222,8 @@ def test_code_task_submitter_requires_and_persists_instance_id(
         "model": "gpt-worker",
         "reasoning_effort": "high",
         "scope": "session",
-        "source": "default",
-        "profile": "",
+        "source": "profile",
+        "profile": "worker",
     }
     assert "code_model_selection" not in request
 

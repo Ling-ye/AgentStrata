@@ -11,11 +11,16 @@ from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.models import RepairFeedback, RepairOptions
 
 
-def _governance_options(args, default_model):
+def _governance_options(args):
     from chatcopilot.harness.governance_types import GovernanceOptions
     stop = ({"mode": "findings", "count": args.findings} if args.findings is not None else
             {"mode": "time", "seconds": args.timeout_seconds if args.timeout_seconds is not None else 3600})
-    return GovernanceOptions(args.model or default_model, args.reasoning_effort, args.max_attempts, stop)
+    if args.command == "gc-schedule":
+        from chatcopilot.harness.governance_types import ScheduledGovernanceOptions
+        return ScheduledGovernanceOptions(args.profile, args.max_attempts, stop)
+    from chatcopilot.core.model_settings import worker_profile
+    cfg, frozen = worker_profile(args.profile, purpose="code_health")
+    return GovernanceOptions(cfg.model, cfg.reasoning_effort or "", args.max_attempts, stop, frozen, cfg.profile_id)
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -27,8 +32,7 @@ def main(argv: list[str] | None = None) -> int:
     start.add_argument("--evaluation", required=True)
     start.add_argument("--case", required=True)
     start.add_argument("--target", required=True)
-    start.add_argument("--model", default="")
-    start.add_argument("--reasoning-effort", default="medium")
+    start.add_argument("--profile", default="")
     start.add_argument("--max-attempts", type=int, default=3)
     start.add_argument("--timeout-seconds", type=int, default=3600)
     start.add_argument("--request-id")
@@ -37,8 +41,7 @@ def main(argv: list[str] | None = None) -> int:
     task_start.add_argument("--bot", required=True)
     task_start.add_argument("--run", required=True)
     task_start.add_argument("--gateway-state-root", type=Path, required=True)
-    task_start.add_argument("--model", default="")
-    task_start.add_argument("--reasoning-effort", default="medium")
+    task_start.add_argument("--profile", default="")
     task_start.add_argument("--max-attempts", type=int, default=3)
     task_start.add_argument("--timeout-seconds", type=int, default=3600)
     task_start.add_argument("--request-id")
@@ -49,8 +52,7 @@ def main(argv: list[str] | None = None) -> int:
     reset = sub.add_parser("cutover", help="确认旧任务空闲并清空旧协议数据；默认只检查")
     reset.add_argument("--apply", action="store_true", help="删除旧 Harness 任务、批次、产物和专属 worktree，不保留归档")
     gc = sub.add_parser("start-gc", help="依据 SDD 与黄金原则启动代码熵回收")
-    gc.add_argument("--model", default="")
-    gc.add_argument("--reasoning-effort", default="medium")
+    gc.add_argument("--profile", default="")
     gc.add_argument("--max-attempts", type=int, default=3)
     gc_stop = gc.add_mutually_exclusive_group()
     gc_stop.add_argument("--timeout-seconds", type=int, help="整次回收累计执行秒数；默认 3600")
@@ -62,8 +64,7 @@ def main(argv: list[str] | None = None) -> int:
     enabled.add_argument("--enable", action="store_true")
     enabled.add_argument("--disable", action="store_true")
     schedule.add_argument("--interval-hours", type=int, default=24)
-    schedule.add_argument("--model", default="")
-    schedule.add_argument("--reasoning-effort", default="medium")
+    schedule.add_argument("--profile", default="")
     schedule.add_argument("--max-attempts", type=int, default=3)
     schedule_stop = schedule.add_mutually_exclusive_group()
     schedule_stop.add_argument("--timeout-seconds", type=int)
@@ -90,7 +91,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "cutover":
             value = controller.cutover(apply=args.apply)
         elif args.command == "start-gc":
-            value = controller.start_code_health(_governance_options(args, controller.default_model), request_id=args.request_id)
+            value = controller.start_code_health(_governance_options(args), request_id=args.request_id)
         elif args.command in {"get-gc", "cancel-gc", "resume-gc"}:
             action = {"get-gc": controller.governance_run, "cancel-gc": controller.cancel_governance_run,
                       "resume-gc": controller.resume_governance_run}[args.command]
@@ -102,31 +103,35 @@ def main(argv: list[str] | None = None) -> int:
             if not args.enable and not args.disable:
                 value = controller.governance_schedule()
             else:
-                options = _governance_options(args, controller.default_model) if args.enable else None
+                options = _governance_options(args) if args.enable else None
                 value = controller.set_governance_schedule(GovernanceSchedule(args.enable, args.interval_hours, options))
         elif args.command == "start":
+            from chatcopilot.core.model_settings import worker_profile
+            cfg, frozen = worker_profile(args.profile)
             value = controller.start(
                 args.evaluation,
                 args.case,
                 args.target,
                 RepairOptions(
-                    args.model or controller.default_model,
-                    args.reasoning_effort,
+                    cfg.model,
+                    cfg.reasoning_effort or "",
                     args.max_attempts,
-                    args.timeout_seconds,
+                    args.timeout_seconds, frozen, cfg.profile_id,
                 ),
                 request_id=args.request_id,
                 feedback=RepairFeedback(repair_hint=args.repair_hint),
             )
         elif args.command == "start-task":
+            from chatcopilot.core.model_settings import worker_profile
+            cfg, frozen = worker_profile(args.profile)
             value = controller.start_task(
                 args.bot,
                 args.run,
                 RepairOptions(
-                    args.model or controller.default_model,
-                    args.reasoning_effort,
+                    cfg.model,
+                    cfg.reasoning_effort or "",
                     args.max_attempts,
-                    args.timeout_seconds,
+                    args.timeout_seconds, frozen, cfg.profile_id,
                 ),
                 request_id=args.request_id,
                 feedback=RepairFeedback(args.repair_hint, args.expected_behavior),

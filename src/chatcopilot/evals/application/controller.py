@@ -266,6 +266,17 @@ def _validate_request(
 
     values = env_values if env_values is not None else bot_env(bot, repository_root)
     with temporary_eval_env(values):
+        if request.get("model_profile"):
+            from chatcopilot.core.model_settings import read_settings, resolve_profile, frozen_settings
+            from chatcopilot.botspec.loader import load_botspec
+            document = read_settings()
+            profile = request["model_profile"]
+            if not isinstance(profile, str):
+                raise ValueError("model_profile must be a string")
+            resolve_profile(profile, document=document)
+            document["bindings"][load_botspec(bot.bot_spec).llm.chat.binding] = profile
+            with frozen_settings(document):
+                return validate_evaluation(_core_request(bot, request, repository_root))
         return validate_evaluation(_core_request(bot, request, repository_root))
 
 
@@ -515,15 +526,20 @@ class EvaluationApplication:
         bot = self._resolve_bot(bot_id)
         self._expire_trace_archives()
         effective_env = evaluation_subprocess_env(bot_env(bot, self.repository_root))
+        from chatcopilot.core.model_settings import read_settings
+        model_settings = read_settings(effective_env)
         bot_spec_digest = _bot_spec_sha256(bot, self.repository_root)
         clean_request = dict(request)
+        model_profile = clean_request.pop("model_profile", "")
+        if not isinstance(model_profile, str):
+            raise ValueError("model_profile must be a string")
         if "case_snapshot" in clean_request:
             raise ValueError("use a registered Case snapshot ID, not client-provided frozen data")
         if clean_request.get("case_snapshot_id"):
             clean_request["case_snapshot"] = self.result_store.frozen_case(clean_request["case_snapshot_id"])
         clean_request["bot_id"] = bot.instance_id
         request_fingerprint = _start_request_fingerprint(
-            {**clean_request, **({"code_source": dict(code_source)} if code_source is not None else {}),
+            {**clean_request, **({"model_profile": model_profile} if model_profile else {}), **({"code_source": dict(code_source)} if code_source is not None else {}),
              **({"expected_conditions": dict(expected_conditions)} if expected_conditions is not None else {})}
         )
         requested_id = str(evaluation_id or "").strip()
@@ -544,7 +560,14 @@ class EvaluationApplication:
                     f"{active['evaluation_id']}"
                 )
 
-        with temporary_eval_env(effective_env):
+        if model_profile:
+            from chatcopilot.botspec.loader import load_botspec
+            from chatcopilot.core.model_settings import resolve_profile
+            resolve_profile(model_profile, document=model_settings, environment=effective_env)
+            model_settings["bindings"][load_botspec(bot.bot_spec).llm.chat.binding] = model_profile
+        from chatcopilot.core.model_settings import frozen_settings
+        with temporary_eval_env(effective_env), frozen_settings(model_settings):
+            effective_env["AGENTSTRATA_LLM_CONFIG"] = os.environ["AGENTSTRATA_LLM_CONFIG"]
             validation = dict(
                 self._validator(bot, clean_request)
                 if self._validator is not None
@@ -624,6 +647,7 @@ class EvaluationApplication:
                 "evaluation_id": evaluation_id,
                 "bot_id": bot.instance_id,
                 "start_request_fingerprint": request_fingerprint,
+                **({"model_profile": model_profile} if model_profile else {}),
                 "bot_spec": str(
                     bot_spec_path(bot, self.repository_root).relative_to(self.repository_root)
                 ),
@@ -672,6 +696,10 @@ class EvaluationApplication:
                     }
                 if expected_conditions is not None:
                     stored_request["expected_conditions"] = dict(expected_conditions)
+                from chatcopilot.contracts.model_runtime import digest
+                stored_request["model_settings_sha256"] = digest(model_settings)
+                _write_json(directory / "llm.json", model_settings)
+                effective_env["AGENTSTRATA_LLM_CONFIG"] = str(directory / "llm.json")
                 _write_json(directory / "request.json", stored_request)
                 _write_json(directory / "state.json", state)
                 self.result_store.register(stored_request)
@@ -1439,6 +1467,7 @@ class EvaluationApplication:
         env = evaluation_subprocess_env(
             snapshot.copy() if snapshot is not None else bot_env(bot, self.repository_root)
         )
+        env["AGENTSTRATA_LLM_CONFIG"] = str(directory / "llm.json")
         stored = _read_json(directory / "request.json")
         execution_root = Path(stored.get("code_source", {}).get("path") or self.repository_root)
         src = str(execution_root / "src")
@@ -2321,12 +2350,13 @@ class EvaluationApplication:
                     "seed",
                 ):
                     request[key] = stored.get(key)
-            return request
+            return {**request, **({"model_profile": stored["model_profile"]} if stored.get("model_profile") else {})}
         preset = str(stored.get("preset") or "")
         case_ids = list(stored.get("case_ids") or ())
         if preset and preset != "custom":
             case_ids = []
         return {
+            **({"model_profile": stored["model_profile"]} if stored.get("model_profile") else {}),
             "kind": "suite",
             "bot_id": str(stored.get("bot_id") or ""),
             "suite_id": str(stored.get("suite_id") or ""),

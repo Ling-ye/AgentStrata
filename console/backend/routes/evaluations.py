@@ -41,6 +41,7 @@ class ComparisonEvaluationRequest(BaseModel):
 
     kind: Literal["comparison"]
     bot_id: str = Field(min_length=1)
+    model_profile: str = ""
     profile_id: str = Field(default="agent-comparison-mvp", min_length=1)
     preset: Literal["quick", "standard", "custom"] = "quick"
     target_ids: list[Literal["codex", "native"]] | None = Field(
@@ -75,6 +76,7 @@ class SuiteEvaluationRequest(BaseModel):
 
     kind: Literal["suite"]
     bot_id: str = Field(min_length=1)
+    model_profile: str = ""
     suite_id: str = Field(min_length=1)
     case_ids: list[str] = Field(default_factory=list)
     preset: Literal["quick", "full", "security", "custom"] = "custom"

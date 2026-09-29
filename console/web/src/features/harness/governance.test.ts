@@ -4,22 +4,10 @@ import { deliveryActive, repairStatusLabel, sourceLabel, type RepairTask } from 
 
 afterEach(() => vi.unstubAllGlobals());
 
-it("loads worker model choices without caching", async () => {
-  const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ([
-    { model: "gpt-6-sol", reasoning_efforts: ["medium", "high"] },
-  ]) });
-  vi.stubGlobal("fetch", fetch);
-  const signal = new AbortController().signal;
-  expect(await governanceApi.models(signal)).toEqual([
-    { model: "gpt-6-sol", reasoning_efforts: ["medium", "high"] },
-  ]);
-  expect(fetch.mock.calls[0]).toEqual(["/api/harness/code-health/models", { signal, cache: "no-store" }]);
-});
-
 it("starts a sequential run with a mutually exclusive stopping condition", async () => {
   const fetch = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ run_id: "gc-example" }) });
   vi.stubGlobal("fetch", fetch);
-  const body = { request_id: "stable-gc", model: "fixture", reasoning_effort: "medium", max_attempts: 3,
+  const body = { request_id: "stable-gc", profile: "fixture", max_attempts: 3,
     stop_condition: { mode: "findings" as const, count: 2 } };
   await governanceApi.start(body);
   expect(fetch.mock.calls[0][0]).toBe("/api/harness/code-health/runs");

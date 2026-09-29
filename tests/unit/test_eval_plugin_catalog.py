@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from chatcopilot.core.config import LLMConfig
 import chatcopilot.evals.case_drivers as driver_module
 from tests.evaluation_fixtures import run_direct_cases
 
@@ -611,7 +613,7 @@ def test_bfcl_plugin_preserves_request_and_execution_metadata(
 
     observation = plugin.execute_model(
         case,
-        chat_config=SimpleNamespace(llm=SimpleNamespace(model="synthetic-model")),
+        chat_config=SimpleNamespace(llm=LLMConfig(model="synthetic-model")),
     )
 
     assert captured["config"].model == "synthetic-model"

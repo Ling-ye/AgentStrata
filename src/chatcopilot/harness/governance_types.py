@@ -24,6 +24,8 @@ class GovernanceOptions:
     reasoning_effort: str = "medium"
     max_attempts: int = 3
     stop_condition: TimeStop | FindingsStop = field(default_factory=lambda: {"mode": "time", "seconds": 3600})
+    model_settings: dict = field(default_factory=dict, repr=False)
+    model_profile: str = ""
 
     def __post_init__(self):
         RepairOptions(self.model, self.reasoning_effort, self.max_attempts, None)
@@ -34,7 +36,7 @@ class GovernanceOptions:
 
     @classmethod
     def from_payload(cls, value):
-        if not isinstance(value, dict) or set(value) - {"model", "reasoning_effort", "max_attempts", "stop_condition"}:
+        if not isinstance(value, dict) or set(value) - {"model", "reasoning_effort", "max_attempts", "stop_condition", "model_settings", "model_profile"}:
             raise ValueError("代码熵回收配置包含无效或已移除的字段，请重新保存")
         if "model" not in value:
             raise ValueError("必须指定回收模型")
@@ -45,10 +47,20 @@ class GovernanceOptions:
 
 
 @dataclass(frozen=True)
+class ScheduledGovernanceOptions:
+    profile: str = ""
+    max_attempts: int = 3
+    stop_condition: TimeStop | FindingsStop = field(default_factory=lambda: {"mode": "time", "seconds": 3600})
+
+    def __post_init__(self):
+        GovernanceOptions("schedule-validation", max_attempts=self.max_attempts, stop_condition=self.stop_condition)
+
+
+@dataclass(frozen=True)
 class GovernanceSchedule:
     enabled: bool = False
     interval_hours: int = 24
-    options: GovernanceOptions | None = None
+    options: ScheduledGovernanceOptions | None = None
 
     def __post_init__(self):
         if type(self.enabled) is not bool or type(self.interval_hours) is not int or self.interval_hours < 1:
@@ -62,7 +74,7 @@ class GovernanceSchedule:
         if not isinstance(value, dict) or set(value) - allowed:
             raise ValueError("旧熵回收定时配置不再支持，请重新保存设置")
         return cls(value.get("enabled", False), value.get("interval_hours", 24),
-                   GovernanceOptions.from_payload(value["options"]) if value.get("options") else None)
+                   ScheduledGovernanceOptions(**value["options"]) if value.get("options") else None)
 
     def to_payload(self):
         return asdict(self)
@@ -73,7 +85,7 @@ RUN_ACTIVE = frozenset(RUN_ACTIVE_STATUSES)
 
 
 class GovernanceTaskPort(Protocol):
-    def preflight_model(self, model: str, reasoning_effort: str) -> None: ...
+    def preflight_model(self, model: str, reasoning_effort: str, *, model_settings: dict | None = None, model_profile: str = "") -> None: ...
     def start(self, run: dict[str, Any], sequence: int, options: RepairOptions) -> dict[str, Any]: ...
     def start_learning(self, run: dict[str, Any], sequence: int, options: RepairOptions,
                        source: dict[str, Any]) -> dict[str, Any]: ...

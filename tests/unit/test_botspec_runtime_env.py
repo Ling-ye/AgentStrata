@@ -19,37 +19,20 @@ from chatcopilot.botspec.model import (
 )
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.botspec.runtime_env import apply_runtime_env, load_research_llm_config
-from chatcopilot.contracts.model_selection import WorkerModelProfile
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.core.config import LLMConfig
 from chatcopilot.external_tools.codebase.config import load_registry, reset_cache
 
 
 class BotSpecRuntimeEnvTests(unittest.TestCase):
-    def test_research_model_uses_botspec_default_then_machine_override(self) -> None:
-        fallback = LLMConfig(
-            base_url="https://chat.example/v1",
-            model="chat-model",
-            api_key="test-key",
-            timeout=60,
-        )
-        spec = LLMSpec(
-            research_env_prefix="CHATCOPILOT_TEST_RESEARCH",
-            research=ModelSpec(model="botspec-research"),
-        )
-        with mock.patch.dict(os.environ, {}, clear=True):
+    def test_research_model_uses_shared_binding_without_ambient_overrides(self) -> None:
+        fallback = LLMConfig(model="unused-fallback", base_url="https://unused.invalid/v1")
+        spec = LLMSpec(research=ModelSpec(binding="research"))
+        with mock.patch.dict(os.environ, {"CHATCOPILOT_CHAT_API_KEY": "test-key"}, clear=True):
             configured = load_research_llm_config(spec, fallback=fallback)
-        self.assertEqual(configured.model, "botspec-research")
-        self.assertEqual(configured.base_url, fallback.base_url)
-        self.assertEqual(configured.api_key, fallback.api_key)
-
-        with mock.patch.dict(
-            os.environ,
-            {"CHATCOPILOT_TEST_RESEARCH_MODEL": "machine-research"},
-            clear=True,
-        ):
-            overridden = load_research_llm_config(spec, fallback=fallback)
-        self.assertEqual(overridden.model, "machine-research")
+        self.assertEqual(configured.model, "research-default")
+        self.assertEqual(configured.base_url, "https://api.openai.com/v1")
+        self.assertEqual(configured.api_key, "test-key")
 
     def test_apply_runtime_env_anchors_codebase_root_to_source_repo(self) -> None:
         with TemporaryDirectory() as tmp:
@@ -218,58 +201,21 @@ class BotSpecRuntimeEnvTests(unittest.TestCase):
                 self.assertEqual(os.environ["CHATCOPILOT_WIKI_ROOT"], str(wiki_root))
                 self.assertEqual(os.environ["CHATCOPILOT_WIKI_MAX_CHUNK_CHARS"], "1200")
 
-    def test_apply_runtime_env_adds_botspec_routing_defaults_without_overriding_env(self) -> None:
+    def test_apply_runtime_env_projects_references_and_execution_settings(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
-            (root / "AGENTS.md").write_text("rules\n", encoding="utf-8")
-            bot_dir = root / "bots" / "demo"
-            bot_dir.mkdir(parents=True)
-            bot_yaml = bot_dir / "bot.yaml"
-            bot_yaml.write_text("id: demo\n", encoding="utf-8")
-            runtime = _runtime(
-                bot_yaml,
-                llm=LLMSpec(
-                    env_prefix="CHATCOPILOT_DEMO",
-                    research_env_prefix="CHATCOPILOT_DEMO_RESEARCH",
-                    code=CodeLLMSpec(
-                        enabled=True,
-                        model="botspec-code-model",
-                        reasoning_effort="high",
-                        profiles={
-                            "sol-high": WorkerModelProfile(
-                                model="gpt-5.6-sol",
-                                reasoning_effort="high",
-                            )
-                        },
-                        code_task_profile="sol-high",
-                    ),
-                ),
-            )
-
-            with mock.patch.dict(
-                os.environ,
-                {"CHATCOPILOT_DEMO_CODE_MODEL": "env-code-model"},
-                clear=True,
-            ):
+            (root / "pyproject.toml").write_text("[project]\nname='demo'\n")
+            bot = root / "bot.yaml"
+            bot.write_text("id: demo\n")
+            runtime = _runtime(bot, llm=LLMSpec(env_prefix="CHATCOPILOT_DEMO",
+                chat=ModelSpec(binding="demo.chat"), code=CodeLLMSpec(enabled=True, binding="demo.code")))
+            with mock.patch.dict(os.environ, {"CHATCOPILOT_DEMO_CODE_TIMEOUT_SECONDS": "17"}, clear=True):
                 apply_runtime_env(runtime)
-
-                self.assertFalse(any("_ROUTER_" in key for key in os.environ))
-                for suffix in ("EXECUTION", "PREFIXES", "WEB_SEARCH"):
-                    self.assertNotIn("CHATCOPILOT_DEMO_RESEARCH_" + suffix, os.environ)
-                self.assertEqual(os.environ["CHATCOPILOT_DEMO_CODE_MODEL"], "env-code-model")
-                self.assertEqual(
-                    os.environ["CHATCOPILOT_DEMO_CODE_REASONING_EFFORT"],
-                    "high",
-                )
-                self.assertIn(
-                    '"sol-high"',
-                    os.environ["CHATCOPILOT_DEMO_CODE_PROFILES_JSON"],
-                )
-                self.assertEqual(
-                    os.environ["CHATCOPILOT_DEMO_CODE_TASK_PROFILE"],
-                    "sol-high",
-                )
-                self.assertNotIn("CHATCOPILOT_DEMO_CODE_ALLOWED_ROLES", os.environ)
+                self.assertEqual(os.environ["CHATCOPILOT_LLM_BINDING"], "demo.chat")
+                self.assertEqual(os.environ["CHATCOPILOT_CODE_BINDING"], "demo.code")
+                self.assertEqual(os.environ["CHATCOPILOT_DEMO_CODE_TIMEOUT_SECONDS"], "17")
+                self.assertTrue(Path(os.environ["AGENTSTRATA_LLM_CONFIG"]).is_absolute())
+                self.assertFalse(any(name.endswith(("_CODE_MODEL", "_CODE_PROFILES_JSON")) for name in os.environ))
 
 
 def _runtime(

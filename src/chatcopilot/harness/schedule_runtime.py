@@ -113,7 +113,13 @@ class GovernanceScheduler:
                 pending = {"request_id": request_id, "at": now, "status": "dispatching"}
                 self.store.write({**value, "last_run": pending})
                 try:
-                    run = self.controller.start_code_health(settings.options, request_id=request_id)
+                    from chatcopilot.core.model_settings import worker_profile
+                    from chatcopilot.harness.governance_types import GovernanceOptions
+                    cfg, frozen = worker_profile(settings.options.profile, purpose="code_health",
+                        environment={**os.environ, **self.controller.settings})
+                    options = GovernanceOptions(cfg.model, cfg.reasoning_effort or "", settings.options.max_attempts,
+                        settings.options.stop_condition, frozen, cfg.profile_id)
+                    run = self.controller.start_code_health(options, request_id=request_id)
                     result = {"status": "created", "run_id": run["run_id"]}
                 except Exception as exc:
                     self.store.write({**value, "last_run": {**pending, "status": "failed", "message": safe_error(exc)}})

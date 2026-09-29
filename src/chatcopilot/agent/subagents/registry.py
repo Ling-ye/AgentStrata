@@ -96,7 +96,7 @@ def build_subagent_tools(
         if definition.name in definitions:
             continue
         config = SubagentRuntimeConfig(
-            model_env_prefix=budget.model_env_prefix,
+            model_binding=budget.model_binding,
             max_model_turns=budget.max_model_turns,
             max_tool_calls=budget.max_tool_calls,
             timeout_seconds=budget.timeout_seconds,

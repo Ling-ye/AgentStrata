@@ -146,7 +146,7 @@ def test_provider_auth_error_cannot_echo_handoff_secret(tmp_path, monkeypatch):
 
     secret = "private-handoff-fixture"
     config = ChatConfig(
-        llm=LLMConfig(provider="openai", api="openai_responses", api_key=secret)
+        llm=LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key=secret)
     )
     route = runtime_route("codex", config.llm)
     backend = CodexRuntimeAdapter(
@@ -225,7 +225,7 @@ def test_completed_turn_callback_cannot_enter_recreated_tool_bridge(tmp_path, mo
         access="member",
     )
     config = ChatConfig(
-        llm=LLMConfig(provider="openai", api="openai_responses", api_key="fixture")
+        llm=LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="fixture")
     )
     route = runtime_route("codex", config.llm)
     backend = CodexRuntimeAdapter(

@@ -46,7 +46,7 @@ def _control_agent(workspace: Workspace) -> AcpChatAgent:
     runtime.platform_type = "qq"
     agent = AcpChatAgent.__new__(AcpChatAgent)
     agent._runtime = runtime
-    agent._chat_config = ChatConfig()
+    agent._chat_config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     agent._sessions = {}
     agent._session_locks = {}
     agent._group_actor_sessions = {}
@@ -62,7 +62,7 @@ def test_acp_agent_construction_does_not_build_agent_runtime() -> None:
     with (
         mock.patch(
             "chatcopilot.middleware.acp.server.load_config",
-            return_value=ChatConfig(),
+            return_value=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         ),
         mock.patch(
             "chatcopilot.middleware.acp.server.project_agent_runtime",
@@ -83,7 +83,7 @@ def test_acp_agent_preserves_injected_instance_control() -> None:
     with (
         mock.patch(
             "chatcopilot.middleware.acp.server.load_config",
-            return_value=ChatConfig(),
+            return_value=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         ),
         mock.patch("chatcopilot.middleware.acp.server.project_agent_runtime"),
     ):
@@ -106,7 +106,7 @@ def test_first_chat_runtime_materialization_is_singleton() -> None:
     with (
         mock.patch(
             "chatcopilot.middleware.acp.server.load_config",
-            return_value=ChatConfig(),
+            return_value=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         ),
         mock.patch(
             "chatcopilot.middleware.acp.server.materialize_agent_runtime",
@@ -131,7 +131,7 @@ def test_session_creation_is_control_plane_only(tmp_path: Path) -> None:
     with (
         mock.patch(
             "chatcopilot.middleware.acp.server.load_config",
-            return_value=ChatConfig(),
+            return_value=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         ),
         mock.patch("chatcopilot.middleware.acp.server.materialize_agent_runtime") as build,
     ):
@@ -534,7 +534,7 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
         source="profile",
         profile="sol-max",
     )
-    config = ChatConfig()
+    config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     config.routing.code_model = "gpt-5.6-terra"
     config.routing.code_reasoning_effort = "medium"
     agent = AcpChatAgent.__new__(AcpChatAgent)

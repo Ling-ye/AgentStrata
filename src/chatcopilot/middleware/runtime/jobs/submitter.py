@@ -73,13 +73,12 @@ def submit_tool_job(
         from chatcopilot.contracts.model_selection import WorkerModelSelection
         from chatcopilot.core.model_selection import WORKER_MODEL_SELECTION_FIELD
 
-        worker_model_selection = WorkerModelSelection(
-            provider="codex_cli",
-            model=os.environ.get(f"{ENV_PREFIX}_CODE_MODEL", "").strip(),
-            reasoning_effort=os.environ.get(
-                f"{ENV_PREFIX}_CODE_REASONING_EFFORT", ""
-            ).strip().lower(),
-        )
+        from chatcopilot.core.model_settings import worker_profile
+        cfg, model_document = worker_profile(purpose=os.environ.get("CHATCOPILOT_CODE_BINDING", "code"))
+        model_document["bindings"]["code"] = cfg.profile_id
+        worker_model_selection = WorkerModelSelection(provider="codex_cli", model=cfg.model,
+            reasoning_effort=cfg.reasoning_effort or "", source="profile", profile=cfg.profile_id)
+
 
     job_id = f"job_{time.strftime('%Y%m%d_%H%M%S')}_{uuid.uuid4().hex[:8]}"
     job_dir = job_storage_root(workspace, create=True) / job_id
@@ -130,6 +129,8 @@ def submit_tool_job(
                 "status": "queued",
             }
         ]
+    from chatcopilot.core.model_settings import read_settings
+    write_json_atomic(job_dir / "llm.json", model_document if tool_name == CODE_TASK_TOOL else read_settings())
     write_json_atomic(request_path, request)
     write_json_atomic(
         job_dir / NOTIFICATION_FILENAME,
@@ -190,6 +191,7 @@ def _spawn_worker(job_dir: Path, request_path: Path, workspace: Workspace) -> No
         schedule_code_task_worker(request_path)
         return
     env = os.environ.copy()
+    env["AGENTSTRATA_LLM_CONFIG"] = str(job_dir / "llm.json")
     env.update(workspace_env(_workspace_payload(workspace)))
     cmd = [sys.executable, "-m", "chatcopilot.middleware.runtime.jobs.worker", str(request_path)]
     stdout = (job_dir / _STDOUT_FILENAME).open("w", encoding="utf-8")

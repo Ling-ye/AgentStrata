@@ -20,6 +20,7 @@ from console.backend.routes import (  # noqa: E402
     evaluations,
     evals,
     infra,
+    llm,
     harness,
     overview,
     shared_services,
@@ -61,6 +62,9 @@ app.add_middleware(
 
 app.state.tasks = TaskManager()
 app.state.evaluations = EvaluationServiceClient()
+from console.control.llm import ModelControl  # noqa: E402
+from console.control.discovery import repo_root  # noqa: E402
+app.state.llm = ModelControl(repo_root())
 
 app.include_router(overview.router)
 app.include_router(architecture.router)
@@ -69,6 +73,7 @@ app.include_router(schedules.router)
 app.include_router(bots.router)
 app.include_router(catalog.router)
 app.include_router(console_self.router)
+app.include_router(llm.router)
 app.include_router(shared_services.router)
 app.include_router(tasks.router)
 app.include_router(evals.router)

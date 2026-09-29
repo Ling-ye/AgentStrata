@@ -16,7 +16,7 @@ def handle_model_command(session: SessionState, user_text: str) -> str | None:
     base = session.main_model_route
     if base is None:
         return "主模型路由尚未绑定，请检查实例配置。"
-    profiles = session.runtime.spec.llm.chat.profiles
+    profiles = session.model_profiles
     args = parts[1:]
     if args == ["default"]:
         session.clear_model_selection()
@@ -31,7 +31,7 @@ def handle_model_command(session: SessionState, user_text: str) -> str | None:
             return "未找到主模型配置档；设置未改变。\n" + _usage(profiles)
         profile = profiles[name]
         session.set_model_selection(ModelSelection(replace(base, model=profile.model,
-            reasoning_effort=profile.reasoning_effort), scope="once" if once else "session",
+            reasoning_effort=profile.reasoning_effort or None), scope="once" if once else "session",
             source="profile", profile=name))
     selected = session.effective_model_selection(ModelSelection(base))
     return (f"当前主模型：{selected.model} / {selected.reasoning_effort}；scope={selected.scope}；"

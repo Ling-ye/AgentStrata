@@ -65,9 +65,7 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
 
 def _complete_values() -> dict[str, str]:
     return {
-        "chat_api_key": "sk-test-secret",
-        "chat_base_url": "https://example.invalid/v1",
-        "chat_model": "test/model",
+        "llm_config": "/tmp/test-models.json",
         "add_owner_ids": "20002",
         "qq_account": "10001",
         "qq_access_token": "a" * 32,
@@ -80,7 +78,7 @@ def test_plan_uses_real_llm_prefix_and_worker_condition(tmp_path: Path) -> None:
     starter = build_provision_plan(_starter_spec(tmp_path), adapter)
 
     by_id = {field.field: field for field in starter.fields}
-    assert by_id["chat_api_key"].env_key == "CHATCOPILOT_CHAT_API_KEY"
+    assert by_id["llm_config"].env_key == "AGENTSTRATA_LLM_CONFIG"
     assert by_id["qq_account"].group == "platform"
     assert by_id["qq_access_token"].host_generated is True
     assert by_id["gateway_token"].host_generated is True
@@ -94,7 +92,7 @@ def test_plan_uses_real_llm_prefix_and_worker_condition(tmp_path: Path) -> None:
     advanced = build_provision_plan(built_in, adapter)
     advanced_by_id = {field.field: field for field in advanced.fields}
     assert "chat_api_key" not in advanced_by_id
-    assert advanced_by_id["research_api_key"].env_key == "CHATCOPILOT_LINGYE_API_KEY"
+    assert advanced_by_id["llm_config"].env_key == "AGENTSTRATA_LLM_CONFIG"
     assert advanced.requires_code_worker is True
     assert advanced_by_id["qq_access_token"].host_generated is False
     assert advanced_by_id["gateway_token"].host_generated is True
@@ -196,7 +194,7 @@ def test_starter_repairs_existing_invalid_host_token_without_echoing_it(
     receipt = patch_local_env(
         path,
         plan,
-        {"chat_model": "next-model"},
+        {"llm_config": "/tmp/next-models.json"},
         adapter=adapter,
         allowed_parent=tmp_path,
     )
@@ -207,12 +205,19 @@ def test_starter_repairs_existing_invalid_host_token_without_echoing_it(
     assert invalid_token not in str(receipt.to_dict())
 
 
+def _secret_plan(spec, adapter):
+    from dataclasses import replace
+    from chatcopilot.botspec.provisioning import ProvisionField
+    plan = build_provision_plan(spec, adapter)
+    return replace(plan, fields=(*plan.fields, ProvisionField("fixture_secret", "FIXTURE_SECRET", "Fixture secret", "optional", False, True)))
+
+
 def test_patch_preserves_unmanaged_lines_and_inline_comment(tmp_path: Path) -> None:
     path = tmp_path / "local.env"
     path.write_text(
         "# keep this comment\n"
         "export CUSTOM_SETTING=keep\n"
-        "export CHATCOPILOT_CHAT_API_KEY=old-secret # rotate me\n"
+        "export FIXTURE_SECRET=old-secret # rotate me\n"
         "export CHATCOPILOT_CHAT_BASE_URL=https://old.invalid/v1\n"
         "export CHATCOPILOT_CHAT_MODEL=old-model\n"
         "export QQ_ACCOUNT=10001\n"
@@ -222,12 +227,12 @@ def test_patch_preserves_unmanaged_lines_and_inline_comment(tmp_path: Path) -> N
     )
     os.chmod(path, 0o600)
     adapter = registry.get_adapter("qq")
-    plan = build_provision_plan(_starter_spec(tmp_path), adapter)
+    plan = _secret_plan(_starter_spec(tmp_path), adapter)
 
     receipt = patch_local_env(
         path,
         plan,
-        _complete_values(),
+        {**_complete_values(), "fixture_secret": "sk-test-secret"},
         adapter=adapter,
         allowed_parent=tmp_path,
     )
@@ -235,21 +240,21 @@ def test_patch_preserves_unmanaged_lines_and_inline_comment(tmp_path: Path) -> N
     text = path.read_text(encoding="utf-8")
     values = load_local_env_values(path)
     assert receipt.committed is True
-    assert "chat_api_key" in receipt.changed_fields
+    assert "fixture_secret" in receipt.changed_fields
     assert "sk-test-secret" not in str(receipt.to_dict())
     assert "# keep this comment" in text
     assert "# rotate me" in text
     assert values["CUSTOM_SETTING"] == "keep"
-    assert values["CHATCOPILOT_CHAT_API_KEY"] == "sk-test-secret"
+    assert values["FIXTURE_SECRET"] == "sk-test-secret"
     assert stat_mode(path) == 0o600
 
 
 def test_empty_secret_preserves_existing_value_without_rewrite(tmp_path: Path) -> None:
     path = tmp_path / "local.env"
     values = _complete_values()
-    values["chat_api_key"] = "original-secret"
+    values["fixture_secret"] = "original-secret"
     adapter = registry.get_adapter("qq")
-    plan = build_provision_plan(_starter_spec(tmp_path), adapter)
+    plan = _secret_plan(_starter_spec(tmp_path), adapter)
     first = patch_local_env(
         path,
         plan,
@@ -262,14 +267,14 @@ def test_empty_secret_preserves_existing_value_without_rewrite(tmp_path: Path) -
     second = patch_local_env(
         path,
         plan,
-        {"chat_api_key": ""},
+        {"fixture_secret": ""},
         adapter=adapter,
         allowed_parent=tmp_path,
     )
 
     assert first.committed is True
     assert second.committed is False
-    assert second.preserved_fields == ("chat_api_key",)
+    assert second.preserved_fields == ("fixture_secret",)
     assert path.read_bytes() == original
     assert b"original-secret" in original
 
@@ -279,11 +284,11 @@ def test_validation_failure_leaves_target_absent(tmp_path: Path) -> None:
     adapter = registry.get_adapter("qq")
     plan = build_provision_plan(_starter_spec(tmp_path), adapter)
 
-    with pytest.raises(ProvisioningError, match="missing_required_field:chat_api_key"):
+    with pytest.raises(ProvisioningError, match="missing_required_field:add_owner_ids"):
         patch_local_env(
             path,
             plan,
-            {"chat_model": "test-model"},
+            {"llm_config": "/tmp/test-models.json"},
             adapter=adapter,
             allowed_parent=tmp_path,
         )
@@ -294,7 +299,7 @@ def test_validation_failure_leaves_target_absent(tmp_path: Path) -> None:
 @pytest.mark.parametrize(
     ("field", "value", "error"),
     (
-        ("chat_base_url", "http://api.example.invalid/v1", "llm_base_url_invalid"),
+        ("llm_config", "relative.json", "llm_config_path_invalid"),
         ("add_owner_ids", "owner-name", "owner_ids_invalid"),
         ("qq_allow_from", "10001,,20002", "qq_allowlist_invalid"),
     ),

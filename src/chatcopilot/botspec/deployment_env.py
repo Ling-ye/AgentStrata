@@ -14,6 +14,13 @@ _CC_CONNECT_VERSION = "1.4.0-beta.3"
 
 
 def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: Path, home: Path, runtime_root: str = "") -> dict[str, str]:
+    from chatcopilot.botspec.loader import validate_model_bindings
+    from chatcopilot.core.model_settings import reject_model_overrides
+    issues = validate_model_bindings(spec)
+    if issues:
+        raise ValueError("旧模型声明已移除，请使用 binding：" + ", ".join(issue.field for issue in issues))
+    for prefix in {spec.llm.env_prefix, spec.llm.code.env_prefix} - {None}:
+        reject_model_overrides(local_env, prefix)
     def expand_deploy_path(value):
         return expand_leading_home((value or "").strip(), home=home)
 
@@ -47,6 +54,7 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
     values.update(_tool_pack_runtime_defaults(spec.tools.packs))
     values.update(llm_runtime_env_defaults(spec.llm))
     values.update(local_env)
+    values.setdefault("AGENTSTRATA_LLM_CONFIG", str(home / ".config/agentstrata/llm.json"))
     # Generic QQ_* export must not carry the removed admission setting forward.
     values.pop("QQ_ALLOW_GROUPS", None)
     values.update(
@@ -137,7 +145,33 @@ def _tool_pack_runtime_defaults(tool_packs: Iterable[str]) -> dict[str, str]:
 
 
 
-def runtime_environment_keys(spec) -> tuple[str, ...]:
+def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    from chatcopilot.core.model_settings import read_settings
+    document = read_settings(environment)
+    purposes = {spec.llm.chat.binding, spec.llm.research.binding}
+    if spec.llm.code.enabled or "dev.code_tasks" in spec.tools.packs:
+        purposes.add(spec.llm.code.binding)
+    budgets = [spec.agents.agents.get(name, spec.agents.defaults) for name in spec.agents.include]
+    budgets.extend(item.budget for item in spec.agents.custom)
+    if spec.agents.research_enabled:
+        budgets.append(spec.agents.research_budget)
+    if spec.tools.mcp.servers:
+        budgets.append(spec.agents.search_budget)
+    purposes.update(budget.model_binding for budget in budgets if budget.model_binding)
+    references = []
+    for purpose in purposes:
+        profile = document["profiles"].get(document["bindings"].get(purpose))
+        if profile is None:
+            continue
+        connection = document["connections"][profile["connection"]]
+        if connection.get("env_file"):
+            continue
+        auth = connection["auth"]
+        if auth["mode"] == "api_key":
+            references.append(auth["key_env"])
+        if connection["kind"] == "codex":
+            references.extend((connection.get("codex_bin_env", "CHATCOPILOT_CODEX_BIN"),
+                               connection.get("credential_root_env", "CHATCOPILOT_CODEX_BOT_HOME")))
     return tuple(dict.fromkeys((
         "CHATCOPILOT_INSTANCE_ID",
         "CHATCOPILOT_HOME",
@@ -162,14 +196,7 @@ def runtime_environment_keys(spec) -> tuple[str, ...]:
         "CHATCOPILOT_GIT_AUTHOR_NAME",
         "CHATCOPILOT_GIT_AUTHOR_EMAIL",
         f"{spec.llm.env_prefix}_API_KEY",
-        f"{spec.llm.env_prefix}_BASE_URL",
-        f"{spec.llm.env_prefix}_MODEL",
         f"{spec.llm.env_prefix}_TIMEOUT",
-        f"{spec.llm.env_prefix}_CODE_PROVIDER",
-        f"{spec.llm.env_prefix}_CODE_MODEL",
-        f"{spec.llm.env_prefix}_CODE_REASONING_EFFORT",
-        f"{spec.llm.env_prefix}_CODE_PROFILES_JSON",
-        f"{spec.llm.env_prefix}_CODE_TASK_PROFILE",
         f"{spec.llm.env_prefix}_CODE_COMMAND",
         f"{spec.llm.env_prefix}_CODE_TIMEOUT_SECONDS",
         "CHATCOPILOT_ADD_OWNER_IDS",
@@ -183,13 +210,9 @@ def runtime_environment_keys(spec) -> tuple[str, ...]:
         "TAVILY_API_KEY",
         "GITHUB_MCP_AUTHORIZATION",
         *mcp_env_ref_keys(spec),
-        *(f"{prefix}_{suffix}" for prefix in (
-            spec.llm.env_prefix, spec.llm.research_env_prefix, spec.llm.research.inherit_env_prefix,
-            spec.llm.code.env_prefix, spec.agents.native_env_prefix,
-            *(budget.model_env_prefix for budget in (spec.agents.defaults, *spec.agents.agents.values())))
-          if prefix for suffix in ("API_KEY", "BASE_URL", "MODEL", "TIMEOUT", "REASONING_EFFORT")),
-        *(auth.key_env for auth in (spec.llm.chat.auth, spec.llm.research.auth)
-          if auth is not None and auth.mode == "api_key"),
+        *sorted(set(references)),
+        "AGENTSTRATA_LLM_CONFIG", "CHATCOPILOT_LLM_BINDING", "CHATCOPILOT_CODE_BINDING",
+        "CHATCOPILOT_CODEX_BIN", "CHATCOPILOT_CODEX_BOT_HOME",
     )))
 
 

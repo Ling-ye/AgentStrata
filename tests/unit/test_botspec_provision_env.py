@@ -314,11 +314,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                         llm:
                           chat:
                             env_prefix: CHATCOPILOT_MAIN
-                            provider: openai
-                            model: gpt-5.6-terra
-                            auth:
-                              mode: chatgpt
-                              profile: main
+                            binding: chat
                         agents:
                           runtime: {runtime_id}
                         prompts:
@@ -375,7 +371,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
 
             self.assertEqual(code, 1)
             self.assertFalse(runtime_env.exists())
-            self.assertIn("DECLARED_MAIN_API_KEY", output.getvalue())
+            self.assertIn("旧模型声明", output.getvalue())
             self.assertNotIn("CHATCOPILOT_MAIN_API_KEY", output.getvalue())
 
     def test_qq_provision_creates_enabled_wiki_root_privately(self) -> None:
@@ -860,8 +856,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 textwrap.dedent(
                     """\
                     export CHATCOPILOT_ROUTE_API_KEY="sk-test"
-                    export CHATCOPILOT_ROUTE_CODE_MODEL="local-code-model"
-                    export CHATCOPILOT_ROUTE_CODE_TASK_PROFILE="sol-max"
+                    export CHATCOPILOT_ROUTE_CODE_TIMEOUT_SECONDS="17"
                     export FEISHU_APP_ID="cli_test"
                     export FEISHU_APP_SECRET="secret"
                     """
@@ -882,19 +877,10 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                       chat:
                         env_prefix: CHATCOPILOT_ROUTE
                       research:
-                        env_prefix: CHATCOPILOT_ROUTE_RESEARCH
+                        binding: research
                       code:
                         enabled: true
-                        model: botspec-code-model
-                        reasoning_effort: medium
-                        profiles:
-                          sol-high:
-                            model: gpt-5.6-sol
-                            reasoning_effort: high
-                          sol-max:
-                            model: gpt-5.6-sol
-                            reasoning_effort: max
-                        code_task_profile: sol-high
+                        binding: code
                     prompts:
                       schema_version: 2
                       identity: persona.md
@@ -918,19 +904,8 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertNotIn("CHATCOPILOT_ROUTE_ROUTER_", content)
             for suffix in ("EXECUTION", "PREFIXES", "WEB_SEARCH"):
                 self.assertNotIn("CHATCOPILOT_ROUTE_RESEARCH_" + suffix, content)
-            self.assertIn("export CHATCOPILOT_ROUTE_CODE_MODEL=local-code-model", content)
-            self.assertIn(
-                "export CHATCOPILOT_ROUTE_CODE_REASONING_EFFORT=medium",
-                content,
-            )
-            self.assertIn("CHATCOPILOT_ROUTE_CODE_PROFILES_JSON=", content)
-            self.assertIn("sol-high", content)
-            self.assertIn(
-                "export CHATCOPILOT_ROUTE_CODE_TASK_PROFILE=sol-max",
-                content,
-            )
-            self.assertNotIn("CODE_ALLOWED_ROLES", content)
-
-
-if __name__ == "__main__":
-    unittest.main()
+            self.assertIn("export CHATCOPILOT_CODE_BINDING=code", content)
+            self.assertIn("export CHATCOPILOT_LLM_BINDING=chat", content)
+            self.assertIn("export CHATCOPILOT_ROUTE_CODE_TIMEOUT_SECONDS=17", content)
+            self.assertNotIn("_CODE_MODEL=", content)
+            self.assertNotIn("_CODE_PROFILES_JSON=", content)

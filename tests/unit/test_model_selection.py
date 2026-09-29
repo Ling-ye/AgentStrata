@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
-from chatcopilot.botspec.model import CodeLLMSpec, LLMSpec, ModelSpec
+from chatcopilot.botspec.model import CodeLLMSpec, LLMSpec
 from chatcopilot.contracts.model_selection import (
     WorkerModelProfile,
     MODEL_SELECTION_SCOPE_ONCE,
@@ -18,7 +18,6 @@ from chatcopilot.core.config import RoutingConfig, LLMConfig
 from dataclasses import replace
 from chatcopilot.core.model_selection import (
     code_task_model_selection,
-    default_worker_model_selection,
     validate_worker_model_selection,
 )
 from chatcopilot.middleware.acp.model_commands import handle_model_command
@@ -31,21 +30,10 @@ from chatcopilot.core.workspace_runtime import Workspace
 
 class _Session:
     def __init__(self, *, role: str = "owner") -> None:
-        code = CodeLLMSpec(
-            enabled=True,
-            model="gpt-5.5",
-            reasoning_effort="medium",
-            profiles={
-                "sol-high": WorkerModelProfile(
-                    model="gpt-5.6-sol",
-                    reasoning_effort="high",
-                ),
-            },
-        )
-        self.runtime = SimpleNamespace(
-            spec=SimpleNamespace(context=ContextSpec(), llm=LLMSpec(code=code, chat=ModelSpec(profiles=code.profiles)))
-        )
+        self.runtime = SimpleNamespace(spec=SimpleNamespace(context=ContextSpec(), llm=LLMSpec(code=CodeLLMSpec(enabled=True))))
         self.main_model_route = LLMConfig(model="gpt-5.5", reasoning_effort="medium").model_route()
+        from chatcopilot.core.model_settings import read_settings, profile_choices
+        self.model_profiles = profile_choices(document=read_settings(), base=self.main_model_route, connection_id="api")
         self.role = SimpleNamespace(value=role)
         self.model_selection = None
         self.model_once = None
@@ -79,12 +67,7 @@ def test_model_command_keeps_default_until_explicit_switch() -> None:
 def test_model_command_uses_effective_routing_config_over_raw_botspec() -> None:
     session = _Session()
     session.main_model_route = replace(session.main_model_route, model="gpt-5.6-terra")
-    session.runtime.spec.llm = LLMSpec(chat=ModelSpec(profiles={
-            "sol-max": WorkerModelProfile(
-                model="gpt-5.6-sol",
-                reasoning_effort="max",
-            )
-        }))
+
 
     status = handle_model_command(session, "/model")
     reply = handle_model_command(session, "/model sol-max")
@@ -199,15 +182,15 @@ def test_worker_validates_frozen_profile_against_runtime_allowlist() -> None:
     assert selection.model == "gpt-5.6-sol"
 
 
-def test_historical_job_without_selection_uses_current_default() -> None:
+def test_historical_job_without_selection_is_not_filled_from_current_defaults() -> None:
     config = RoutingConfig(
         code_model="gpt-5.5",
         code_reasoning_effort="medium",
     )
 
-    selection = validate_worker_model_selection(config, None)
-
-    assert selection == default_worker_model_selection(config)
+    import pytest
+    with pytest.raises(ValueError, match="缺少冻结模型选择"):
+        validate_worker_model_selection(config, None)
 
 
 def test_code_task_selection_resolves_only_the_configured_profile() -> None:
@@ -273,13 +256,13 @@ def test_botspec_validation_rejects_invalid_code_profiles() -> None:
 
     error_fields = {issue.field for issue in issues if issue.level == "error"}
     assert "llm.code.reasoning_effort" in error_fields
-    assert "llm.code.profiles.default" in error_fields
-    assert "llm.code.profiles.empty-model" in error_fields
-    assert "llm.code.profiles.bad-effort" in error_fields
+    assert "llm.code.profiles" in error_fields
+    assert "llm.code.profiles" in error_fields
+    assert "llm.code.profiles" in error_fields
     assert "llm.code.code_task_profile" in error_fields
 
 
-def test_botspec_validation_requires_code_task_profile_for_dev_code_tasks() -> None:
+def test_botspec_worker_uses_binding_instead_of_inline_code_task_profile() -> None:
     with TemporaryDirectory() as tmp:
         root = Path(tmp)
         (root / "persona.md").write_text("demo\n", encoding="utf-8")
@@ -306,12 +289,7 @@ def test_botspec_validation_requires_code_task_profile_for_dev_code_tasks() -> N
 
         issues = validate_botspec(load_botspec(bot_yaml))
 
-    assert any(
-        issue.level == "error"
-        and issue.field == "llm.code.code_task_profile"
-        and "dev.code_tasks" in issue.message
-        for issue in issues
-    )
+    assert not any(issue.field.startswith("llm.") for issue in issues)
 
 
 def test_submitter_persists_execution_profile_at_request_top_level() -> None:

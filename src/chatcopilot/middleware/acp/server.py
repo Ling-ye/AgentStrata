@@ -263,9 +263,9 @@ class AcpChatAgent(Agent):
         chat_config = getattr(self, "_chat_config", None)
         llm = getattr(chat_config, "llm", None)
         from chatcopilot.core.model_routes import resolve_model_config
-        if llm is not None:
+        if llm is not None and chat_config.model_settings:
             llm = resolve_model_config(self._runtime.spec.llm.chat, fallback=llm,
-                prefix=self._runtime.spec.llm.env_prefix, environment=os.environ)
+                prefix=self._runtime.spec.llm.env_prefix, environment=os.environ, document=chat_config.model_settings)
         return _build_session_for_workspace(
             session_id=session_id,
             ws=ws,
@@ -274,6 +274,7 @@ class AcpChatAgent(Agent):
             llm_model=getattr(llm, "model", None),
             routing_config=getattr(chat_config, "routing", None),
             main_model_route=llm.model_route() if llm is not None else None,
+            model_profiles=chat_config.model_profiles if chat_config is not None else {},
             execution_session_id=execution_session_id,
         )
 

@@ -84,6 +84,12 @@ def main(argv: list[str] | None = None) -> int:
                     or Path(receipt["path"]) != Path.cwd()):
                 raise ValueError("candidate source does not match the executing worker")
         _verify_bot_spec_snapshot(outer_request)
+        from chatcopilot.core.model_settings import ModelSettingsStore
+        from chatcopilot.contracts.model_runtime import digest
+        models = output / "llm.json"
+        _validate_private_file(models.stat(follow_symlinks=False), models, label="managed model settings")
+        if not models.is_file() or digest(ModelSettingsStore(models).read()) != outer_request.get("model_settings_sha256"):
+            raise ValueError("managed model settings snapshot is missing or changed")
         claim_path = _managed_claim_path(output, outer_request)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         sys.stderr.write(f"managed Evaluation bootstrap failed: {exc}\n")

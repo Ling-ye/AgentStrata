@@ -22,7 +22,7 @@ Console 在启动时装载 Harness 配置快照；修改后重启 Console，现�
 可通过 `CHATCOPILOT_HARNESS_ROOT` 指定；任务、runtime 快照、补丁和工作区都属于
 该目录。Harness 启动时会把当前用户拥有的根目录、`jobs` 和已有 `archives` 收紧为 `0700`；
 符号链接或其他用户拥有的路径仍直接拒绝。当前 Codex 不在系统临时目录下创建原生辅助程序。
-可用 `CHATCOPILOT_HARNESS_MODEL` 设置 CLI 默认修复模型。
+在统一模型配置中设置 `harness` 用途的方案；CLI 使用 `--profile` 选择已保存方案。模型参数不再通过独立环境变量覆盖。
 
 在源码仓库运行：
 

@@ -15,6 +15,7 @@ def app():
     value = FastAPI()
     value.include_router(router)
     value.state.harness = SimpleNamespace(
+        settings={},
         start_case_instance=Mock(return_value={"task_id": "repair-example", "status": "queued"}),
         start_task=Mock(return_value={"task_id": "repair-robot", "status": "queued"}),
         load_source=Mock(return_value={"kind": "robot_task", "blockers": [], "history": []}),
@@ -33,7 +34,7 @@ def body():
     return {
         "case_instance_id": "case-" + "a" * 32,
         "request_id": "stable-request",
-        "model": "test-model",
+        "profile": "worker",
     }
 
 
@@ -44,7 +45,7 @@ def test_local_start_uses_public_controller(app):
     assert app.state.harness.start_case_instance.call_args.args[0] == body()["case_instance_id"]
     assert app.state.harness.start_case_instance.call_args.kwargs["request_id"] == "stable-request"
     options = app.state.harness.start_case_instance.call_args.args[1]
-    assert options.reasoning_effort == "xhigh"
+    assert options.reasoning_effort == "medium"
     assert options.timeout_seconds == 3600
 
 
@@ -113,7 +114,7 @@ def test_robot_task_creation_never_uses_console_maintenance_task_ids(app):
         "bot_id": "sample",
         "run_id": "run-example",
         "request_id": "robot-request",
-        "model": "test-model",
+        "profile": "worker",
     }
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert client.post("/api/harness/tasks", json=payload).status_code == 200
@@ -128,7 +129,7 @@ def test_robot_task_creation_never_uses_console_maintenance_task_ids(app):
             client.post(
                 "/api/harness/tasks", json={**payload, "reasoning_effort": "unknown"}
             ).status_code
-            == 400
+            == 422
         )
     app.state.harness.start_task.assert_called_once()
     app.state.harness.start_case_instance.assert_not_called()
@@ -145,7 +146,7 @@ def test_patch_download_is_separate_from_eval_results(app):
     {"expected_behavior": "保留换行"}, {"repair_hint": "检查分词", "expected_behavior": "保留换行"}])
 def test_feedback_reaches_controller_and_only_case_expectation_override_is_rejected(app, feedback):
     payload = {"source_kind": "robot_task", "bot_id": "sample", "run_id": "run-example",
-               "request_id": "robot-feedback", "model": "test-model", "feedback": feedback}
+               "request_id": "robot-feedback", "profile": "worker", "feedback": feedback}
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert client.post("/api/harness/tasks", json=payload).status_code == 200
         evaluation = client.post("/api/harness/tasks", json={**body(), "feedback": feedback})
@@ -158,7 +159,7 @@ def test_feedback_reaches_controller_and_only_case_expectation_override_is_rejec
     {"repair_hint": None}, {"expected_behavior": ["answer"]}, {"unknown": "value"}])
 def test_invalid_feedback_is_rejected_before_dispatch(app, feedback):
     payload = {"source_kind": "robot_task", "bot_id": "sample", "run_id": "run-example",
-               "request_id": "robot-feedback", "model": "test-model", "feedback": feedback}
+               "request_id": "robot-feedback", "profile": "worker", "feedback": feedback}
     with TestClient(app, client=("127.0.0.1", 41000)) as client:
         assert client.post("/api/harness/tasks", json=payload).status_code == 422
     app.state.harness.start_task.assert_not_called()
@@ -171,7 +172,7 @@ def test_start_task_cli_passes_feedback_without_changing_commit_option(monkeypat
     controller.start_task.return_value = {"task_id": "repair-example"}
     monkeypatch.setattr(cli, "HarnessController", Mock(return_value=controller))
     assert cli.main(["start-task", "--bot", "sample", "--run", "run-example",
-                     "--gateway-state-root", "synthetic-state", "--model", "test-model",
+                     "--gateway-state-root", "synthetic-state", "--profile", "worker",
                      "--repair-hint", "检查分词", "--expected-behavior", "保留换行\n及空格"]) == 0
     kwargs = controller.start_task.call_args.kwargs
     assert kwargs["feedback"].to_payload() == {"repair_hint": "检查分词", "expected_behavior": "保留换行\n及空格"}

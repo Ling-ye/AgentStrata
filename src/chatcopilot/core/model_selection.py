@@ -24,7 +24,7 @@ def default_worker_model_selection(config: Any) -> WorkerModelSelection:
         ).strip().lower(),
         model=str(getattr(config, "code_model", "") or "").strip(),
         reasoning_effort=str(
-            getattr(config, "code_reasoning_effort", "medium") or "medium"
+            getattr(config, "code_reasoning_effort", "") or ""
         ).strip().lower(),
         scope=MODEL_SELECTION_SCOPE_SESSION,
         source=MODEL_SELECTION_SOURCE_DEFAULT,
@@ -38,7 +38,7 @@ def selection_from_profile(
     profile_name: str,
     scope: str,
 ) -> WorkerModelSelection:
-    normalized = normalize_profile_name(profile_name)
+    normalized = profile_name.strip()
     profile = profiles.get(normalized)
     if profile is None:
         raise ValueError(f"unknown Codex model profile: {profile_name}")
@@ -53,9 +53,7 @@ def selection_from_profile(
 
 
 def code_task_model_selection(config: Any) -> WorkerModelSelection:
-    profile_name = normalize_profile_name(
-        str(getattr(config, "code_task_profile", "") or "")
-    )
+    profile_name = str(getattr(config, "code_task_profile", "") or "").strip()
     if not profile_name:
         raise ValueError("Codex code-task profile is not configured")
     return selection_from_profile(
@@ -90,7 +88,7 @@ def validate_worker_model_selection(
 ) -> WorkerModelSelection:
     default = default_worker_model_selection(config)
     if payload is None:
-        return default
+        raise ValueError("后台任务缺少冻结模型选择，请重新创建任务")
     selection = WorkerModelSelection.from_payload(payload)
     if selection.provider != default.provider:
         raise ValueError(

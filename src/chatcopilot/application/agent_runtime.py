@@ -81,29 +81,36 @@ def project_agent_runtime(
     selected = overrides or AgentRuntimeOverrides()
     env = dict(os.environ if environment is None else environment)
     chat_config = copy.deepcopy(chat_config)
+    from chatcopilot.core.model_settings import read_settings, profile_choices, resolve_binding
+    document = read_settings(env)
+    chat_config.model_settings = document
     from chatcopilot.core.model_routes import resolve_model_config
     chat_config.llm = resolve_model_config(runtime.spec.llm.chat, fallback=chat_config.llm,
-        prefix=runtime.spec.llm.env_prefix, environment=env)
+        prefix=runtime.spec.llm.env_prefix, environment=env, document=document)
+    chat_config.model_profiles = profile_choices(document=document, base=chat_config.llm.model_route(), connection_id=chat_config.llm.connection_id)
     helper_fallback = chat_config.llm
-    if runtime.spec.llm.research.inherit_env_prefix:
-        from chatcopilot.core.config import load_config
-        helper_fallback = load_config(env_prefix=runtime.spec.llm.research.inherit_env_prefix, environment=env).llm
     subagents = copy.deepcopy(runtime.subagents if selected.subagents is None else selected.subagents)
     if subagents.codex_extensions and (selected.runtime_id or runtime.runtime_id) == "codex":
         from chatcopilot.core.codex_extensions import read_extensions, extension_environment
         chat_config.codex_extensions = read_extensions(runtime.spec.resolve_path(subagents.codex_extensions))
         chat_config.codex_extension_env = extension_environment(chat_config.codex_extensions, env)
     from chatcopilot.core.config import load_config
-    if runtime.spec.llm.code.env_prefix:
-        chat_config.routing = load_config(env_prefix=runtime.spec.llm.code.env_prefix, environment=env).routing
+    if runtime.spec.llm.code.enabled or "dev.code_tasks" in runtime.tool_packs:
+        code = resolve_binding(runtime.spec.llm.code.binding, document=document, environment=env)
+        chat_config.routing.code_model = code.model
+        chat_config.routing.code_reasoning_effort = code.reasoning_effort or ""
+        chat_config.routing.code_profiles = profile_choices(document=document, worker=True, connection_id=code.connection_id)
+        chat_config.routing.code_task_profile = code.profile_id
+        if code.profile_id not in chat_config.routing.code_profiles:
+            raise ValueError("独立 worker 必须引用 worker 通道的 Codex 方案")
     if subagents.native_env_prefix:
         chat_config.runtime = load_config(env_prefix=subagents.native_env_prefix, environment=env).runtime
     research_llm_config = load_research_llm_config(
-        runtime.spec.llm, fallback=chat_config.llm, environment=env,
+        runtime.spec.llm, fallback=chat_config.llm, environment=env, document=document,
     )
-    router_prefix = subagents.research_budget.model_env_prefix if subagents.research_enabled else None
+    router_prefix = subagents.research_budget.model_binding if subagents.research_enabled else None
     search_llm_config = (
-        load_llm_profile(router_prefix, fallback=research_llm_config, environment=env)
+        load_llm_profile(router_prefix, fallback=research_llm_config, environment=env, document=document)
         if router_prefix else copy.copy(research_llm_config)
     )
     budgets = [subagents.agents.get(name, subagents.defaults) for name in subagents.include]
@@ -114,7 +121,7 @@ def project_agent_runtime(
         validate_extension_ownership(chat_config.codex_extensions, (server.id for server in mcp_servers if server.enabled))
     if any(getattr(server, "risk", "") == "search" for server in mcp_servers):
         budgets.append(subagents.search_budget)
-    prefixes = sorted({budget.model_env_prefix for budget in budgets if budget.model_env_prefix})
+    prefixes = sorted({budget.model_binding for budget in budgets if budget.model_binding})
     quota_max_ttl = float(env.get("CHATCOPILOT_SEARCH_QUOTA_MAX_TTL") or 86400)
     if not math.isfinite(quota_max_ttl) or quota_max_ttl <= 0:
         raise ValueError("CHATCOPILOT_SEARCH_QUOTA_MAX_TTL must be finite and positive")
@@ -135,7 +142,7 @@ def project_agent_runtime(
         research_llm_config=research_llm_config,
         search_llm_config=search_llm_config,
         subagent_llm_configs=tuple(
-            (prefix, load_llm_profile(prefix, fallback=helper_fallback, environment=env))
+            (prefix, load_llm_profile(prefix, fallback=helper_fallback, environment=env, document=document))
             for prefix in prefixes
         ),
         search_provider_credentials=tuple(

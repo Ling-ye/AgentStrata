@@ -26,8 +26,7 @@ class CreateRepair(BaseModel):
     run_id: str = ""
     feedback: RepairFeedback | None = None
     request_id: str
-    model: str = Field(min_length=1)
-    reasoning_effort: str = "xhigh"
+    profile: str = ""
     max_attempts: int = Field(default=3, ge=1)
     timeout_seconds: int = Field(default=3600, ge=1)
 
@@ -72,8 +71,7 @@ class FindingsStop(BaseModel):
 
 class GovernanceOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    model: str = Field(min_length=1)
-    reasoning_effort: str = "medium"
+    profile: str = ""
     max_attempts: int = Field(default=3, ge=1)
     stop_condition: TimeStop | FindingsStop = Field(default_factory=TimeStop, discriminator="mode")
 
@@ -133,11 +131,9 @@ def create(request: Request, body: CreateRepair):
     from chatcopilot.harness.models import RepairOptions
 
     _mutation_access(request)
-    options = _call(
-        lambda: RepairOptions(
-            body.model, body.reasoning_effort, body.max_attempts, body.timeout_seconds
-        )
-    )
+    from chatcopilot.core.model_settings import worker_profile
+    cfg, frozen = _call(lambda: worker_profile(body.profile, environment={**__import__("os").environ, **_controller(request).settings}))
+    options = RepairOptions(cfg.model, cfg.reasoning_effort or "", body.max_attempts, body.timeout_seconds, frozen, cfg.profile_id)
     from chatcopilot.harness.models import RepairRequest
     payload = _call(lambda: RepairRequest(body.source_kind, options, body.request_id,
         body.case_instance_id, body.bot_id, body.run_id, body.feedback or RepairFeedback()))
@@ -179,17 +175,16 @@ def governance_config(request: Request):
     return _call(lambda: _controller(request).governance_config())
 
 
-@router.get("/code-health/models")
-def governance_models(request: Request):
-    return _call(lambda: _controller(request).governance_models())
 
 
 @router.post("/code-health/runs")
 def start_governance_run(request: Request, body: CreateGovernanceRun):
     _mutation_access(request)
     from chatcopilot.harness.governance_types import GovernanceOptions as RunOptions
+    from chatcopilot.core.model_settings import worker_profile
+    cfg, frozen = _call(lambda: worker_profile(body.profile, purpose="code_health"))
     return _call(lambda: _controller(request).start_code_health(
-        RunOptions.from_payload(body.model_dump(exclude={"request_id"})), request_id=body.request_id))
+        RunOptions(cfg.model, cfg.reasoning_effort or "", body.max_attempts, body.stop_condition.model_dump(), frozen, cfg.profile_id), request_id=body.request_id))
 
 
 @router.get("/code-health/runs")

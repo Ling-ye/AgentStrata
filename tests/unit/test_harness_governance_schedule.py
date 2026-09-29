@@ -9,13 +9,13 @@ from fastapi.testclient import TestClient
 
 from chatcopilot.harness.models import HarnessError
 from chatcopilot.harness.schedule_runtime import GovernanceScheduler
-from chatcopilot.harness.governance_types import GovernanceOptions, GovernanceSchedule
+from chatcopilot.harness.governance_types import ScheduledGovernanceOptions, GovernanceSchedule
 from console.backend.routes.harness import router
 
 
 @pytest.fixture
 def scheduler(tmp_path):
-    controller = SimpleNamespace(repository=tmp_path / "repo", default_model="fixture",
+    controller = SimpleNamespace(settings={}, repository=tmp_path / "repo", default_model="fixture",
         active_governance_run=Mock(return_value=None),
         store=SimpleNamespace(root=tmp_path / "private", active_governance=Mock(return_value=None)),
         start_code_health=Mock(return_value={"run_id": "gc-example"}))
@@ -25,7 +25,7 @@ def scheduler(tmp_path):
 
 
 def settings(enabled=True):
-    return GovernanceSchedule(enabled, 24, GovernanceOptions("fixture", stop_condition={"mode": "findings", "count": 2}))
+    return GovernanceSchedule(enabled, 24, ScheduledGovernanceOptions("worker", stop_condition={"mode": "findings", "count": 2}))
 
 
 def test_default_disabled_never_installs_units_or_submits(scheduler):
@@ -40,7 +40,7 @@ def test_default_disabled_never_installs_units_or_submits(scheduler):
 def test_enable_installs_only_trigger_and_same_slot_is_idempotent(scheduler):
     runtime, controller, systemctl = scheduler
     value = runtime.configure(settings())
-    assert value["enabled"] and value["options"]["model"] == "fixture"
+    assert value["enabled"] and value["options"]["profile"] == "worker"
     service = (runtime.units / (runtime.unit + ".service")).read_text()
     timer = (runtime.units / (runtime.unit + ".timer")).read_text()
     assert "gc-tick" in service and "inspect unused helpers" not in service
@@ -98,7 +98,7 @@ def test_console_schedule_and_gc_creation_use_local_public_entrypoints():
     controller = SimpleNamespace(start_code_health=Mock(return_value={"run_id": "gc-example"}),
         set_governance_schedule=Mock(return_value={"enabled": True}))
     app.state.harness = controller
-    body = {"model": "fixture", "request_id": "gc", "stop_condition": {"mode": "findings", "count": 2}}
+    body = {"profile": "worker", "request_id": "gc", "stop_condition": {"mode": "findings", "count": 2}}
     schedule = settings().to_payload()
     with TestClient(app, client=("192.0.2.5", 41000)) as client:
         assert client.post("/api/harness/code-health/runs", json=body).status_code == 403
@@ -111,7 +111,7 @@ def test_console_schedule_and_gc_creation_use_local_public_entrypoints():
         for fields in ({"single_issue": True}, {"repair_hint": "hint"}, {"feedback": {"expected_behavior": "replace rules"}},
                        {"timeout_seconds": 3600}, {"stop_condition": {"mode": "findings", "count": 1, "seconds": 3600}}):
             assert client.post("/api/harness/code-health/runs", json={**body, **fields}).status_code == 422
-        assert client.post("/api/harness/tasks", json={"source_kind": "code_health", "model": "fixture", "request_id": "old"}).status_code == 422
+        assert client.post("/api/harness/tasks", json={"source_kind": "code_health", "profile": "worker", "request_id": "old"}).status_code == 422
 
 
 def test_explicit_resave_replaces_old_schedule_without_migration(scheduler):

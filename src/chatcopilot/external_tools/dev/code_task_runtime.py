@@ -771,7 +771,9 @@ def _prepare_task(paths: CodeTaskPaths) -> None:
     )
 
 def _worker_credential_root() -> Path:
-    raw = os.environ.get(f"{ENV_PREFIX}_CODEX_BOT_HOME", "").strip()
+    from chatcopilot.core.model_settings import resolve_binding
+    cfg = resolve_binding(os.environ.get("CHATCOPILOT_CODE_BINDING", "code"))
+    raw = cfg.credential_root.strip()
     if not raw:
         raise ToolHandlerError(
             f"{ENV_PREFIX}_CODEX_BOT_HOME is required",
@@ -840,8 +842,7 @@ def _run_codex_stream(
         model,
         "-C",
         "/workspace",
-        "-c",
-        f'model_reasoning_effort="{effort}"',
+        *(["-c", f"model_reasoning_effort={json.dumps(effort)}"] if effort else []),
         "-c",
         "mcp_servers={}",
         "-c",
@@ -1879,6 +1880,7 @@ def schedule_code_task_worker(request_path: Path) -> str:
         "chatcopilot.middleware.runtime.jobs.worker",
         str(request_path),
     ]
+    model_environment = _code_worker_environment(request_path)
     if shutil.which("systemd-run") and not _env_bool(
         f"{ENV_PREFIX}_CODE_TASK_DISABLE_SYSTEMD", False
     ):
@@ -1897,8 +1899,7 @@ def schedule_code_task_worker(request_path: Path) -> str:
             f"--setenv=PYTHONPATH={pythonpath}",
             f"--setenv={ENV_PREFIX}_CODE_TASK_SYSTEMD_UNIT={unit}.service",
         ]
-        for name in _worker_environment_names():
-            value = os.environ.get(name)
+        for name, value in model_environment.items():
             if value:
                 command.append(f"--setenv={name}={value}")
         command.extend(worker)
@@ -1927,11 +1928,7 @@ def schedule_code_task_worker(request_path: Path) -> str:
         )
         return worker_ref
 
-    env = {
-        name: value
-        for name in _worker_environment_names()
-        if (value := os.environ.get(name))
-    }
+    env = model_environment
     env.update(
         {
             "PATH": os.environ.get("PATH", "/usr/local/bin:/usr/bin:/bin"),
@@ -2014,6 +2011,19 @@ def _process_start_ticks(pid: int) -> int:
         return 0
 
 
+def _code_worker_environment(request_path: Path) -> dict[str, str]:
+    from chatcopilot.core.model_settings import ModelSettingsStore, resolve_binding
+    path = request_path.parent / "llm.json"
+    models = ModelSettingsStore(path).read()
+    cfg = resolve_binding("code", document=models)
+    connection = models["connections"][cfg.connection_id]
+    env = {name: value for name in _worker_environment_names() if (value := os.environ.get(name))}
+    env.update({"AGENTSTRATA_LLM_CONFIG": str(path), "CHATCOPILOT_CODE_BINDING": "code",
+        connection.get("codex_bin_env", "CHATCOPILOT_CODEX_BIN"): cfg.codex_bin,
+        connection.get("credential_root_env", "CHATCOPILOT_CODEX_BOT_HOME"): cfg.credential_root})
+    return env
+
+
 def _worker_environment_names() -> tuple[str, ...]:
     return (
         f"{ENV_PREFIX}_SOURCE_ROOT",
@@ -2024,8 +2034,8 @@ def _worker_environment_names() -> tuple[str, ...]:
         f"{ENV_PREFIX}_INSTANCE_ID",
         f"{ENV_PREFIX}_CODEX_BIN",
         f"{ENV_PREFIX}_CODEX_BOT_HOME",
-        f"{ENV_PREFIX}_CODE_MODEL",
-        f"{ENV_PREFIX}_CODE_REASONING_EFFORT",
+        "AGENTSTRATA_LLM_CONFIG",
+        "CHATCOPILOT_CODE_BINDING",
         f"{ENV_PREFIX}_CODE_TASK_GITHUB_REPOSITORY",
         f"{ENV_PREFIX}_CODE_TASK_GITHUB_ACTOR",
         f"{ENV_PREFIX}_CODE_TASK_GITHUB_TOKEN_FILE",
@@ -2188,7 +2198,9 @@ def _source_root() -> Path:
 
 
 def _codex_binary() -> Path:
-    raw = os.environ.get(f"{ENV_PREFIX}_CODEX_BIN", "").strip()
+    from chatcopilot.core.model_settings import resolve_binding
+    cfg = resolve_binding(os.environ.get("CHATCOPILOT_CODE_BINDING", "code"))
+    raw = cfg.codex_bin.strip()
     if not raw:
         raise ToolHandlerError(
             f"{ENV_PREFIX}_CODEX_BIN must name an absolute Codex executable",

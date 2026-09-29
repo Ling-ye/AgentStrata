@@ -115,8 +115,7 @@ def test_guided_configure_writes_mode_0600_and_doctor_json_is_secret_free(
     bot_yaml = _new_starter(tmp_path)
     inputs = iter(
         (
-            "https://llm.example.test/v1",
-            "example-chat-model",
+            "/tmp/test-models.json",
             "10001",
             "20002",
         )
@@ -133,9 +132,7 @@ def test_guided_configure_writes_mode_0600_and_doctor_json_is_secret_free(
     local_env = bot_yaml.parent / "local.env"
     values = load_local_env_values(local_env)
     assert stat.S_IMODE(local_env.stat().st_mode) == 0o600
-    assert values["CHATCOPILOT_CHAT_BASE_URL"] == "https://llm.example.test/v1"
-    assert values["CHATCOPILOT_CHAT_MODEL"] == "example-chat-model"
-    assert values["CHATCOPILOT_CHAT_API_KEY"] == "private-api-key"
+    assert values["AGENTSTRATA_LLM_CONFIG"] == "/tmp/test-models.json"
     assert values["QQ_ACCOUNT"] == "10001"
     assert values["CHATCOPILOT_ADD_OWNER_IDS"] == "20002"
     assert values["QQ_ALLOW_FROM"] == "20002"

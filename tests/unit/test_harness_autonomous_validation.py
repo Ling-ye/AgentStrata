@@ -368,3 +368,5 @@ def test_private_image_import_does_not_become_an_evaluation_directory(tmp_path):
         assert result["result_storage"] == "database"
         assert len(result["result"]["trials"]) == 3
         assert service.client.health()["idle_proven"]
+
+pytestmark = pytest.mark.usefixtures("api_model_settings")

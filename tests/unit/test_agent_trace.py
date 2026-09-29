@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from chatcopilot.core.config import LLMConfig
 from chatcopilot.contracts.execution import TurnExecutionContext, TraceContext
 
 from tests.prompt_plan_fixture import prompt_plan
@@ -311,7 +313,7 @@ class AgentTraceTests(unittest.TestCase):
                 agents={"developer": SubagentBudgetSpec(max_model_turns=3, max_tool_calls=3)},
             ),
             main_llm=subagent_llm,
-            main_config=ChatConfig(),
+            main_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
             base_tools=(csv_tool,),
         )
         delegate = delegate_tools[0]

@@ -259,7 +259,7 @@ def _start_service_process(
         [
             sys.executable,
             "-m",
-            "chatcopilot.evals.service",
+            "tests.evaluation_service_fixture",
             "serve",
             "--socket",
             str(socket_path),
@@ -1433,3 +1433,5 @@ def test_console_bff_has_no_evaluation_process_or_artifact_owner() -> None:
     assert "chatcopilot.evals.application" not in route_sources
     assert "subprocess" not in route_sources
     assert "reports/evals/evaluations" not in route_sources
+
+pytestmark = pytest.mark.usefixtures("api_model_settings")

@@ -20,6 +20,7 @@ channels:
 
 llm:
   chat:
+    binding: chat
     env_prefix: CHATCOPILOT_CHAT
 
 prompts:
