@@ -10,8 +10,6 @@ import shutil
 import subprocess
 import sys
 import tempfile
-import uuid
-import logging
 from dataclasses import replace
 from pathlib import Path
 from typing import Any, Callable, Mapping
@@ -26,7 +24,7 @@ from chatcopilot.agent.context.prompt_plan import (
 from chatcopilot.contracts.execution_scope import ExecutionScope
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.core.observability_redaction import redact_observability_payload
-from chatcopilot.core.private_sqlite import json_text, private_directory, storage_error_details
+from chatcopilot.core.private_sqlite import json_text, private_directory
 from chatcopilot.core.source_snapshot import git_output
 from chatcopilot.core.scoped_process import require_bubblewrap
 from chatcopilot.harness.codex_environment import check_git, git_metadata, shell_environment, wrap_command
@@ -40,10 +38,10 @@ from chatcopilot.harness.models import HarnessError, RepairOptions, CodingOption
 from chatcopilot.harness.evidence_context import evidence_index
 from chatcopilot.harness.workspace import protected_paths, writable_paths
 from chatcopilot.harness.repair_types import ActionProgress
-from chatcopilot.harness.agent_types import AgentCall, AgentResult, Role, role_result
+from chatcopilot.harness.agent_types import AgentCall, AgentResult, Role
+from chatcopilot.harness.agent_execution import execute_agent_call
 from chatcopilot.harness.role_prompts import COMMON, PROMPTS, GOVERNANCE_PROMPTS, SKILL_LEARNING_PROMPTS
 from chatcopilot.harness.repair_session import run_session
-from chatcopilot.harness.config import safe_error
 
 
 class CodexCoder:
@@ -70,44 +68,11 @@ class CodexCoder:
 
     def execute(self, worktree: Path, call: AgentCall, options: RepairOptions | CodingOptions,
                 output: Path, cancel: Callable[[], None]) -> AgentResult:
-        from chatcopilot.core.trace_capture import TraceCapture, capture_scope
-        from chatcopilot.core.trace_archive import TraceArchive
-        from chatcopilot.harness.flow_records import step_binding
-        capture = TraceCapture({"kind": "harness", "execution_id": uuid.uuid4().hex, **step_binding(),
-                                "phase": call.role.value, "role": call.role.value},
-                               roots={"workspace": worktree, "output": output})
-        execution = {}
-        status = "failed"
-        try:
-            with capture_scope(capture):
-                try:
-                    execution = self._execute_impl(worktree, call, options, output, cancel)
-                except HarnessError:
-                    # Cancellation, budget and uncertain-session decisions keep
-                    # their existing control semantics.
-                    raise
-                except (ValueError, TypeError, RuntimeError, OSError, subprocess.SubprocessError) as exc:
-                    if isinstance(exc, OSError) and storage_error_details(exc):
-                        raise
-                    message = f"原生会话启动或执行失败：{type(exc).__name__}: {safe_error(exc)}"
-                    capture.record({"kind": "coding_error", "status": "failed", "data": {"error_code": "coding_environment"}},
-                                   {"error": message})
-                    raise HarnessError("coding_environment", message) from exc
-                try:
-                    value = json.loads(execution.pop("final_text"))
-                except (ValueError, TypeError) as exc:
-                    raise HarnessError("invalid_role_result", "角色输出不是有效结构化产物") from exc
-                payload = role_result(call.role, value,
-                                      governance=call.evidence.get("source", {}).get("kind") == "code_health")
-            status = "completed"
-            return AgentResult(payload, execution)
-        finally:
-            try:
-                execution["trace"] = TraceArchive(output / "traces").save(capture, status, retained=True)
-                if self.trace_publisher:
-                    self.trace_publisher(output / "traces", execution["trace"])
-            except Exception:
-                logging.getLogger(__name__).warning("Harness role trace archive failed")
+        return execute_agent_call(
+            worktree, call, output,
+            lambda: self._execute_impl(worktree, call, options, output, cancel),
+            trace_publisher=self.trace_publisher,
+        )
 
     def review(self, worktree, evidence, options, output, check_cancel):
         call = AgentCall(evidence["task_id"], Role.REVIEW, 1, "独立审查精确候选", {**evidence, "base_commit": git_output(worktree, "rev-parse", "HEAD")})

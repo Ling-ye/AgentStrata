@@ -74,6 +74,21 @@ Harness 相关治理项完成验收并合入 PR 后，批次启动一次受限�
 新任务只从已合入的主干读取新版。契约见
 [Harness Skill 学习规格](../../specs/harness-skill-learning/spec.md)。
 
+## 编程 Agent 适配边界
+
+Harness 的任务、角色交接和验收由宿主负责；[AgentRunner](../../src/chatcopilot/harness/agent_types.py)
+只接收已绑定的角色任务、工作区、配置和取消检查。宿主统一记录执行轨迹与结构化角色产物，
+并将会话绑定到任务、worktree、模型、凭据代际和环境身份；未知终态不自动重放。
+工作区创建、测试和 PR 交付不属于厂商适配器。
+
+当前 [Codex 适配器](../../src/chatcopilot/harness/codex_adapter.py)负责原生二进制、凭据、
+权限投影和 App Server 启动；[Codex 会话驱动](../../src/chatcopilot/harness/repair_session.py)
+把原生通知投影为有限的角色事件。持久化会话绑定由
+[Harness 会话状态](../../src/chatcopilot/harness/agent_session_state.py)持有，
+执行追踪和角色结果校验由[宿主执行包装](../../src/chatcopilot/harness/agent_execution.py)持有。
+新增厂商只需实现现有 AgentRunner 契约，不从原生会话推断宿主验收、工作区权限或交付成功。
+设计边界遵循[多 Agent 修复规格](../../specs/harness-multi-agent/spec.md)。
+
 ## 修复流程记录
 
 问题、原则、计划和角色输出以不可变 JSON 保存，任务数据库保留可搜索身份和引用。
