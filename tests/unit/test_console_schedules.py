@@ -1,4 +1,5 @@
 from types import SimpleNamespace
+from unittest.mock import Mock
 
 import pytest
 from fastapi import FastAPI
@@ -8,13 +9,18 @@ from console.backend.routes import schedules
 from chatcopilot.schedules.service import ScheduleService
 
 
-@pytest.fixture
-def api(tmp_path, monkeypatch):
+@pytest.fixture(params=["isolated", "application"])
+def api(tmp_path, monkeypatch, request):
     service = ScheduleService(tmp_path / "state")
     monkeypatch.setattr(schedules, "get_instance", lambda id: SimpleNamespace(instance_id=id))
     monkeypatch.setattr(schedules, "service_for", lambda inst: service)
-    app = FastAPI()
-    app.include_router(schedules.router)
+    if request.param == "application":
+        from console.backend import app as backend
+        app = backend.app
+        monkeypatch.setattr(app.state, "harness", object(), raising=False)
+    else:
+        app = FastAPI()
+        app.include_router(schedules.router)
     return app, service
 
 
@@ -28,7 +34,7 @@ def test_api_create_preview_cancel_history_and_conflict(api):
     prefix = "/api/bots/fixture"
     with TestClient(app, base_url="http://127.0.0.1", client=("127.0.0.1", 45000)) as client:
         response = client.post(prefix + "/schedules", json=body())
-        assert response.status_code == 200
+        assert response.status_code == 200, response.text
         task = response.json()
         assert not task["settings"]["enabled"]
         assert len(client.get(prefix + "/schedules").json()["tasks"]) == 1
@@ -41,7 +47,12 @@ def test_api_create_preview_cancel_history_and_conflict(api):
         assert client.get(prefix + f"/schedule-runs/{run['id']}").json()["prompt"]
         assert client.post(prefix + f"/schedule-runs/{run['id']}/cancel").json()["status"] == "cancelled"
         assert client.put(prefix + f"/schedules/{task['id']}", json={"revision": 9, "settings": task["settings"]}).status_code == 409
-        assert client.delete(prefix + f"/schedules/{task['id']}?revision=1").status_code == 200
+        updated = client.put(prefix + f"/schedules/{task['id']}",
+            json={"revision": 1, "settings": {**task["settings"], "name": "更新后的调查任务"}})
+        assert updated.status_code == 200
+        assert updated.json()["revision"] == 2
+        assert client.get(prefix + "/schedules").json()["tasks"][0]["settings"]["name"] == "更新后的调查任务"
+        assert client.delete(prefix + f"/schedules/{task['id']}?revision=2").status_code == 200
         assert service.history()["runs"]
         assert client.get(prefix + "/schedule-runs/missing").status_code == 404
 
@@ -88,3 +99,19 @@ def test_instance_resolution_and_no_store(tmp_path, monkeypatch):
         response = client.get("/api/bots/fixture/schedules")
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+
+
+@pytest.mark.parametrize("verb", ["start", "stop", "restart"])
+def test_complete_app_preserves_bot_control_routes(monkeypatch, verb):
+    from console.backend import app as backend
+    from console.backend.routes import bots
+    inst = SimpleNamespace(instance_id="fixture")
+    control = Mock(return_value={"ok": True})
+    monkeypatch.setattr(backend.app.state, "harness", object(), raising=False)
+    monkeypatch.setattr(bots, "get_instance", lambda id: inst)
+    monkeypatch.setattr(bots.operations, "control", control)
+    with TestClient(backend.app, base_url="http://localhost", client=("127.0.0.1", 45000)) as client:
+        assert client.post(f"/api/bots/fixture/{verb}").json() == {"ok": True}
+        response = client.post("/api/bots/fixture/unsupported-action")
+        assert response.status_code == 404
+    control.assert_called_once_with(inst, verb)

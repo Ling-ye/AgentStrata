@@ -64,6 +64,8 @@ app.state.evaluations = EvaluationServiceClient()
 
 app.include_router(overview.router)
 app.include_router(architecture.router)
+# Fixed bot resources must precede the /{instance_id}/{verb} control fallback.
+app.include_router(schedules.router)
 app.include_router(bots.router)
 app.include_router(catalog.router)
 app.include_router(console_self.router)
@@ -73,7 +75,6 @@ app.include_router(evals.router)
 app.include_router(evaluations.router)
 app.include_router(infra.router)
 app.include_router(harness.router)
-app.include_router(schedules.router)
 
 _DIST = Path(__file__).resolve().parents[1] / "web" / "dist"
 if _DIST.is_dir():

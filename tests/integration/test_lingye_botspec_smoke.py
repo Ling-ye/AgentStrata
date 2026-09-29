@@ -111,7 +111,7 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertTrue(spec.agents.research_enabled)
         self.assertIn("persona.control", spec.tools.packs)
         self.assertEqual(spec.llm.research_env_prefix, "CHATCOPILOT_LINGYE_RESEARCH")
-        self.assertEqual(spec.llm.chat.model, "gpt-6-sol")
+        self.assertEqual(spec.llm.chat.model, "gpt-5.6-sol")
         self.assertEqual(spec.llm.chat.reasoning_effort, "medium")
         self.assertEqual(spec.llm.research.model, "gpt-6-sol")
         self.assertNotIn("developer", spec.agents.include)
