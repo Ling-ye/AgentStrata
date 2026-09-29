@@ -5,20 +5,23 @@ import os
 from pathlib import Path
 
 from chatcopilot.core.model_catalog import ModelCatalog
-from chatcopilot.core.model_settings import ModelSettingsStore, connection_route, ModelSettingsError, validate_settings
+from chatcopilot.core.model_settings import ModelSettingsStore, connection_route, ModelSettingsError, validate_settings, settings_path
 from chatcopilot.external_tools.codex_cli.catalog import connection_identity, discover_models
 
 
 class ModelControl:
     def __init__(self, repository: Path, *, store=None, environment=None, catalog=None):
-        self.store = store or ModelSettingsStore()
         env = dict(os.environ if environment is None else environment)
+        path = settings_path(env)
+        self.store = store or ModelSettingsStore(path, defaults_path=path.with_suffix(".defaults.json"))
         self.catalog = catalog or ModelCatalog(
             lambda connection: discover_models(connection, env, repository),
             lambda connection: connection_identity(connection, env))
 
     def configuration(self):
         view = self.store.view()
+        view["source"] = "saved" if self.store.path.exists() else (
+            "defaults" if self.store.defaults_path is not None and self.store.defaults_path.exists() else "empty")
         view["resolved"] = {purpose: {"profile": profile_id,
             **connection_route(view["connections"][view["profiles"][profile_id]["connection"]],
                                view["profiles"][profile_id]).to_payload()}

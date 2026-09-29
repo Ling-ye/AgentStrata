@@ -1,5 +1,30 @@
 {
-  "connections": {},
-  "profiles": {},
-  "bindings": {}
+  "connections": {
+    "main": {
+      "kind": "codex",
+      "auth": {"mode": "chatgpt", "profile": "main"}
+    },
+    "worker": {
+      "kind": "codex",
+      "auth": {"mode": "chatgpt", "profile": "worker"}
+    },
+    "api": {
+      "kind": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "auth": {"mode": "api_key", "key_env": "OPENAI_API_KEY"}
+    }
+  },
+  "profiles": {
+    "main": {"connection": "main", "model": "MODEL_FROM_CODEX_MODEL_LIST"},
+    "worker": {"connection": "worker", "model": "MODEL_FROM_WORKER_MODEL_LIST"},
+    "api": {"connection": "api", "model": "MODEL_FROM_API_MODELS"}
+  },
+  "bindings": {
+    "chat": "main",
+    "research": "api",
+    "code": "worker",
+    "harness": "worker",
+    "code_health": "worker",
+    "evaluation.judge": "api"
+  }
 }

@@ -251,6 +251,7 @@ import tempfile
 from pathlib import Path
 
 allowed = {
+    "AGENTSTRATA_LLM_CONFIG",
     "CHATCOPILOT_CODEX_BIN",
     "CHATCOPILOT_CODEX_BOT_HOME",
     "CHATCOPILOT_CODE_TASK_GITHUB_REPOSITORY",

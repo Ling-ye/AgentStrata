@@ -15,9 +15,11 @@ def model_settings(tmp_path_factory, monkeypatch):
     path = tmp_path_factory.mktemp("model-host") / "host-models.json"
     write_models(path, test_model_document())
     original = settings.settings_path
+    operator_default = original({})
     def resolve(environment=None):
         env = os.environ if environment is None else environment
-        return original(env) if env.get("AGENTSTRATA_LLM_CONFIG") else path
+        requested = original(env) if env.get("AGENTSTRATA_LLM_CONFIG") else path
+        return path if requested == operator_default else requested
     monkeypatch.setattr(settings, "settings_path", resolve)
     monkeypatch.setenv("AGENTSTRATA_LLM_CONFIG", str(path))
     # Bundled BotSpecs are test inputs; their ignored operator local.env is not.
@@ -52,5 +54,4 @@ def api_model_settings(model_settings, monkeypatch):
     data["profiles"]["codex-main"]["connection"] = "service-api"
     write_models(model_settings, data)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "synthetic-service-credential")
-
 

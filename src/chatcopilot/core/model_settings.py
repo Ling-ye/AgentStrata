@@ -30,8 +30,9 @@ class ModelSettingsConflict(ModelSettingsError):
 def reject_model_overrides(environment: Mapping[str, str], prefix: str) -> None:
     retired = ("MODEL", "BASE_URL", "TIMEOUT", "REASONING_EFFORT", "CODE_MODEL", "CODE_PROVIDER",
                "CODE_REASONING_EFFORT", "CODE_PROFILES_JSON", "CODE_TASK_PROFILE", "TOPIC_MODEL")
-    if any(f"{prefix}_{key}" in environment for key in retired):
-        raise ModelSettingsError("旧模型环境配置已移除，请在统一模型配置页重新配置")
+    present = [f"{prefix}_{key}" for key in retired if f"{prefix}_{key}" in environment]
+    if present:
+        raise ModelSettingsError("旧模型环境配置已移除，请删除以下变量并在统一模型配置页重新配置：" + ", ".join(present))
 
 
 def settings_path(environment: Mapping[str, str] | None = None) -> Path:
@@ -117,13 +118,20 @@ def validate_settings(value: Any) -> dict[str, Any]:
 
 
 class ModelSettingsStore:
-    def __init__(self, path: Path | None = None):
+    def __init__(self, path: Path | None = None, *, defaults_path: Path | None = None):
         self.path = path or settings_path()
+        # Explicit paths are also used for immutable task snapshots. Only the
+        # host store opts into defaults; a missing snapshot never uses them.
+        self.defaults_path = self.path.with_suffix(".defaults.json") if path is None else defaults_path
+        if self.defaults_path == self.path:
+            raise ModelSettingsError("默认配置与保存配置必须使用不同文件")
 
     def read(self) -> dict[str, Any]:
         try:
             fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
         except FileNotFoundError:
+            if self.defaults_path is not None:
+                return ModelSettingsStore(self.defaults_path).read()
             return empty_settings()
         with os.fdopen(fd, encoding="utf-8") as stream:
             return validate_settings(json.load(stream))
@@ -161,7 +169,8 @@ class ModelSettingsStore:
 
 
 def read_settings(environment: Mapping[str, str] | None = None) -> dict:
-    return ModelSettingsStore(settings_path(environment)).read()
+    path = settings_path(environment)
+    return ModelSettingsStore(path, defaults_path=path.with_suffix(".defaults.json")).read()
 
 
 def connection_environment(connection: Mapping, environment: Mapping[str, str]) -> dict[str, str]:

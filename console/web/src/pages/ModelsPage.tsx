@@ -65,8 +65,8 @@ export default function ModelsPage() {
   const validId = (id: string) => /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(id);
   return <PageSection title="模型配置" description="集中维护连接、模型方案与用途引用。模型能力只采用当前连接接口明确返回的值。">
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Space wrap><Button type="primary" loading={saving} disabled={!dirty} onClick={() => void save()}>保存配置</Button>
-        <Text type="secondary">{dirty ? "有未保存更改" : "已保存"}；机器人通过现有应用／重启入口加载配置。</Text></Space>
+      <Space wrap><Button type="primary" loading={saving} disabled={!dirty && draft.source !== "defaults"} onClick={() => void save()}>保存配置</Button>
+        <Text type="secondary">{dirty ? "有未保存更改" : draft.source === "defaults" ? "使用默认配置；保存后以保存值为准" : draft.source === "empty" ? "尚未配置" : "已保存"}；机器人通过现有应用／重启入口加载配置。</Text></Space>
       {error && <Alert type="error" content={error} />}
       <Card title="连接">
         <Space direction="vertical" style={{ width: "100%" }}>

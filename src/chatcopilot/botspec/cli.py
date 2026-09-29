@@ -29,7 +29,7 @@ import sys
 from pathlib import Path
 from typing import Iterable, Mapping
 
-from chatcopilot.botspec.deployment_env import deployment_environment, exported_environment, runtime_environment_keys, legacy_configuration_home
+from chatcopilot.botspec.deployment_env import deployment_environment, exported_environment, runtime_environment_keys, runtime_model_bindings, legacy_configuration_home
 from chatcopilot.botspec.loader import is_valid_bot_id, load_botspec, validate_botspec
 from chatcopilot.botspec.provisioning import (
     ProvisioningError,
@@ -1006,10 +1006,34 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         print(f"[ERR] {_safe_error_code(exc)}")
         return 1
 
+    from chatcopilot.core.model_settings import ModelSettingsError, read_settings, settings_path
+    model_errors = []
     try:
         values = _runtime_env_values(spec, local_env)
+    except ModelSettingsError as exc:
+        model_errors.append(str(exc))
+        values = {key: expand_leading_home(value) for key, value in local_env.items()}
     except ValueError as exc:
         print(f"[ERR] {_safe_error_code(exc)}")
+        return 1
+    model_path = None
+    try:
+        model_path = settings_path(values)
+        document = read_settings(values)
+        missing_bindings = [purpose for purpose in runtime_model_bindings(spec) if purpose not in document["bindings"]]
+        if missing_bindings:
+            model_errors.append("统一模型配置缺少用途绑定：" + ", ".join(missing_bindings))
+    except (OSError, ValueError) as exc:
+        model_errors.append("统一模型配置不可用：" + _safe_error_code(exc))
+    if model_errors:
+        for error in model_errors:
+            print(f"[ERR] {error}")
+        print(f"      本地配置：{local_env_path}")
+        if model_path is not None:
+            print(f"      统一模型配置：{model_path}")
+            print(f"      首次使用的默认配置：{model_path.with_suffix('.defaults.json')}")
+        print("      请填写默认配置，或在 Console「模型配置」页保存方案并绑定以上用途；移除旧模型变量后重新更新。")
+        print("      API Key、Codex 登录凭据、运行预算和业务数据无需删除。运行时 env 未写入。")
         return 1
     adapter = _registry.get_adapter(spec.platform.type)
     plan = build_provision_plan(spec, adapter, values)

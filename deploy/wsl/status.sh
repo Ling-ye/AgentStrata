@@ -73,7 +73,7 @@ if [ -z "${CHATCOPILOT_INSTANCE_ID:-}" ] || [ -z "${CHATCOPILOT_BOT_SPEC:-}" ] \
     echo "[ERR] 无法唯一解析实例；请传 --instance <id> 或 --bot-spec <path>" >&2
     exit 2
 fi
-ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 [ -n "$INSTANCE" ] && export CHATCOPILOT_INSTANCE_ID="$INSTANCE"
 [ -n "$BOT_SPEC" ] && export CHATCOPILOT_BOT_SPEC="$BOT_SPEC"
 ccp_apply_bot_deploy_config

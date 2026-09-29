@@ -65,6 +65,7 @@ def test_registration_accepts_exported_worker_values_and_pins_main_instance() ->
     assert '    "CHATCOPILOT_CODE_REASONING_EFFORT",' not in script
     assert '"CHATCOPILOT_CODEX_BIN"' in script
     assert '"CHATCOPILOT_CODEX_BOT_HOME"' in script
+    assert '    "AGENTSTRATA_LLM_CONFIG",' in script
     assert '"CHATCOPILOT_CODE_TASK_GITHUB_ACTOR"' in script
     assert 'actor = values["CHATCOPILOT_CODE_TASK_GITHUB_ACTOR"]' in script
     assert "CHATCOPILOT_CODE_TASK_GITHUB_ACTOR is malformed" in script

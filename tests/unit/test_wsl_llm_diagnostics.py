@@ -5,6 +5,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 BOT_WRAPPER = REPO_ROOT / "deploy" / "wsl" / "bot_wrapper.sh"
@@ -291,3 +292,22 @@ def test_qq_gateway_does_not_source_bot_owned_local_env() -> None:
 
     assert 'source "$LOCAL_CONFIG"' not in script
     assert "provision_runtime_env" in script
+
+
+@pytest.mark.parametrize("entrypoint", ["start.sh", "_apply_config.sh", "_stop_cc.sh", "qq_gateway.sh",
+    "status.sh", "_session_env.sh", "setup_wsl_user.sh", "bootstrap_wsl.sh"])
+def test_runtime_entrypoints_pass_the_shared_model_config_path(tmp_path, entrypoint):
+    import re
+    import shlex
+    script = (REPO_ROOT / 'deploy/wsl' / entrypoint).read_text()
+    pattern = re.search(r'^\s*ccp_load_env "([^"]+)"', script, re.MULTILINE).group(1)
+    runtime_env = tmp_path / 'runtime.env'
+    model_path = str(tmp_path / 'model configuration' / 'llm.json')
+    runtime_env.write_text('export AGENTSTRATA_LLM_CONFIG=' + shlex.quote(model_path) + '\n')
+    runtime_env.chmod(0o600)
+    completed = subprocess.run(['bash', '-c', f'source "{LOAD_ENV_SCRIPT}"; ccp_load_env "$1"; '
+        'printf "%s" "${AGENTSTRATA_LLM_CONFIG:-missing}"', 'test-llm-path', pattern],
+        cwd=REPO_ROOT, env={**os.environ, 'CHATCOPILOT_HOME': str(REPO_ROOT),
+            'CHATCOPILOT_ENV_FILE': str(runtime_env), 'AGENTSTRATA_DEPLOY_PYTHON': sys.executable,
+            'AGENTSTRATA_LLM_CONFIG': ''}, capture_output=True, text=True, timeout=10, check=True)
+    assert completed.stdout == model_path

@@ -10,7 +10,7 @@ umask 077
 # shellcheck source=./_load_env.sh
 source "$(dirname "$0")/_load_env.sh"
 ccp_prepend_user_bins
-ccp_load_env "CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 export PYTHONPATH="$CCP_HOME_DEFAULT/src${PYTHONPATH:+:$PYTHONPATH}"
 

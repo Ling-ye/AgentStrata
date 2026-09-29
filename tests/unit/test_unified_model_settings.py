@@ -38,6 +38,61 @@ def test_one_configuration_resolves_all_consumers_without_copying_secrets(tmp_pa
     assert resolve_binding("chat", document=data, environment=environment).model_route().fingerprint == chat.model_route().fingerprint
 
 
+def test_host_defaults_are_used_until_an_explicit_configuration_is_saved(tmp_path):
+    import json
+    from console.control.llm import ModelControl
+    defaults = tmp_path / "llm.defaults.json"
+    defaults.write_text(json.dumps(document()))
+    current = tmp_path / "llm.json"
+    environment = {"AGENTSTRATA_LLM_CONFIG": str(current)}
+    control = ModelControl(tmp_path, environment=environment)
+    view = control.configuration()
+    assert view["source"] == "defaults"
+    assert resolve_binding("chat", environment=environment).model == "discovered"
+    assert not current.exists()  # Reading defaults, including dry-run, has no side effect.
+    control.save(document(), view["revision"])
+    changed = document()
+    changed["profiles"]["daily"]["model"] = "changed-default"
+    defaults.write_text(json.dumps(changed))
+    assert control.configuration()["source"] == "saved"
+    assert resolve_binding("chat", environment=environment).model == "discovered"
+    current.write_text(json.dumps(changed))
+    assert resolve_binding("chat", environment=environment).model == "changed-default"
+
+
+def test_saved_empty_or_invalid_configuration_never_falls_back_to_defaults(tmp_path):
+    import json
+    defaults = tmp_path / "llm.defaults.json"
+    defaults.write_text(json.dumps(document()))
+    current = tmp_path / "llm.json"
+    store = ModelSettingsStore(current, defaults_path=defaults)
+    store.save(empty_settings(), revision=store.view()["revision"])
+    assert store.read() == empty_settings()
+    current.write_text('{"connections": "invalid"}')
+    with pytest.raises(ModelSettingsError):
+        store.read()
+
+
+def test_missing_snapshot_never_uses_an_adjacent_default_file(tmp_path):
+    import json
+    (tmp_path / "llm.defaults.json").write_text(json.dumps(document()))
+    assert ModelSettingsStore(tmp_path / "llm.json").read() == empty_settings()
+
+
+def test_changed_defaults_conflict_with_an_older_first_save(tmp_path):
+    import json
+    defaults = tmp_path / "llm.defaults.json"
+    defaults.write_text(json.dumps(document()))
+    store = ModelSettingsStore(tmp_path / "llm.json", defaults_path=defaults)
+    revision = store.view()["revision"]
+    changed = document()
+    changed["profiles"]["daily"]["model"] = "new-default"
+    defaults.write_text(json.dumps(changed))
+    with pytest.raises(ModelSettingsConflict):
+        store.save(document(), revision=revision)
+    assert not store.path.exists()
+
+
 def test_atomic_save_rejects_concurrent_overwrite(tmp_path):
     store = ModelSettingsStore(tmp_path / "llm.json")
     version = store.view()["revision"]

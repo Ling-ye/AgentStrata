@@ -145,9 +145,8 @@ def _tool_pack_runtime_defaults(tool_packs: Iterable[str]) -> dict[str, str]:
 
 
 
-def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None) -> tuple[str, ...]:
-    from chatcopilot.core.model_settings import read_settings
-    document = read_settings(environment)
+def runtime_model_bindings(spec) -> tuple[str, ...]:
+    """Model purposes used by both deployment validation and environment export."""
     purposes = {spec.llm.chat.binding, spec.llm.research.binding}
     if spec.llm.code.enabled or "dev.code_tasks" in spec.tools.packs:
         purposes.add(spec.llm.code.binding)
@@ -158,8 +157,14 @@ def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None)
     if spec.tools.mcp.servers:
         budgets.append(spec.agents.search_budget)
     purposes.update(budget.model_binding for budget in budgets if budget.model_binding)
+    return tuple(sorted(purposes))
+
+
+def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None) -> tuple[str, ...]:
+    from chatcopilot.core.model_settings import read_settings
+    document = read_settings(environment)
     references = []
-    for purpose in purposes:
+    for purpose in runtime_model_bindings(spec):
         profile = document["profiles"].get(document["bindings"].get(purpose))
         if profile is None:
             continue
@@ -196,7 +201,6 @@ def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None)
         "CHATCOPILOT_GIT_AUTHOR_NAME",
         "CHATCOPILOT_GIT_AUTHOR_EMAIL",
         f"{spec.llm.env_prefix}_API_KEY",
-        f"{spec.llm.env_prefix}_TIMEOUT",
         f"{spec.llm.env_prefix}_CODE_COMMAND",
         f"{spec.llm.env_prefix}_CODE_TIMEOUT_SECONDS",
         "CHATCOPILOT_ADD_OWNER_IDS",

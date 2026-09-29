@@ -22,7 +22,7 @@ ccp_apply_bot_deploy_config
 # ~/.chatcopilot-<instance>.env 是运行时权威配置源；渲染 cc-connect 前总是重载，
 # 避免当前 shell 中的旧凭证把 config.toml 渲染成另一个机器人。
 # 各平台凭据（FEISHU_* / QQ_* / 后续平台）一并加载，由 adapter 决定取用哪些。
-ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"

@@ -85,7 +85,7 @@ if ! ccp_bot_uses_gateway "$CHATCOPILOT_BOT_SPEC"; then
     exit 78
 fi
 ccp_apply_bot_deploy_config
-ccp_load_env "QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 
 LOCAL_CONFIG="$REPO_ROOT/bots/$INSTANCE/local.env"
 CONTAINER="napcat-$INSTANCE"

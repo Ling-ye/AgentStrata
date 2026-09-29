@@ -22,8 +22,11 @@ adapter 管协议，原有 Runtime 管 Agent 循环，宿主管身份、权限�
 
 ### 配置与解析
 
-- 唯一可变来源为 `~/.config/agentstrata/llm.json`，可通过绝对路径
+- 统一保存配置为 `~/.config/agentstrata/llm.json`，可通过绝对路径
   `AGENTSTRATA_LLM_CONFIG` 指定。所有宿主部署使用同一来源。
+- 首次尚无保存文件时，可读取同目录的 `llm.defaults.json`；自定义路径对应同名
+  `*.defaults.json`。手动修改或前端保存后，以整份保存配置为准，不叠加默认字段，
+  不因保存文件损坏而回退默认值。显式任务快照不使用默认文件。
 - `connections` 声明连接类型、端点、认证引用和请求超时；`profiles` 声明连接引用、
   模型与可选推理强度；`bindings` 将实例用途或后台用途映射到方案。
 - 连接类型为 `codex`、`openai_responses`、`openai_compatible`。订阅认证引用现有

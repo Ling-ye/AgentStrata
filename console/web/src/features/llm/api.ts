@@ -13,6 +13,7 @@ export interface ModelConfiguration {
   profiles: Record<string, ModelProfile>;
   bindings: Record<string, string>;
   revision: string;
+  source?: "saved" | "defaults" | "empty";
   resolved: Record<string, { profile: string; model: string; reasoning_effort: string | null }>;
 }
 export interface ModelCatalog {

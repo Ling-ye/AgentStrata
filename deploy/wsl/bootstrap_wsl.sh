@@ -117,7 +117,7 @@ ok "venv 与依赖已就位：$MT_HOME/.venv"
 # BotSpec 与运行时 env 的解析依赖项目 Python；只能在上面的 frozen
 # reconcile 成功后调用，避免执行实例目录中尚未校验的既存 venv。
 ccp_apply_bot_deploy_config
-ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 ENV_FILE="$CCP_ENV_FILE"
 

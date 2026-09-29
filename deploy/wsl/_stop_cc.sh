@@ -16,7 +16,7 @@ set -uo pipefail
 # shellcheck source=./_load_env.sh
 source "$(dirname "$0")/_load_env.sh"
 ccp_apply_bot_deploy_config
-ccp_load_env "CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"

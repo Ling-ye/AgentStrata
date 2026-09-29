@@ -45,7 +45,7 @@ ccp_prepend_user_bins
 ccp_apply_bot_deploy_config
 # 实例 runtime env 是权威配置源；每次启动都重新加载。Gateway QQ 直接使用
 # OneBot/Gateway 配置，legacy Feishu edge 才由 cc-connect 消费平台凭据。
-ccp_load_env "FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
 ccp_apply_bot_deploy_config
 
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"

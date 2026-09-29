@@ -126,6 +126,13 @@ OneBot provider 不解释私聊名单或分配角色。Gateway 先认证 transpo
 `~/.config/agentstrata/llm.json`，`AGENTSTRATA_LLM_CONFIG` 可指定绝对路径；机器人、
 Console、Harness 和测评服务必须使用同一配置来源。
 
+尚无保存文件时，读取同目录的 `llm.defaults.json` 作为默认配置；使用自定义路径时，
+默认文件名为该路径替换后缀后的 `*.defaults.json`。两份文件使用相同格式。
+可参考 `deploy/wsl/llm.example.json` 编写默认值：将模型占位标识替换为实际接口返回的
+模型，按 BotSpec 的 `binding` 调整用途名称，并配置凭据引用；不要存放凭据明文。
+手动创建／修改 `llm.json`，或在前端保存后，整份保存配置优先，默认值不再补齐或覆盖它。
+保存文件损坏或用途缺失时明确报错，不退回默认值；任务快照也不读取宿主默认文件。
+
 | 配置 | 内容 |
 | --- | --- |
 | connections | Codex／Responses／OpenAI 兼容连接、端点、认证引用、请求超时 |
@@ -164,6 +171,11 @@ llm:
 `*_MODEL`／`*_BASE_URL`／`*_REASONING_EFFORT` 模型覆盖，以及旧 Harness/Judge
 模型设置已退役。重新配置，不自动迁移或回退；API Key 环境变量作为凭据引用保留。
 未配置用途明确显示未配置。完整边界见[统一模型配置规格](../../specs/unified-llm-configuration/spec.md)。
+
+首次更新到集中配置前，先填写默认配置或在 Console「模型配置」页完成方案及用途绑定，再从
+实例 `local.env` 删除报错列出的旧模型变量；不要删除 API Key、Codex 登录凭据或运行预算。
+`bot provision-env` 会在写入运行时环境之前检查用途是否齐全，失败时列出旧变量名、
+缺失用途和配置文件路径。即使 Console 健康检查通过，机器人更新失败仍需完成这些步骤后重试。
 
 主 Agent 仍由 `agents.runtime` 选择；Codex 整轮时限使用
 `agents.runtime_options.codex.turn_timeout_seconds`。原生扩展 TOML 与权限归属见[Agent](agent.md)。

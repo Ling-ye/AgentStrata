@@ -11,8 +11,18 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from unittest import mock
 
+import pytest
+
 from chatcopilot.botspec.cli import main as bot_cli_main
 from chatcopilot.core.settings import load_local_env_values
+
+
+@pytest.fixture(autouse=True)
+def provision_model_host(model_settings, monkeypatch):
+    from chatcopilot.botspec import cli
+    project = cli._runtime_env_values
+    monkeypatch.setattr(cli, "_runtime_env_values", lambda spec, values: project(
+        spec, {"AGENTSTRATA_LLM_CONFIG": str(model_settings), **values}))
 
 
 class LocalEnvParsingTests(unittest.TestCase):
@@ -909,3 +919,47 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertIn("export CHATCOPILOT_ROUTE_CODE_TIMEOUT_SECONDS=17", content)
             self.assertNotIn("_CODE_MODEL=", content)
             self.assertNotIn("_CODE_PROFILES_JSON=", content)
+
+
+def test_provision_reports_retired_keys_and_missing_models_without_values(tmp_path, capsys):
+    bot, runtime = BotSpecProvisionEnvTests._write_qq_bot(tmp_path,
+        f'AGENTSTRATA_LLM_CONFIG={tmp_path / "llm.json"}\n'
+        'CHATCOPILOT_CHAT_MODEL=private-old-model\n'
+        'CHATCOPILOT_CHAT_BASE_URL=https://private.invalid/v1\n'
+        'CHATCOPILOT_CHAT_TIMEOUT=121\n')
+    assert bot_cli_main(['provision-env', '--bot', str(bot)]) == 1
+    output = capsys.readouterr().out
+    for key in ('CHATCOPILOT_CHAT_MODEL', 'CHATCOPILOT_CHAT_BASE_URL', 'CHATCOPILOT_CHAT_TIMEOUT'):
+        assert key in output
+    assert '缺少用途绑定：chat, research' in output
+    assert str(tmp_path / 'llm.defaults.json') in output
+    assert str(bot.parent / 'local.env') in output
+    assert 'private-old-model' not in output and 'private.invalid' not in output
+    assert not runtime.exists()
+
+
+def test_provision_uses_defaults_without_writing_saved_config_in_dry_run(tmp_path, capsys):
+    from tests.model_settings_fixture import test_model_document, write_models
+    current = tmp_path / 'llm.json'
+    defaults = tmp_path / 'llm.defaults.json'
+    write_models(defaults, test_model_document())
+    bot, runtime = BotSpecProvisionEnvTests._write_qq_bot(tmp_path,
+        f'AGENTSTRATA_LLM_CONFIG={current}\nQQ_ACCOUNT=10001\nQQ_ACCESS_TOKEN={"a" * 64}\n')
+    assert bot_cli_main(['provision-env', '--bot', str(bot), '--dry-run']) == 0
+    assert 'AGENTSTRATA_LLM_CONFIG' in capsys.readouterr().out
+    assert not runtime.exists() and not current.exists()
+
+
+def test_provision_rejects_missing_binding_before_replacing_runtime_env(tmp_path, capsys):
+    from tests.model_settings_fixture import test_model_document, write_models
+    current = tmp_path / 'llm.json'
+    data = test_model_document()
+    del data['bindings']['research']
+    write_models(current, data)
+    bot, runtime = BotSpecProvisionEnvTests._write_qq_bot(tmp_path,
+        f'AGENTSTRATA_LLM_CONFIG={current}\nQQ_ACCOUNT=10001\nQQ_ACCESS_TOKEN={"a" * 64}\n')
+    runtime.write_text('existing runtime environment\n')
+    runtime.chmod(0o600)
+    assert bot_cli_main(['provision-env', '--bot', str(bot)]) == 1
+    assert '缺少用途绑定：research' in capsys.readouterr().out
+    assert runtime.read_text() == 'existing runtime environment\n'
