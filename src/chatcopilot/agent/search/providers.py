@@ -452,7 +452,7 @@ class DirectSearchProvider:
                 items,
                 query=query,
                 min_score=1,
-                max_items=MAX_RESULT_ITEMS,
+                max_items=len(items),
             )
             return {
                 "ok": True,

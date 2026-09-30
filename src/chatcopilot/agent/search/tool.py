@@ -18,7 +18,7 @@ from chatcopilot.agent.search.providers import (
 from chatcopilot.agent.search.router import SearchRouter
 from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.core.llm_client import LLMClient
-from chatcopilot.contracts.subagents import SearchProviderSpec, SubagentBudgetSpec
+from chatcopilot.contracts.subagents import SearchLimitsSpec, SearchProviderSpec, SubagentBudgetSpec
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 
@@ -34,6 +34,7 @@ def build_search_tool(
     provider_credentials: Mapping[str, str] | None = None,
     turn_timeout_seconds: float | None = None,
     circuit: SearchCircuitBreaker | None = None,
+    limits: SearchLimitsSpec = SearchLimitsSpec(),
 ) -> ToolDef | None:
     coordinator = build_search_coordinator(
         main_llm=main_llm,
@@ -44,6 +45,7 @@ def build_search_tool(
         provider_credentials=provider_credentials,
         turn_timeout_seconds=turn_timeout_seconds,
         circuit=circuit,
+        limits=limits,
     )
     if coordinator is None:
         return None
@@ -51,7 +53,7 @@ def build_search_tool(
     def _handler(args: dict[str, Any], ctx: ToolContext) -> ToolResult:
         del ctx
         try:
-            request = SearchRequest.from_args(args)
+            request = SearchRequest.from_args(args, limits=limits)
         except ValueError as exc:
             return ToolResult(
                 ok=False,
@@ -111,7 +113,7 @@ def build_search_tool(
                     "description": (
                         "Search depth. 'quick': single fast search. 'standard': balanced "
                         "search with up to 3 steps. 'thorough': query decomposition, "
-                        "up to 5 steps, and result reranking."
+                        f"up to {limits.thorough_max_steps} steps, and result reranking."
                     ),
                     "default": "standard",
                 },
@@ -139,6 +141,7 @@ def build_search_tool(
                 "summary": {"type": "string"},
                 "plan": {"type": "object"},
                 "results": {"type": "array"},
+                "full_results": {"type": "array"},
                 "actual_sources": {"type": "array"},
                 "reflection": {"type": "object"},
                 "result_processing": {"type": "object"},
@@ -162,7 +165,7 @@ def build_search_tool(
         module=__name__,
         artifact_kinds=(),
         weight="heavy",
-        metadata={"search_entry": True},
+        metadata={"search_entry": True, "result_content_field": "full_results"},
     )
 
 
@@ -192,6 +195,7 @@ def build_search_coordinator(
     max_wall_seconds: float | None = None,
     circuit: SearchCircuitBreaker | None = None,
     semantic_rerank: bool = True,
+    limits: SearchLimitsSpec = SearchLimitsSpec(),
 ) -> SearchCoordinator | None:
     """Build the canonical coordinator for tools and trusted host workflows."""
 
@@ -222,6 +226,7 @@ def build_search_coordinator(
         page_reader=page_reader,
         reranker=ResultReranker(router.resolve_llm()) if semantic_rerank else None,
         max_wall_seconds=max_wall,
+        limits=limits,
     )
 
 __all__ = ["build_search_coordinator", "build_search_provider", "build_search_tool"]

@@ -65,26 +65,31 @@ agents:
       turn_timeout_seconds: 21600
   unified_search:
     enabled: true
+    timeout_seconds: 600
+    limits:
+      max_urls: 20
+      thorough_max_steps: 10
+      thorough_max_deep_read_urls: 8
     providers:
       - id: tavily
         kind: tavily
         enabled: true
         endpoint: https://api.tavily.com/search
         credential_env: TAVILY_API_KEY
-        timeout_seconds: 15
+        timeout_seconds: 30
         max_results: 10
       - id: brave
         kind: brave
         enabled: false
         endpoint: https://api.search.brave.com/res/v1/web/search
         credential_env: BRAVE_API_KEY
-        timeout_seconds: 15
+        timeout_seconds: 30
         max_results: 10
       - id: searxng
         kind: searxng
         enabled: true
         endpoint: http://127.0.0.1:18064
-        timeout_seconds: 20
+        timeout_seconds: 60
         max_results: 10
 context:
   wiki:
@@ -97,8 +102,8 @@ context:
   dev:
     root_env: CHATCOPILOT_DEV_ROOT
     shell:
-      timeout_default: 60
-      timeout_max: 300
+      timeout_default: 120
+      timeout_max: 1800
   playbooks:
     manifest: skills/manifest.yaml
 

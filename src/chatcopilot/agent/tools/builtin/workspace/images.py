@@ -7,6 +7,7 @@ import json
 import socket
 import ssl
 import tempfile
+import time
 import urllib.parse
 from dataclasses import dataclass
 from pathlib import Path
@@ -18,12 +19,15 @@ from chatcopilot.agent.tools.file_delivery import (
 )
 from chatcopilot.agent.tools.workspace_context import resolve_workspace
 from chatcopilot.contracts.tools import ToolContext, ToolResult
+from chatcopilot.contracts.resources import (
+    DOWNLOAD_BATCH_TIMEOUT_SECONDS, DOWNLOAD_IO_TIMEOUT_SECONDS,
+    OUTBOUND_FILE_MAX_BYTES, OUTBOUND_RESOURCE_SOURCE_CHARS,
+)
+from chatcopilot.core.download_deadline import apply_download_timeout, remaining_download_seconds
 
 _IMAGE_DEFAULT_LIMIT = 3
-_IMAGE_MAX_LIMIT = 5
-_IMAGE_DEFAULT_MAX_BYTES = 5 * 1024 * 1024
-_IMAGE_HARD_MAX_BYTES = 20 * 1024 * 1024
-_IMAGE_TIMEOUT_SECONDS = 15
+_IMAGE_DEFAULT_MAX_BYTES = OUTBOUND_FILE_MAX_BYTES
+_IMAGE_TIMEOUT_SECONDS = DOWNLOAD_IO_TIMEOUT_SECONDS
 _IMAGE_MAX_REDIRECTS = 5
 _IMAGE_FAKE_IP_NETWORK = ipaddress.ip_network("198.18." + "0.0/15")
 _IMAGE_DOH_HOST = "cloudflare-dns.com"
@@ -124,12 +128,12 @@ def _handler_download_image_urls(
     limit = int(args.get("limit") or _IMAGE_DEFAULT_LIMIT)
     if limit <= 0:
         raise ValueError("limit 必须为正整数")
-    limit = min(limit, _IMAGE_MAX_LIMIT)
 
     max_bytes = int(args.get("max_bytes") or _IMAGE_DEFAULT_MAX_BYTES)
     if max_bytes <= 0:
         raise ValueError("max_bytes 必须为正整数")
-    max_bytes = min(max_bytes, _IMAGE_HARD_MAX_BYTES)
+    if max_bytes > OUTBOUND_FILE_MAX_BYTES:
+        raise ValueError(f"max_bytes 超过单文件预算 {OUTBOUND_FILE_MAX_BYTES} bytes")
 
     ws = resolve_workspace(create=True)
     batch = _download_image_batch(raw_urls, workspace=ws, limit=limit, max_bytes=max_bytes)
@@ -160,8 +164,6 @@ def _handler_send_image_urls_to_user(
     raw_urls = args.get("urls")
     if not isinstance(raw_urls, (list, tuple)) or not raw_urls:
         raise ValueError("缺少必填参数: urls (非空数组)")
-    if len(raw_urls) > _IMAGE_MAX_LIMIT:
-        raise ValueError(f"urls 最多 {_IMAGE_MAX_LIMIT} 项")
 
     sender = get_current_file_sender()
     if sender is None:
@@ -177,9 +179,8 @@ def _handler_send_image_urls_to_user(
     batch = _download_image_batch(
         raw_urls,
         workspace=ws,
-        limit=_IMAGE_MAX_LIMIT,
+        limit=len(raw_urls),
         max_bytes=_IMAGE_DEFAULT_MAX_BYTES,
-        candidate_limit=_IMAGE_MAX_LIMIT,
     )
     if not batch.paths:
         return ToolResult(
@@ -245,7 +246,6 @@ def _download_image_batch(
     workspace: Any,
     limit: int,
     max_bytes: int,
-    candidate_limit: int | None = None,
 ) -> _ImageDownloadBatch:
     out_dir = workspace.downloads / "images"
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -255,16 +255,25 @@ def _download_image_batch(
     downloaded: List[Path] = []
     failed: List[str] = []
     seen: set[str] = set()
-    candidates = raw_urls[:candidate_limit] if candidate_limit is not None else raw_urls
-    for index, raw_url in enumerate(candidates, start=1):
+    remaining_source_chars = OUTBOUND_RESOURCE_SOURCE_CHARS
+    deadline = time.monotonic() + DOWNLOAD_BATCH_TIMEOUT_SECONDS
+    for index, raw_url in enumerate(raw_urls, start=1):
         if len(downloaded) >= limit:
             break
         url = str(raw_url or "").strip()
         if not url or url in seen:
             continue
         seen.add(url)
+        available_bytes = min(max_bytes, ((remaining_source_chars - 9) // 4) * 3)
+        if available_bytes <= 0:
+            failed.append("其余图片未下载：合计资源预算已耗尽")
+            break
         try:
-            target = _download_one_image_url(out_dir, url, max_bytes=max_bytes)
+            remaining_download_seconds(deadline)
+            target = _download_one_image_url(out_dir, url, max_bytes=available_bytes, deadline=deadline)
+        except TimeoutError:
+            failed.append("其余图片未下载：下载批次时间预算已耗尽")
+            break
         except Exception as exc:  # noqa: BLE001 - one bad candidate must not block valid peers
             failed.append(
                 f"URL #{index} {_safe_url_label(url)}：{type(exc).__name__}: {exc}"
@@ -273,11 +282,13 @@ def _download_image_batch(
         if not workspace.is_inside(target):
             raise PermissionError("下载目标越出工作区")
         downloaded.append(target)
+        remaining_source_chars -= 9 + ((target.stat().st_size + 2) // 3) * 4
     return _ImageDownloadBatch(tuple(downloaded), tuple(failed))
 
 
-def _download_one_image_url(out_dir: Path, url: str, *, max_bytes: int) -> Path:
-    data, content_type = _fetch_image_url(url, max_bytes=max_bytes)
+def _download_one_image_url(out_dir: Path, url: str, *, max_bytes: int, deadline: float) -> Path:
+    data, content_type = _fetch_image_url(url, max_bytes=max_bytes, deadline=deadline)
+    remaining_download_seconds(deadline)
     kind = _detect_image_kind(data)
     if kind is None:
         raise ValueError("响应内容不是受支持的图片格式")
@@ -299,15 +310,16 @@ def _download_one_image_url(out_dir: Path, url: str, *, max_bytes: int) -> Path:
         return Path(handle.name)
 
 
-def _fetch_image_url(url: str, *, max_bytes: int) -> tuple[bytes, str]:
+def _fetch_image_url(url: str, *, max_bytes: int, deadline: float) -> tuple[bytes, str]:
     current_url = url
     visited: set[str] = set()
     for redirect_count in range(_IMAGE_MAX_REDIRECTS + 1):
+        remaining_download_seconds(deadline)
         if current_url in visited:
             raise ValueError("图片 URL 重定向形成循环")
         visited.add(current_url)
         resolved = _resolve_public_url(current_url)
-        response = _request_image_once(resolved, max_bytes=max_bytes)
+        response = _request_image_once(resolved, max_bytes=max_bytes, deadline=deadline)
         if response.status in _IMAGE_REDIRECT_STATUSES:
             if redirect_count >= _IMAGE_MAX_REDIRECTS:
                 raise ValueError(f"图片 URL 重定向超过 {_IMAGE_MAX_REDIRECTS} 次")
@@ -472,7 +484,9 @@ def _request_image_once(
     resolved: _ResolvedPublicUrl,
     *,
     max_bytes: int,
+    deadline: float | None = None,
 ) -> _ImageHttpResponse:
+    deadline = time.monotonic() + DOWNLOAD_BATCH_TIMEOUT_SECONDS if deadline is None else deadline
     last_error: Exception | None = None
     for address in resolved.addresses:
         connection: http.client.HTTPConnection
@@ -481,10 +495,13 @@ def _request_image_once(
         else:
             connection = _PinnedHTTPConnection(resolved.host, resolved.port, address)
         try:
+            apply_download_timeout(connection, deadline)
             path = urllib.parse.urlunsplit(
                 ("", "", resolved.parsed.path or "/", resolved.parsed.query, "")
             )
             connection.request("GET", path, headers=_IMAGE_REQUEST_HEADERS)
+            apply_download_timeout(connection, deadline)
+            response_socket = connection.sock
             response = connection.getresponse()
             content_type = str(response.getheader("Content-Type") or "").split(";", 1)[0].strip().lower()
             content_length = str(response.getheader("Content-Length") or "").strip()
@@ -506,7 +523,8 @@ def _request_image_once(
             chunks: List[bytes] = []
             total = 0
             while True:
-                chunk = response.read(64 * 1024)
+                apply_download_timeout(connection, deadline, sock=response_socket)
+                chunk = response.read1(min(64 * 1024, max_bytes - total + 1))
                 if not chunk:
                     break
                 total += len(chunk)
@@ -546,7 +564,7 @@ def _safe_url_label(url: str) -> str:
 
 
 def _no_images_error(failures: Sequence[str]) -> str:
-    details = "\n".join(failures[:_IMAGE_MAX_LIMIT])
+    details = "\n".join(failures[:5])
     return "没有成功下载任何图片。" + (f"\n失败明细:\n{details}" if details else "")
 
 
@@ -565,7 +583,6 @@ def _detect_image_kind(data: bytes) -> str | None:
 __all__ = [
     "_IMAGE_DEFAULT_LIMIT",
     "_IMAGE_DEFAULT_MAX_BYTES",
-    "_IMAGE_MAX_LIMIT",
     "_handler_download_image_urls",
     "_handler_send_image_urls_to_user",
 ]

@@ -82,8 +82,15 @@ class LingyeBotSpecSmokeTests(unittest.TestCase):
         self.assertEqual(providers[1].credential_env, "BRAVE_API_KEY")
         self.assertIsNone(providers[2].credential_env)
         self.assertEqual(providers[2].endpoint, "http://127.0.0.1:18064")
-        self.assertEqual(providers[2].timeout_seconds, 20)
+        self.assertEqual(providers[0].timeout_seconds, 30)
+        self.assertEqual(providers[2].timeout_seconds, 60)
         self.assertEqual(providers[2].max_results, 10)
+        self.assertEqual(runtime.subagents.research_budget.timeout_seconds, 600)
+        self.assertEqual(runtime.subagents.search_limits.max_urls, 20)
+        self.assertEqual(runtime.subagents.search_limits.thorough_max_steps, 10)
+        self.assertEqual(runtime.subagents.search_limits.thorough_max_deep_read_urls, 8)
+        self.assertEqual(spec.context.dev.shell.timeout_default, 120)
+        self.assertEqual(spec.context.dev.shell.timeout_max, 1800)
         self.assertEqual(
             [skill.id for skill in runtime.skills],
             ["ai-career-intelligence", "ai-jd-analysis"],

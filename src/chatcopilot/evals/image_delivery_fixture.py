@@ -116,6 +116,7 @@ class ImageDeliveryFixture:
         class Connection:
             def __init__(self, host, port, address):
                 self.host, self.port = host, port
+                self.sock = None
             def request(self, method, path, headers):
                 matches = [row for url, row in responses.items()
                            if urlsplit(url).hostname == self.host and (urlsplit(url).port or
@@ -128,7 +129,7 @@ class ImageDeliveryFixture:
                 body = io.BytesIO(base64.b64decode(self.row.get("body_base64", ""), validate=True))
                 headers = {"Content-Type": self.row.get("content_type", "image/png"),
                            "Content-Length": str(len(body.getvalue())), "Location": self.row.get("location", "")}
-                return SimpleNamespace(status=self.row.get("status", 200), getheader=headers.get, read=body.read)
+                return SimpleNamespace(status=self.row.get("status", 200), getheader=headers.get, read1=body.read1)
             def close(self):
                 pass
 

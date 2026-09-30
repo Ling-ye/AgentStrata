@@ -29,6 +29,10 @@ Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续�
 
 BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 session-bound `persona_manage`；自然语言与 `/persona` 原样进入主 Agent，不得恢复 `PersonaCandidateDetector`、解释器、命令 parser 或宿主前置短路，也不得把该工具投影给 subagent。Registry 可见性和 handler 都复检真实 Owner；`set/append/research` 的草案要求直接取自当前可信 `ToolContext.request_text`，不接受模型重复填写 requirement；`global` 由主 Agent 根据当前明确要求选择，不用关键词名单判定，模型不能提供 actor/chat/path/receipt。所有非清空人格操作的完整 Markdown 只由 `PersonaDraftAgent` 生成；宿主不得拼接人格正文，`append` 也必须读取当前层后由 Agent 生成完整替换文档。命名人物由 Agent 使用统一搜索自行查询、消歧并选择实际使用来源，再做唯一一次原子 `set`；无歌词专用 schema、候选库或响应装饰器。明确更新或清空可直接写；只在需求或作用域不清楚时设置 `defer_confirmation=true`，建立绑定真实 actor/chat/scope/hash/TTL 的提案；只有当前真实 raw user text 精确等于 `/persona confirm` 才能确认，cancel 可自然语言。只有 `ToolResult.data.committed=true` 和其中真实 mutation receipt 才能声称已保存或清空；写后 PromptPlan 刷新失败仍必须如实保留 committed receipt。群聊按 `global → group`、私聊按 `global → user` 加载，群内 show 只返回状态/哈希；非 Owner 不能读取或修改。Owner 要求的模仿强度不自动弱化，persona 和网页证据仍不能改变 transport 身份、角色、准入、scope、路径、工具、凭据或执行事实。当前私聊发送者或当前群的长期记忆存为受保护的条目库；只把有界的稳定决定与当前问题相关条目作为不可信历史数据注入。准入成员可以读取和追加当前作用域记忆，Owner 可以更正或删除单条、清空当前作用域。群聊和私聊都可从当前已准入用户发言自动提炼；群聊仅接受明确属于全群的事实或决定。自动候选必须包含当前发言中的原文片段，通过秘密与群隐私校验；新证据可让旧条目退出有效召回，但普通成员的主动删除请求不能借此执行。记忆仍不能改变人格、角色、权限或系统规则。权威新库位于 `.conversation-state/persistent/memory/{group,user}/<digest>/memory.db`，旧 `MEMORY.md` 不再读取；停机归档流程见[记忆条目规格](../../specs/conversation-memory-records/spec.md)。
 
+人格正文统一使用 32 KiB UTF-8 文件预算（含规范化后的末尾换行）；草案生成、写入和加载使用同一限制，不再另设 2,000 字符门槛。完整当前人格传给草案 Agent，避免更新时丢失后半部分。
+
+记忆单条最多 4,000 字符，取消 1,000 条有效记录及固定 SQLite 页数的存储门槛。关键词评分在 SQLite 查询中排序，每次只返回有界页面；`read_memory` 支持 `offset` 与 `limit`，每页最多 100 条，并返回 `next_offset`。自动上下文仍选择有限的稳定决定与相关条目，合计最多 12,000 字符。存储格式与身份、秘密和写入回执校验保持原有契约，不自动清理旧数据。
+
 升级运行实例前，先停止对应的 Bot user service，使用
 `.venv/bin/python scripts/archive_legacy_memory.py --workspace-root <bot-workspace>`
 预览旧受保护记忆的数量和哈希；核对后加
@@ -49,9 +53,9 @@ BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 sess
 启用 `agents.unified_search.enabled` 后，主 Agent 只调用 `search_information`；`web_fetch_page` / `browse_dynamic_page` 仅供该入口内部使用。URL、显式来源、quick、standard 单实体和 thorough 单实体请求由脚本路由；只有 thorough 多实体比较调用路由 LLM。结果先由脚本做 canonical URL/标题去重、来源权重与时间稳定排序；只有 thorough 多来源结果调用 LLM 做语义冲突和事实合并。所有结果记录 `decision_source` / `decision_reason`。Web 源三级降级：Tavily → Brave → SearXNG。
  - **直接搜索执行**：`agents.unified_search.providers` 按顺序声明 `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。Tavily、Brave 与 SearXNG 由有界进程内 HTTP client 执行，账号态或垂直来源继续直接调用 search-only MCP tool；两者都跳过 subagent LLM 并共享 `SearchCircuitBreaker`、deadline、结果归一化与多源降级。凭据 provider 只允许审核过的官方 HTTPS endpoint，SearXNG 只允许回环 endpoint，redirect 不得携带 credential。
  - **显式来源约束**：用户点名小红书 / XHS / Xiaohongshu 时，`ResearchRequest` 归一为 `source_hints=["experience"]`，router 只保留显式来源，避免静默回退到通用网页搜索。
- - **结果条目上限**：`_compact_results` 在字符长度截断基础上增加条目上限（`_MAX_RESULT_ITEMS = 15`），防止大量列表（如 47 条海报）撑爆 context。
-  - **时间预算**：`SearchCoordinator` 接受 `max_wall_seconds`（有 `turn_timeout` 时取 `min(turn_timeout * 0.6, 180s)`，否则 fallback 到 180s 硬上限），所有步骤并行提交到 `ThreadPoolExecutor`，通过 `as_completed(timeout=remaining)` 统一 deadline；超时未完成的步骤标记 `time_budget_exhausted`；reranker 在 deadline 过后跳过。
-  - **同源步骤上限**：Router 分解出的步骤若全部指向同一 logical source（如 3 个 `experience` 查询），上限收紧到 2 步（`_SINGLE_SOURCE_MAX_STEPS`），避免同源重叠查询消耗过多 subagent 预算。
+ - **完整结果与预览**：预览仍按条目与字符预算压缩；已收集、去重排序后的完整结果存入当前 actor 的会话结果缓存，通过 `result_ref` 和 `read_tool_result` 分页读取。来源的相关性过滤与 HTTP 容量校验仍生效；缓存关闭或淘汰后明确返回引用失效，不自动重放搜索。
+ - **时间预算**：统一搜索使用 `agents.unified_search.timeout_seconds`，并服从更小的上层回合预算。当前 QQ 实例为 600 秒，Tavily 请求 30 秒、SearXNG 请求 60 秒；并行步骤超时会标记 `time_budget_exhausted`。该调度预算不强杀正在执行的同步下游调用，实际返回仍受下游超时约束。
+ - **搜索范围**：`agents.unified_search.limits` 声明 `max_urls`、`thorough_max_steps`、`thorough_max_deep_read_urls`，默认分别为 20、10、8。配置冻结后同时用于请求校验、路由和页面读取；不再固定最多 5 个 URL 或 3 类来源。quick/standard 的步骤预算仍为 1/3；显式来源需要足够步骤，预算不足时要求选择更深入的模式，不静默丢弃来源。模型参数不能提高宿主配置。
   - **熔断器递增 TTL**：`SearchCircuitBreaker` 对 `mcp_quota_exceeded` 使用指数递增 TTL（1h → 2h → … → 24h 上限，env `CHATCOPILOT_SEARCH_QUOTA_MAX_TTL`），成功后重置。直接搜索和 delegate 路径共享同一 `SearchCircuitBreaker` 实例。
   - **浏览器降级**：`_needs_browser` 识别 HTTP 403/401/429 为浏览器可解决错误，自动尝试 Playwright 渲染。
   - **Router fallback 降级**：Router LLM 异常时 `thorough` 自动降到 `standard`，runner 同步降级 request.depth，避免 fallback plan 浪费步数和 subagent 预算。

@@ -27,21 +27,24 @@ from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
 from chatcopilot.gateway import runtime as runtime_module
-from chatcopilot.gateway.state_store import GatewayStateError, GatewayStateStore, OutboundConflict
+from chatcopilot.gateway.state_store import (
+    MAX_OUTBOUND_ENVELOPE_JSON_BYTES,
+    GatewayStateError,
+    GatewayStateStore,
+    OutboundConflict,
+)
 
 
 _UNIT_TESTS = Path.cwd() / "tests" / "unit"
 if str(_UNIT_TESTS) not in sys.path:
     sys.path.insert(0, str(_UNIT_TESTS))
 
-_LARGE_PNG_BYTES = 3_755_181
-
-
-def _large_png() -> bytes:
+def _large_png(size_bytes: int) -> bytes:
     # The production validator recognizes PNG signatures.  This synthetic body
     # is deliberately large enough that its base64 OutboundEnvelope exceeds the
-    # ordinary 1 MiB state-json limit, yet stays below OneBot's 8 MiB frame cap.
-    return b"\x89PNG\r\n\x1a\n" + b"\0" * (_LARGE_PNG_BYTES - 8)
+    # ordinary 1 MiB state-json limit; the larger case also exceeds the former
+    # 8 MiB outbox, resource, and outbound-frame limits.
+    return b"\x89PNG\r\n\x1a\n" + b"\0" * (size_bytes - 8)
 
 
 def _production_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -71,14 +74,15 @@ def _production_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     return runtime_module.build_gateway_runtime_host(config, environ=_environment(tmp_path)), agent, connection
 
 
-def test_large_image_through_production_gateway_is_delivered_and_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("image_size", [3_755_181, 21 * 1024 * 1024])
+def test_large_image_through_production_gateway_is_delivered_and_persisted(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, image_size: int) -> None:
     """A valid >1 MiB image reaches OneBot, receives an acknowledgement, and survives a state-store reopen."""
     from test_application_actor_runtime import _principal
 
     host, agent, connection = _production_host(tmp_path, monkeypatch)
-    image_bytes = _large_png()
+    image_bytes = _large_png(image_size)
     encoded = base64.b64encode(image_bytes).decode("ascii")
-    assert 1024 * 1024 < len(encoded) < 8 * 1024 * 1024
+    assert len(encoded) > 1024 * 1024
 
     async def scenario():
         await host.start()
@@ -146,7 +150,7 @@ def test_outbound_capacity_is_finite_without_relaxing_other_state_json(tmp_path:
         store.append_event(generation=generation, event="channel.status", payload={"large": "x" * (1024 * 1024)})
     oversized = OutboundEnvelope(outbound_id="too-large-outbound", account=ChannelAccountRef("qq", "10001"),
         conversation=ConversationRef("group", "30003"),
-        segments=(MessageSegment(kind="image", data={"source": "base64://" + "A" * (11 * 1024 * 1024)}),),
+        segments=(MessageSegment(kind="image", data={"source": "A" * MAX_OUTBOUND_ENVELOPE_JSON_BYTES}),),
         created_at=1.0, session_id="large-image-session", run_id="large-image-run")
     with pytest.raises(GatewayStateError, match="byte limit"):
         store.enqueue_outbound(generation=generation, envelope=oversized)

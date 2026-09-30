@@ -8,8 +8,10 @@ import stat
 from dataclasses import dataclass
 from pathlib import Path
 
+from chatcopilot.contracts.resources import INBOUND_FILE_MAX_BYTES
+
 DEFAULT_IMAGE_INPUT_MAX_BYTES = 5 * 1024 * 1024
-HARD_IMAGE_INPUT_MAX_BYTES = 20 * 1024 * 1024
+HARD_IMAGE_INPUT_MAX_BYTES = INBOUND_FILE_MAX_BYTES
 
 SUPPORTED_IMAGE_MEDIA_TYPES = frozenset(
     {
@@ -135,7 +137,9 @@ def validate_image_bytes(
     max_bytes: int = HARD_IMAGE_INPUT_MAX_BYTES,
     expected_sha256: str | None = None,
 ) -> ValidatedImage:
-    limit = _bounded_max_bytes(max_bytes)
+    # Byte validation honors the caller's budget, including larger outbound
+    # files. Input decoders and file readers retain their own hard input cap.
+    limit = _positive_max_bytes(max_bytes)
     if not data:
         raise ImageContentError("图片数据为空")
     if len(data) > limit:
@@ -169,13 +173,17 @@ def validate_image_bytes(
 
 
 def _bounded_max_bytes(value: int) -> int:
+    return min(_positive_max_bytes(value), HARD_IMAGE_INPUT_MAX_BYTES)
+
+
+def _positive_max_bytes(value: int) -> int:
     try:
         limit = int(value)
     except (TypeError, ValueError) as exc:
         raise ImageContentError("图片大小上限必须是正整数") from exc
     if limit <= 0:
         raise ImageContentError("图片大小上限必须是正整数")
-    return min(limit, HARD_IMAGE_INPUT_MAX_BYTES)
+    return limit
 
 
 def _detect_image_media_type(data: bytes) -> str | None:

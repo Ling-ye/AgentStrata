@@ -290,3 +290,39 @@ def test_rejected_secret_request_cannot_write_another_fragment(tmp_path: Path):
     )
     assert not result.ok and result.error_code == "memory_content_rejected"
     assert not executor.execute("read_memory", {"query": "中文"}).data["has_memory"]
+
+
+def test_memory_beyond_1000_entries_is_searchable_and_paginated_after_reopen(tmp_path):
+    state, _ = _state(tmp_path)
+    state.memory_append(text="初始化事实", section="facts")
+    store = state._memory_store()
+    with store._connection(write=True) as connection:
+        for index in range(1000):
+            connection.execute("INSERT INTO memory_items VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (f"seed-{index:04d}", f"星图目录条目{index:04d}", "facts", "u1", "seed", "explicit",
+                 "2026-09-30T00:00:00+00:00", "2026-09-30T00:00:00+00:00", 1, "active", ""))
+    text = "星图新增事实" + "甲" * 3000
+    created = state.memory_append(text=text, section="facts")
+    reopened, _ = _state(tmp_path)
+    assert reopened.memory_read(created.item_id).text == text
+    assert reopened.memory_search("星图新增事实")[0].item_id == created.item_id
+    pages = [reopened.memory_search("目录条目", limit=100, offset=offset) for offset in range(0, 1000, 100)]
+    identities = [item.item_id for page in pages for item in page]
+    assert len(identities) == len(set(identities)) == 1000
+    assert not reopened.memory_search("目录条目", offset=1000)
+    with pytest.raises(ValueError):
+        reopened.memory_append(text="甲" * 4001, section="facts")
+    assert reopened.memory_snapshot(limit=5, offset=5) != reopened.memory_snapshot(limit=5)
+
+
+def test_memory_context_uses_wider_bounded_projection(tmp_path):
+    state, _ = _state(tmp_path)
+    for index in range(8):
+        state.memory_append(text=f"默认决定{index}：" + "甲" * 1800, section="decisions")
+    projected = state.memory_context("默认决定")
+    assert 4000 < len(projected) <= 12_000
+    executor = _executor(tmp_path, role=Role.USER)
+    first = executor.execute("read_memory", {"limit": 3})
+    second = executor.execute("read_memory", {"limit": 3, "offset": first.data["next_offset"]})
+    assert first.ok and second.ok
+    assert {item["item_id"] for item in first.data["items"]}.isdisjoint(item["item_id"] for item in second.data["items"])

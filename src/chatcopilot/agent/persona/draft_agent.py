@@ -10,7 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 from chatcopilot.agent.search.coordinator import SearchCoordinator
 from chatcopilot.agent.search.models import SearchRequest
 from chatcopilot.contracts.persona_control import PersonaDraftCall, PersonaDraftResult
-from chatcopilot.contracts.persistent_state import PERSONA_MAX_ITEM_CHARS
+from chatcopilot.contracts.persistent_state import PERSONA_MAX_BYTES
 from chatcopilot.core.llm_client import ChatResult
 
 
@@ -20,7 +20,6 @@ _MAX_SEARCH_CALLS = 3
 _MAX_SOURCES = 10
 _MAX_SOURCE_TEXT = 1800
 _MAX_TOOL_RESULT_CHARS = 14_000
-_MAX_CURRENT_PERSONA_CHARS = PERSONA_MAX_ITEM_CHARS
 
 _SEARCH_TOOL = {
     "type": "function",
@@ -125,7 +124,7 @@ class PersonaDraftAgent:
                     {
                         "operation": operation,
                         "owner_requirement": requirement,
-                        "current_persona": current[:_MAX_CURRENT_PERSONA_CHARS],
+                        "current_persona": current,
                         "research_required": bool(research_required),
                     },
                     ensure_ascii=False,
@@ -347,9 +346,9 @@ def _parse_final(content: str) -> tuple[str, tuple[str, ...]] | None:
         return None
     if not isinstance(raw, dict) or set(raw) != {"markdown", "source_urls"}:
         return None
-    markdown = str(raw.get("markdown") or "").strip()
+    markdown = str(raw.get("markdown") or "").strip().replace("\r\n", "\n").replace("\r", "\n")
     urls = raw.get("source_urls")
-    if not markdown or len(markdown) > PERSONA_MAX_ITEM_CHARS:
+    if not markdown or len((markdown + "\n").encode("utf-8")) > PERSONA_MAX_BYTES:
         return None
     if not isinstance(urls, list) or any(not isinstance(item, str) for item in urls):
         return None

@@ -551,6 +551,7 @@ def parse_gateway_runtime_config(
             account_id=_required_env(values, qq.account_env),
             websocket_url=_required_env(values, qq.endpoint_env),
             access_token=onebot_token,
+            action_timeout_seconds=qq.action_timeout_seconds,
         )
     except OneBotConfigError as exc:
         raise GatewayRuntimeConfigurationError(
@@ -672,7 +673,7 @@ def build_gateway_runtime_host(
                     raise GatewayRuntimeLifecycleError("delivery_loop_unavailable", "File delivery must run on an Agent tool worker")
                 future = asyncio.run_coroutine_threadsafe(deliver(segments), loop)
                 try:
-                    return future.result(timeout=config.onebot.action_timeout_seconds + 5)
+                    return future.result(timeout=config.onebot.action_timeout_seconds + 15)
                 except BaseException:
                     future.cancel()
                     raise

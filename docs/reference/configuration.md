@@ -101,6 +101,8 @@ writer generation 和 Channel lifecycle。ACP credential 只获得显式 session
 - `endpoint_env` 指向回环 `ws` / `wss` OneBot endpoint 环境变量。
 - `access_token_env` 与 `account_env` 分别引用 OneBot 强 token 和预期数字 QQ 账号。
 - `mention_only_groups: true` 要求群消息含明确指向当前 Bot 的结构化 `at` segment。
+- `action_timeout_seconds`：OneBot 动作回执等待秒数，默认 `120`，必须为有限正数；
+  配置随实例装配传到驱动。修改后需重启实例，发送器等待余量见[消息运行链](runtime.md)。
 
 当前实现直接连接用户独立安装的 NapCat/OneBot provider，但不复制、内嵌或分发 NapCat，
 也不会把 provider 实现名写入身份、session 或权限 key。没有自动 provider failover。
@@ -221,6 +223,8 @@ Registry 快照，Agent 与 Console 使用对应 surface 的同源投影。BotSp
 - budget/override/custom：限制 model turn、tool call、timeout、selector、context 和
   cache。
 - `unified_search.enabled`：为三个 Runtime 启用同一 `search_information` 入口。
+- `unified_search.timeout_seconds`：统一搜索调度预算，当前 QQ 实例为 600 秒。
+- `unified_search.limits`：URL、深入搜索步骤与页面数量；字段和默认值见[统一搜索入口](context.md#统一搜索入口)。
 - `unified_search.providers`：按顺序声明进程内 Web provider；每项使用
   `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。
   BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
@@ -247,6 +251,7 @@ Codex 同样装配已启用的统一搜索和委托能力，经 Session Gateway 
 已有环境变量 `CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX` 优先覆盖最大值。显式值必须是正整数，
 默认超时不超过最大值。它们在实例装配时解析，并随执行范围及后台任务请求保存；
 修改环境后需重新装配实例才能影响新任务，已排队任务保留提交时的值。
+当前 `lingye-copilot-qq` 声明默认 120 秒、最大 1800 秒；其他实例仍沿用自身配置。显式请求超出有效最大值时在启动前报错，不静默缩短或延长请求。
 此预算只约束开发命令，不改变 Codex 整轮时长或 Evaluation 预算。
 配置与文件校验职责见 [命令超时快照规格](agent.md)。
 

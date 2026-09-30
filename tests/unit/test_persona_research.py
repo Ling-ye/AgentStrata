@@ -196,3 +196,34 @@ def test_invalid_json_and_missing_research_provider_fail_closed() -> None:
     )
     assert unavailable.error_code == "persona_search_unavailable"
     assert unavailable.calls == ()
+
+
+def test_persona_draft_and_storage_use_one_utf8_byte_budget(tmp_path):
+    from tests.unit.test_memory_records_v2 import _state
+    from chatcopilot.agent.persona.draft_agent import _parse_final
+    from chatcopilot.application.actor_runtime import _persona_snippet
+    from chatcopilot.contracts.persistent_state import PERSONA_MAX_BYTES
+    import pytest
+
+    text = "# 人格\n" + "保持自然表达。" * 1200
+    assert len(text) > 2000 and len(text.encode("utf-8")) < PERSONA_MAX_BYTES
+    assert _parse_final(json.dumps({"markdown": text, "source_urls": []}, ensure_ascii=False))[0] == text
+    state, _ = _state(tmp_path)
+    state.persona_set("user", text)
+    reopened, _ = _state(tmp_path)
+    assert reopened.persona_snapshot("user") == text + "\n"
+    assert text in _persona_snippet(reopened.persona_layers())
+    llm = _Llm([ChatResult(content=json.dumps({"markdown": text, "source_urls": []}, ensure_ascii=False))])
+    drafted = PersonaDraftAgent(llm=llm, coordinator=None).draft(owner_requirement="保持当前表达", operation="refresh", current_persona=text)
+    assert drafted.ok
+    assert json.loads(llm.calls[0]["messages"][1]["content"])["current_persona"] == text
+    oversized = "甲" * (PERSONA_MAX_BYTES // 3 + 1)
+    assert _parse_final(json.dumps({"markdown": oversized, "source_urls": []}, ensure_ascii=False)) is None
+    with pytest.raises(ValueError):
+        state.persona_set("user", oversized)
+    assert state.persona_snapshot("user") == text + "\n"
+    exact = "x" * (PERSONA_MAX_BYTES - 1)
+    assert _parse_final(json.dumps({"markdown": exact, "source_urls": []}))[0] == exact
+    state.persona_set("user", exact)
+    assert len(state.persona_snapshot("user").encode("utf-8")) == PERSONA_MAX_BYTES
+    assert _parse_final(json.dumps({"markdown": exact + "x", "source_urls": []})) is None

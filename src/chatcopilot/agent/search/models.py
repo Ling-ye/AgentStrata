@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 import re
 from typing import Any, Mapping
+
+from chatcopilot.contracts.subagents import SearchLimitsSpec
 
 LOGICAL_SOURCES = ("web", "experience", "commerce", "github", "url")
 OPERATIONS = ("search", "read_url", "query_system", "mixed")
@@ -15,9 +17,9 @@ DEPTH_LEVELS = ("quick", "standard", "thorough")
 @dataclass(frozen=True)
 class SearchBudget:
     max_steps: int
-    max_urls: int = 5
+    max_urls: int = 20
     max_deep_read_urls: int = 2
-    max_sources: int = 3
+    max_sources: int = len(LOGICAL_SOURCES)
     parallel_steps: int = 3
     max_page_summary_chars: int = 12_000
     max_result_chars: int = 36_000
@@ -25,7 +27,8 @@ class SearchBudget:
 
 
 DEFAULT_SEARCH_BUDGET = SearchBudget(3)
-_DEPTH_BUDGETS = {"quick": SearchBudget(1), "standard": DEFAULT_SEARCH_BUDGET, "thorough": SearchBudget(5)}
+_DEPTH_BUDGETS = {"quick": SearchBudget(1), "standard": DEFAULT_SEARCH_BUDGET,
+                  "thorough": SearchBudget(10, max_deep_read_urls=8)}
 DEPTH_MAX_STEPS = {depth: budget.max_steps for depth, budget in _DEPTH_BUDGETS.items()}
 _MAX_OBJECTIVE_CHARS = 4000
 _MAX_REQUIRED_FIELDS = 20
@@ -72,17 +75,22 @@ class SearchRequest:
     time_window: str = "not time-sensitive"
     required_fields: tuple[str, ...] = ("title", "url")
     verification: str = "auto"
+    limits: SearchLimitsSpec = field(default_factory=SearchLimitsSpec)
 
     @property
     def budget(self) -> SearchBudget:
-        return _DEPTH_BUDGETS.get(self.depth, _DEPTH_BUDGETS["standard"])
+        base = _DEPTH_BUDGETS.get(self.depth, _DEPTH_BUDGETS["standard"])
+        return replace(base, max_urls=self.limits.max_urls,
+                       max_steps=self.limits.thorough_max_steps if self.depth == "thorough" else base.max_steps,
+                       max_deep_read_urls=(self.limits.thorough_max_deep_read_urls
+                                           if self.depth == "thorough" else base.max_deep_read_urls))
 
     @property
     def max_steps(self) -> int:
         return self.budget.max_steps
 
     @classmethod
-    def from_args(cls, args: Mapping[str, Any] | None) -> "SearchRequest":
+    def from_args(cls, args: Mapping[str, Any] | None, *, limits: SearchLimitsSpec | None = None) -> "SearchRequest":
         raw = args or {}
         objective = str(raw.get("objective") or "").strip()
         if not objective:
@@ -90,7 +98,8 @@ class SearchRequest:
         if len(objective) > _MAX_OBJECTIVE_CHARS:
             raise ValueError(f"objective cannot exceed {_MAX_OBJECTIVE_CHARS} characters")
         depth = str(raw.get("depth") or "standard").strip().lower()
-        budget = _DEPTH_BUDGETS.get(depth, _DEPTH_BUDGETS["standard"])
+        limits = limits or SearchLimitsSpec()
+        budget = cls(objective=objective, depth=depth, limits=limits).budget
         urls = tuple(dict.fromkeys(_strings(raw.get("urls"))))
         if len(urls) > budget.max_urls:
             raise ValueError(f"at most {budget.max_urls} URLs may be requested")
@@ -105,8 +114,11 @@ class SearchRequest:
         planned_sources = set(source_hints)
         if urls:
             planned_sources.add("url")
-        if len(planned_sources) > budget.max_sources:
-            raise ValueError(f"at most {budget.max_sources} logical sources may be requested")
+        if len(planned_sources) > budget.max_steps:
+            raise ValueError(
+                f"at most {budget.max_steps} logical sources fit the {depth} step budget; "
+                "select thorough depth or increase the configured step budget"
+            )
         domain = str(raw.get("domain") or "").strip().lower() or "general"
         if domain not in DOMAIN_HINTS:
             domain = "general"
@@ -133,6 +145,7 @@ class SearchRequest:
             or "not time-sensitive",
             required_fields=required_fields,
             verification=verification,
+            limits=limits,
         )
 
     def to_dict(self) -> dict[str, Any]:

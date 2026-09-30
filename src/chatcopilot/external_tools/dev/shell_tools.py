@@ -79,11 +79,14 @@ def _handle_run_command(args: Mapping[str, Any], _ctx: ToolContext) -> ToolResul
 
     timeout = config.shell.timeout_default
     if args.get("timeout_seconds") is not None:
-        try:
-            timeout = max(1, min(int(args["timeout_seconds"]), config.shell.timeout_max))
-        except (ValueError, TypeError, OverflowError):
+        timeout = args["timeout_seconds"]
+        if type(timeout) is not int:
             return ToolResult(ok=False, error="timeout_seconds must be an integer",
                               error_code="command_timeout_invalid", stage="validation")
+        if not 1 <= timeout <= config.shell.timeout_max:
+            return ToolResult(ok=False,
+                error=f"timeout_seconds must be between 1 and {config.shell.timeout_max}; requested {args['timeout_seconds']}",
+                error_code="command_timeout_invalid", stage="validation")
 
     try:
         if _ctx.execution_scope is None:

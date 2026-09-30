@@ -6,9 +6,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+import pytest
 from acp.schema import ImageContentBlock
 
-from chatcopilot.core.image_content import ImageContentError
+from chatcopilot.core.image_content import (
+    ImageContentError,
+    decode_base64_image,
+    validate_image_bytes,
+    validate_image_file,
+)
 from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.middleware.acp.image_pipeline import (
     image_resource_ref,
@@ -19,6 +25,25 @@ _PNG_BYTES = base64.b64decode(
     "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwC"
     "AAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
 )
+
+
+def test_image_validation_accepts_larger_files_and_keeps_explicit_input_bounds(tmp_path):
+    data = _PNG_BYTES + b"\0" * (21 * 1024 * 1024)
+    outbound_limit = 48 * 1024 * 1024 - 9
+    assert validate_image_bytes(data, max_bytes=outbound_limit).size_bytes == len(data)
+    assert validate_image_bytes(data).size_bytes == len(data)
+    with pytest.raises(ImageContentError, match="大小上限"):
+        validate_image_bytes(data, max_bytes=len(data) - 1)
+    with pytest.raises(ImageContentError, match="大小上限"):
+        decode_base64_image(base64.b64encode(data).decode("ascii"),
+                            declared_media_type="image/png")
+    path = tmp_path / "large.png"
+    path.write_bytes(data)
+    assert validate_image_file(path).size_bytes == len(data)
+    with path.open("wb") as handle:
+        handle.truncate(64 * 1024 * 1024 + 1)
+    with pytest.raises(ImageContentError, match="大小上限"):
+        validate_image_file(path, max_bytes=128 * 1024 * 1024)
 
 
 class MultimodalImageIoTests(unittest.TestCase):

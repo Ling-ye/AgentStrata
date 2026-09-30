@@ -102,6 +102,22 @@ def test_programmatic_botspec_construction_keeps_platform_compatibility(
     assert spec.channels.qq is None
 
 
+@pytest.mark.parametrize("timeout", [120, 240.5])
+def test_onebot_acknowledgement_timeout_loads(tmp_path, timeout):
+    data = deepcopy(_BASE)
+    data["channels"]["qq"]["action_timeout_seconds"] = timeout
+    spec = load_botspec(_write_spec(tmp_path, data))
+    assert not [issue for issue in validate_botspec(spec) if issue.level == "error"]
+    assert spec.channels.qq.action_timeout_seconds == timeout
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
+def test_invalid_onebot_acknowledgement_timeout_is_rejected(tmp_path, timeout):
+    data = deepcopy(_BASE)
+    data["channels"]["qq"]["action_timeout_seconds"] = timeout
+    assert "channels.qq.action_timeout_seconds" in _error_fields(_write_spec(tmp_path, data))
+
+
 def test_raw_qq_platform_is_rejected_with_migration_direction(tmp_path: Path) -> None:
     data = deepcopy(_BASE)
     data.pop("gateway")

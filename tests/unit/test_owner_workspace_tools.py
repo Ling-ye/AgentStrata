@@ -231,3 +231,33 @@ class OwnerWorkspaceShortcutTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+def test_workspace_text_pagination_reconstructs_large_utf8_file(tmp_path):
+    from chatcopilot.application.execution_scope import execution_scope
+    workspace = Workspace(root=tmp_path / "workspace", chat_kind="p2p", chat_id=None, user_id="reader").ensure()
+    service = MiddlewareWorkspaceService(workspace=workspace, workspace_root=tmp_path,
+        execution_scope=execution_scope(Role.USER, workspace.root))
+    executor = ToolExecutor(tools=TOOLS, caller_role_hint="user", workspace_service=service)
+    text = "天🙂文ab\n" * 50_000
+    path = workspace.root / "large.txt"
+    path.write_text(text, encoding="utf-8")
+    assert path.stat().st_size > 512 * 1024
+    pages = []
+    offset = 0
+    while True:
+        result = executor.execute("read_text_head", {"path": str(path), "kb": 128, "offset": offset})
+        assert result.ok, result.error
+        pages.append(result.data["content"])
+        assert len(result.data["content"].encode("utf-8")) <= 128 * 1024
+        next_offset = result.data["next_offset"]
+        if next_offset is None:
+            assert result.data["truncated"] is False
+            break
+        assert next_offset > offset
+        offset = next_offset
+    assert "".join(pages) == text
+    outside = tmp_path / "outside.txt"
+    outside.write_text("outside", encoding="utf-8")
+    assert not executor.execute("read_text_head", {"path": str(outside), "offset": 1}).ok
+    assert not executor.execute("read_text_head", {"path": str(path), "offset": -1}).ok

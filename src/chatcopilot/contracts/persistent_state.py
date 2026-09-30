@@ -9,10 +9,9 @@ from typing import Protocol, Tuple
 PERSONA_SCOPES: Tuple[str, ...] = ("global", "group", "user")
 MEMORY_SECTIONS: Tuple[str, ...] = ("facts", "decisions", "sources")
 
-PERSONA_MAX_BYTES = 8 * 1024
-PERSONA_MAX_ITEM_CHARS = 2000
+PERSONA_MAX_BYTES = 32 * 1024
 MEMORY_MAX_BYTES = 32 * 1024
-MEMORY_MAX_ITEM_CHARS = 1000
+MEMORY_MAX_ITEM_CHARS = 4000
 
 PERSONA_INITIAL_TEMPLATE = """# Persona
 
@@ -110,10 +109,10 @@ class PersistentConversationState(Protocol):
     def persona_set(self, scope: str, text: str) -> None: ...
     def persona_clear(self, scope: str) -> None: ...
 
-    def memory_snapshot(self) -> str: ...
+    def memory_snapshot(self, *, offset: int = 0, limit: int = 100) -> str: ...
     def memory_append(self, *, text: str, section: str) -> MemoryAppendReceipt: ...
     def memory_clear(self) -> None: ...
-    def memory_search(self, query: str, *, limit: int = 5) -> tuple[MemoryRecord, ...]: ...
+    def memory_search(self, query: str, *, limit: int = 5, offset: int = 0) -> tuple[MemoryRecord, ...]: ...
     def memory_read(self, item_id: str) -> MemoryRecord | None: ...
     def memory_context(self, query: str = "") -> str: ...
     def memory_update(
@@ -131,7 +130,6 @@ __all__ = [
     "MemoryRecord",
     "PERSONA_INITIAL_TEMPLATE",
     "PERSONA_MAX_BYTES",
-    "PERSONA_MAX_ITEM_CHARS",
     "PERSONA_SCOPES",
     "PersistentConversationState",
     "has_meaningful_memory",

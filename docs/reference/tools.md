@@ -119,6 +119,7 @@ OpenAPI 响应检查与通用 GET 逃生门。源代码、示例和测试不得�
 ToolDef 使用 `access="owner" | "member"`，默认 Owner；公共查询和当前会话基础工具显式声明 member。
 `workspace.read_write` 提供 `write_workspace_file`，可写入或删除当前会话普通文本文件；
 人格、记忆、任务、后端状态仍不能通过普通文件工具修改。
+`read_text_head` 支持字节 `offset` 与单页 `kb`（默认 4、最多 512 KiB），返回 `next_offset` 供连续分页；从返回的偏移继续读取不会拆坏 UTF-8 字符。分页仍只访问当前允许的普通文件，不能扩大工作区或读取受保护状态。
 旧最低角色、工具名称特判与 Backend 路由权限不再参与业务授权。可见性和执行复检使用同一规则，
 Admin 与 User 均为成员。ToolContext 保留可信调用者及 ExecutionScope，委托不能提升角色。
 文件与命令必须使用宿主绑定资源，能力装配和输入校验不能冒充权限不足。

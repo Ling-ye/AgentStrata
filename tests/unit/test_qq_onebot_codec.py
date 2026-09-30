@@ -376,6 +376,31 @@ def test_outbound_envelope_projects_to_correlatable_send_msg_action() -> None:
     ]
 
 
+def test_outbound_resource_budget_accepts_near_64_mib_and_rejects_overflow() -> None:
+    # Base64 length must be divisible by four; leave room for the source prefix.
+    source = "base64://" + "A" * (64 * 1024 * 1024 - 12)
+    segment = MessageSegment(kind="image", data={"source": source})
+    action, params = build_outbound_action(_outbound((segment,)))
+    assert action == "send_msg"
+    assert params["message"][0]["data"]["file"] == source
+
+    with pytest.raises(OneBotCodecError) as single:
+        build_outbound_action(_outbound((MessageSegment(kind="image", data={"source": source + "AAAA"}),)))
+    assert single.value.code == "onebot_outbound_resource_invalid"
+
+    with pytest.raises(OneBotCodecError) as combined:
+        build_outbound_action(_outbound((segment, MessageSegment(kind="image", data={"source": "base64://AAAA"}))))
+    assert combined.value.code == "onebot_outbound_resources_too_large"
+
+
+def test_outbound_frame_budget_defaults_to_128_mib_and_remains_bounded() -> None:
+    assert _config().max_outbound_frame_bytes == 128 * 1024 * 1024
+    assert _config(max_outbound_frame_bytes=1024).max_outbound_frame_bytes == 1024
+    with pytest.raises(OneBotConfigError) as caught:
+        _config(max_outbound_frame_bytes=128 * 1024 * 1024 + 1)
+    assert caught.value.code == "onebot_outbound_frame_limit_invalid"
+
+
 def test_outbound_at_all_and_duplicate_reply_fail_closed() -> None:
     with pytest.raises(OneBotCodecError) as at_all:
         build_outbound_action(

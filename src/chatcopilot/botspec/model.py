@@ -14,6 +14,7 @@ from chatcopilot.contracts.subagents import (
     ContextPolicySpec as ContextPolicySpec,
     CustomSubagentSpec as CustomSubagentSpec,
     SearchProviderSpec as SearchProviderSpec,
+    SearchLimitsSpec as SearchLimitsSpec,
     SubagentBudgetSpec as SubagentBudgetSpec,
     SubagentSpec as SubagentSpec,
     ToolSelectorSpec as ToolSelectorSpec,
@@ -60,6 +61,7 @@ class QQChannelSpec:
     access_token_env: str = "QQ_ACCESS_TOKEN"
     account_env: str = "QQ_ACCOUNT"
     mention_only_groups: bool = True
+    action_timeout_seconds: float = 120.0
 
 
 @dataclass(frozen=True)

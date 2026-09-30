@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import asyncio
 import os
 from dataclasses import replace
 from pathlib import Path
@@ -149,7 +150,77 @@ class ResourceMaterializationTests(IsolatedAsyncioTestCase):
         if os.name == "posix":
             self.assertEqual(stat.S_IMODE(current.st_mode), 0o600)
         self.assertFalse(any(item.name.startswith(".tmp-") for item in path.parent.iterdir()))
-        self.assertEqual(fetcher.calls[0][1], 25 * 1024 * 1024)
+        self.assertEqual(fetcher.calls[0][1], 64 * 1024 * 1024)
+
+    async def test_large_inbound_image_passes_codex_resource_validation(self) -> None:
+        from chatcopilot.agent.context.task_framing import validated_image_resource_receipts
+        from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
+        from types import SimpleNamespace
+
+        data = b"\x89PNG\r\n\x1a\n" + b"x" * (26 * 1024 * 1024)
+        ticket = _ticket(size_bytes=len(data), sha256=hashlib.sha256(data).hexdigest())
+        refs = await self._service(_Fetcher(FetchedResource(data=data, media_type="image/png"))).materialize(
+            event=_event(tickets=(ticket,)), actor_id=ACTOR, workspace=self.workspace, now=150.0,
+        )
+        task = SimpleNamespace(resources=refs)
+        self.assertEqual(validated_image_resource_receipts(task)[0].size_bytes, len(data))
+        self.assertEqual(CodexRuntimeAdapter._image_paths(task), (refs[0].path,))
+
+    async def test_default_limits_allow_32_small_attachments(self) -> None:
+        tickets = tuple(_ticket(ticket_id=f"resource-{i}", name=f"file-{i}.png") for i in range(32))
+        segments = tuple(MessageSegment(kind="image", resource_ticket_id=t.ticket_id) for t in tickets)
+        refs = await self._service(_Fetcher(FetchedResource(data=DATA))).materialize(
+            event=_event(tickets=tickets, segments=segments), actor_id=ACTOR, workspace=self.workspace, now=150.0,
+        )
+        self.assertEqual(len(refs), 32)
+
+    async def test_batch_timeout_cancels_fetch_without_publishing(self) -> None:
+        fetcher = mock.Mock()
+        cancelled = asyncio.Event()
+
+        async def fetch(*args, **kwargs):
+            try:
+                await asyncio.Future()
+            finally:
+                cancelled.set()
+
+        fetcher.fetch = fetch
+        with mock.patch("chatcopilot.application.resources.service.DOWNLOAD_BATCH_TIMEOUT_SECONDS", .01):
+            with self.assertRaises(ResourceMaterializationError) as caught:
+                await self._service(fetcher).materialize(
+                    event=_event(), actor_id=ACTOR, workspace=self.workspace, now=150.0,
+                )
+        self.assertEqual(caught.exception.code, "resource_fetch_timeout")
+        self.assertTrue(cancelled.is_set())
+        self.assertFalse((self.workspace.root / "attachments").exists())
+
+    async def test_new_count_file_and_total_budgets_reject_before_fetch(self) -> None:
+        for count, size in ((33, len(DATA)), (1, 64 * 1024 * 1024 + 1), (5, 64 * 1024 * 1024)):
+            with self.subTest(count=count, size=size):
+                tickets = tuple(_ticket(ticket_id=f"resource-{i}", size_bytes=size) for i in range(count))
+                segments = tuple(MessageSegment(kind="image", resource_ticket_id=t.ticket_id) for t in tickets)
+                fetcher = _Fetcher(FetchedResource(data=DATA))
+                with self.assertRaises(ResourceMaterializationError):
+                    await self._service(fetcher).materialize(
+                        event=_event(tickets=tickets, segments=segments),
+                        actor_id=ACTOR, workspace=self.workspace, now=150.0,
+                    )
+                self.assertEqual(fetcher.calls, [])
+
+    async def test_late_fetch_result_cannot_publish_after_batch_deadline(self) -> None:
+        from types import SimpleNamespace
+        now = [0.0]
+        async def fetch(*args, **kwargs):
+            now[0] = 301.0
+            return FetchedResource(data=DATA)
+        with mock.patch("chatcopilot.application.resources.service.time",
+                        SimpleNamespace(monotonic=lambda: now[0])):
+            with self.assertRaises(ResourceMaterializationError) as caught:
+                await self._service(SimpleNamespace(fetch=fetch)).materialize(
+                    event=_event(), actor_id=ACTOR, workspace=self.workspace, now=150.0,
+                )
+        self.assertEqual(caught.exception.code, "resource_fetch_timeout")
+        self.assertFalse((self.workspace.root / "attachments").exists())
 
     async def test_cross_actor_is_rejected_before_fetch(self) -> None:
         fetcher = _Fetcher(FetchedResource(data=DATA))

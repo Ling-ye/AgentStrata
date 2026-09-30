@@ -32,6 +32,7 @@ def build_provider(
     return build_search_provider(
         main_llm=context.search_llm or context.research_llm,
         budget=context.subagents.research_budget,
+        limits=context.subagents.search_limits,
         tools=(*accessible_base_tools, *accessible_contributed_tools),
         raw_mcp_tools=raw_mcp_search_tools,
         provider_specs=context.subagents.search_providers,

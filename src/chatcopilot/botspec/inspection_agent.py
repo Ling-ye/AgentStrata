@@ -147,7 +147,7 @@ def enrich_agent_configuration(
     search_prefix = spec.agents.research_budget.model_binding
     search_model = search_config or (load_llm_profile(search_prefix, fallback=research, environment=environment, document=document) if search_prefix else research)
     add("agent:unified-search", "统一搜索", {"enabled": spec.agents.research_enabled, "model": search_model.model,
-        "budget": plain(spec.agents.research_budget)},
+        "budget": plain(spec.agents.research_budget), "limits": plain(spec.agents.search_limits)},
         usage="search_information 的模型与执行预算；provider 的启用状态独立列出。",
         configured=spec.agents.research_enabled,
         field_sources={"enabled": spec_source("agents.unified_search.enabled"), "model": model_sources(search_prefix, "继承研究模型 · research")["model"],

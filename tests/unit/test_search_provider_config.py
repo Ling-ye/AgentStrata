@@ -156,3 +156,24 @@ def test_unified_search_provider_rejects_unknown_fields(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="unsupported field.*api_key"):
         load_botspec(path)
+
+
+def test_search_limits_parse_without_five_url_clamp(tmp_path):
+    spec = load_botspec(_write_bot(tmp_path, '''
+        enabled: true
+        timeout_seconds: 600
+        limits:
+          max_urls: 40
+          thorough_max_steps: 12
+          thorough_max_deep_read_urls: 10
+    '''))
+    assert spec.agents.research_budget.timeout_seconds == 600
+    assert spec.agents.search_limits.max_urls == 40
+    assert spec.agents.search_limits.thorough_max_steps == 12
+    assert spec.agents.search_limits.thorough_max_deep_read_urls == 10
+
+
+@pytest.mark.parametrize("limits", ["{max_urls: 0}", "{max_urls: true}", "{thorough_max_steps: -1}", "{unknown: 5}"])
+def test_search_limits_reject_invalid_host_configuration(tmp_path, limits):
+    with pytest.raises(ValueError):
+        load_botspec(_write_bot(tmp_path, "enabled: true\nlimits: " + limits))

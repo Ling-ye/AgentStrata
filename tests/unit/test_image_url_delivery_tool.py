@@ -260,20 +260,34 @@ class ImageUrlDeliveryToolTests(unittest.TestCase):
         self.assertEqual(result.error_code, "image_delivery_receipt_invalid")
         self.assertNotIn("已发送", result.error or "")
 
-    def test_schema_rejects_more_than_five_urls_before_network(self) -> None:
-        sender = mock.Mock()
-        with mock.patch(
-            "chatcopilot.agent.tools.builtin.workspace.images._request_image_once"
+    def test_more_than_five_urls_are_delivered_with_one_receipt(self) -> None:
+        sender = mock.Mock(side_effect=lambda files, message: FileDeliveryResult(
+            tuple(Path(p).name for p in files), tuple(files), message))
+        with self._public_dns(), mock.patch(
+            "chatcopilot.agent.tools.builtin.workspace.images._request_image_once",
+            return_value=_png_response(),
         ) as request_once:
             result = self._executor(sender).execute(
                 "send_image_urls_to_user",
                 {"urls": [f"https://example.com/{index}.png" for index in range(6)]},
             )
 
-        self.assertFalse(result.ok)
-        self.assertEqual(result.error_code, "tool_input_schema_invalid")
-        request_once.assert_not_called()
-        sender.assert_not_called()
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(result.data["sent_count"], 6)
+        self.assertEqual(request_once.call_count, 6)
+        sender.assert_called_once()
+
+    def test_url_delivery_uses_the_file_sender_byte_budget(self) -> None:
+        from chatcopilot.contracts.resources import OUTBOUND_FILE_MAX_BYTES
+        sender = mock.Mock(side_effect=lambda files, message: FileDeliveryResult(
+            tuple(Path(p).name for p in files), tuple(files), message))
+        data = b"\x89PNG\r\n\x1a\n" + b"x" * (21 * 1024 * 1024)
+        with self._public_dns(), mock.patch.object(image_tools, "_request_image_once", return_value=
+                image_tools._ImageHttpResponse(status=200, content_type="image/png", data=data)) as request:
+            result = self._executor(sender).execute("send_image_urls_to_user", {"urls": ["https://example.com/large.png"]})
+        self.assertTrue(result.ok, result.error)
+        self.assertEqual(request.call_args.kwargs["max_bytes"], OUTBOUND_FILE_MAX_BYTES)
+        self.assertEqual(Path(result.outputs[0]).stat().st_size, len(data))
 
     def test_tool_is_user_facing_and_codex_gateway_relay_executes_it(self) -> None:
         sent: list[list[str]] = []
@@ -344,6 +358,23 @@ class ImageUrlDeliveryToolTests(unittest.TestCase):
             self.assertEqual(len(sent), 1)
         finally:
             backend.close_session(ref)
+
+    def test_batch_deadline_stops_before_publication_and_later_urls(self) -> None:
+        now = [0.0]
+        def slow_response(*args, **kwargs):
+            self.assertEqual(kwargs["deadline"], 300.0)
+            now[0] = 301.0
+            return _png_response()
+        sender = mock.Mock()
+        with self._public_dns(), mock.patch.object(image_tools.time, "monotonic", side_effect=lambda: now[0]), \
+                mock.patch.object(image_tools, "_request_image_once", side_effect=slow_response) as request:
+            result = self._executor(sender).execute("send_image_urls_to_user", {
+                "urls": ["https://example.com/one.png", "https://example.com/two.png"],
+            })
+        self.assertFalse(result.ok)
+        request.assert_called_once()
+        sender.assert_not_called()
+        self.assertEqual(list((self.root / "downloads" / "images").iterdir()), [])
 
 
 if __name__ == "__main__":

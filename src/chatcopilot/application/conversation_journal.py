@@ -24,11 +24,10 @@ _JOURNAL_FILENAME = "group-conversation.jsonl"
 _METADATA_FILENAME = "group-conversation.meta.json"
 _LOCK_FILENAME = "group-conversation.lock"
 _MAX_RECORDS = 500
-_MAX_USER_CHARS = 12_000
-_MAX_ASSISTANT_CHARS = 24_000
-_CONTEXT_RECORDS = 24
-_CONTEXT_CHARS = 24_000
-_MAX_JOURNAL_BYTES = 32 * 1024 * 1024
+_CONTEXT_RECORDS = 48
+_CONTEXT_CHARS = 64_000
+_TRUNCATION_MARKER = "…[truncated]"
+_MAX_JOURNAL_BYTES = 256 * 1024 * 1024
 _MAX_METADATA_BYTES = 64 * 1024
 _METADATA_FIELDS = frozenset(
     {
@@ -108,8 +107,8 @@ class GroupConversationJournal:
             or _EXCHANGE_ID_RE.fullmatch(exchange_id) is None
         ):
             raise ValueError("exchange_id is invalid")
-        bounded_user = _bounded_text(user_text, _MAX_USER_CHARS)
-        bounded_assistant = _bounded_text(assistant_text, _MAX_ASSISTANT_CHARS)
+        recorded_user = str(user_text or "")
+        recorded_assistant = str(assistant_text or "")
         with self._locked(exclusive=True) as (dir_fd, _lock_created):
             records, metadata = self._load_pair_unlocked(dir_fd, initialize=False)
             if exchange_id is not None:
@@ -121,8 +120,8 @@ class GroupConversationJournal:
                     if not _same_exchange(
                         existing,
                         identity=identity,
-                        user_text=bounded_user,
-                        assistant_text=bounded_assistant,
+                        user_text=recorded_user,
+                        assistant_text=recorded_assistant,
                     ):
                         raise GroupConversationJournalError(
                             "group_journal_exchange_conflict",
@@ -150,8 +149,8 @@ class GroupConversationJournal:
                     "sender_user_id": identity.sender_user_id,
                     "sender_user_name": identity.sender_user_name,
                     "actor_ref": identity.actor_ref,
-                    "user_text": bounded_user,
-                    "assistant_text": bounded_assistant,
+                    "user_text": recorded_user,
+                    "assistant_text": recorded_assistant,
                     "created_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                 }
             )
@@ -902,7 +901,10 @@ def _bounded_text(value: str, limit: int) -> str:
     text = str(value or "")
     if len(text) <= limit:
         return text
-    return text[: max(0, limit - 14)] + "…[truncated]"
+    marker = _TRUNCATION_MARKER
+    if limit <= len(marker):
+        return marker[:limit]
+    return text[:limit - len(marker)] + marker
 
 
 def _integer_field(item: dict[str, Any], key: str) -> int:
@@ -995,8 +997,18 @@ def _select_context_records(records: list[dict[str, Any]]) -> list[dict[str, Any
     used = 0
     for item in reversed(records[-_CONTEXT_RECORDS:]):
         size = len(str(item.get("user_text") or "")) + len(str(item.get("assistant_text") or ""))
-        if selected and used + size > _CONTEXT_CHARS:
+        remaining = _CONTEXT_CHARS - used
+        if remaining <= 0:
             break
+        if size > remaining:
+            if remaining < 2 * len(_TRUNCATION_MARKER):
+                break
+            user = str(item.get("user_text") or "")
+            assistant = str(item.get("assistant_text") or "")
+            user_budget = min(len(user), remaining - min(len(assistant), remaining // 2))
+            item = {**item, "user_text": _bounded_text(user, user_budget),
+                    "assistant_text": _bounded_text(assistant, remaining - user_budget)}
+            size = len(item["user_text"]) + len(item["assistant_text"])
         selected.append(item)
         used += size
     selected.reverse()

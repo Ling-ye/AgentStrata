@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ipaddress
+import math
 import re
 import stat
 from pathlib import Path
@@ -15,6 +16,7 @@ from chatcopilot.contracts.subagents import (
     CodexMainSessionPolicy,
     ContextPolicySpec,
     SearchProviderSpec,
+    SearchLimitsSpec,
     ToolMatchRule,
     ToolSelectorSpec,
 )
@@ -66,6 +68,7 @@ _QQ_CHANNEL_FIELDS = frozenset(
         "access_token_env",
         "account_env",
         "mention_only_groups",
+        "action_timeout_seconds",
     }
 )
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
@@ -468,6 +471,12 @@ def _validate_gateway_channels(
                 )
             )
 
+        timeout = qq.action_timeout_seconds
+        if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
+                or not math.isfinite(timeout) or timeout <= 0):
+            issues.append(ValidationIssue("error", "OneBot 回执等待必须为有限正数。",
+                                          "channels.qq.action_timeout_seconds"))
+
     if (qq is not None or raw_qq_platform) and spec.deploy.cc_connect_config_dir:
         issues.append(
             ValidationIssue(
@@ -654,6 +663,10 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                         qq_channel.get("mention_only_groups", _MISSING),
                         "channels.qq.mention_only_groups",
                         True,
+                    ),
+                    action_timeout_seconds=_strict_number(
+                        qq_channel.get("action_timeout_seconds"),
+                        "channels.qq.action_timeout_seconds", 120.0,
                     ),
                 )
                 if qq_channel is not None
@@ -919,6 +932,10 @@ def _parse_subagents(
         research_router,
         _with_model_binding(defaults, research_binding),
     )
+    search_limits_raw = _mapping(research_router.get("limits", {}), f"{field_prefix}.unified_search.limits")
+    if set(search_limits_raw) - {"max_urls", "thorough_max_steps", "thorough_max_deep_read_urls"}:
+        raise ValueError(f"{field_prefix}.unified_search.limits contains unsupported fields")
+    search_limits = SearchLimitsSpec(**search_limits_raw)
     search_providers = _parse_search_providers(
         research_router.get("providers", []),
         field_prefix=f"{field_prefix}.unified_search.providers",
@@ -939,6 +956,7 @@ def _parse_subagents(
             False,
         ),
         research_budget=research_budget,
+        search_limits=search_limits,
         search_providers=search_providers,
         agents=agents,
         overrides=preset_overrides,

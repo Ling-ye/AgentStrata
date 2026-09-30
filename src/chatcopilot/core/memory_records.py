@@ -40,8 +40,7 @@ _COLUMNS = (
     "item_id", "text", "section", "source_actor", "source_turn", "origin",
     "created_at", "updated_at", "version", "status", "supersedes_id",
 )
-_MAX_ITEMS = 1000
-_MAX_CONTEXT_CHARS = 4000
+_MAX_CONTEXT_CHARS = 12_000
 _WORD_RE = re.compile(r"[\u3400-\u9fff]+|[a-z0-9]+", re.IGNORECASE)
 
 
@@ -128,7 +127,6 @@ class MemoryRecordStore:
                 conn.execute("PRAGMA journal_mode=DELETE")
                 conn.execute("PRAGMA synchronous=FULL")
                 conn.execute("PRAGMA secure_delete=ON")
-                conn.execute("PRAGMA max_page_count=4096")
                 if write:
                     conn.executescript(_SCHEMA)
                     conn.execute("BEGIN IMMEDIATE")
@@ -146,21 +144,20 @@ class MemoryRecordStore:
             finally:
                 conn.close()
 
-    def _active(self) -> tuple[MemoryRecord, ...]:
+    def _active(self, *, offset: int = 0, limit: int = 100) -> tuple[MemoryRecord, ...]:
+        _validate_page(offset=offset, limit=limit)
         with self._connection(write=False) as conn:
             if conn is None:
                 return ()
             rows = conn.execute(
                 "SELECT * FROM memory_items WHERE status='active' "
-                "ORDER BY updated_at DESC, item_id DESC LIMIT ?",
-                (_MAX_ITEMS + 1,),
+                "ORDER BY updated_at DESC, item_id DESC LIMIT ? OFFSET ?",
+                (limit, offset),
             ).fetchall()
-        if len(rows) > _MAX_ITEMS:
-            raise ValueError("当前作用域记忆条目超过上限，请由 Owner 整理")
         return tuple(_record(row) for row in rows)
 
-    def snapshot(self) -> str:
-        records = self._active()
+    def snapshot(self, *, offset: int = 0, limit: int = 100) -> str:
+        records = self._active(offset=offset, limit=limit)
         if not records:
             return ""
         sections: list[str] = ["# Memory"]
@@ -173,22 +170,33 @@ class MemoryRecordStore:
                     sections.append(f"- {timestamp} {item.text}")
         return "\n".join(sections) + "\n"
 
-    def search(self, query: str, *, limit: int = 5) -> tuple[MemoryRecord, ...]:
-        if not 1 <= limit <= 20:
-            raise ValueError("limit 必须在 1 到 20 之间")
-        scored = [(_score(query, item.text), item) for item in self._active()]
-        matching = [pair for pair in scored if pair[0] > 0]
-        matching.sort(key=lambda pair: (pair[0], pair[1].updated_at), reverse=True)
-        return tuple(item for _score_value, item in matching[:limit])
+    def search(self, query: str, *, limit: int = 5, offset: int = 0) -> tuple[MemoryRecord, ...]:
+        _validate_page(offset=offset, limit=limit)
+        if not query.strip():
+            return self._active(offset=offset, limit=limit)
+        with self._connection(write=False) as conn:
+            if conn is None:
+                return ()
+            conn.create_function("memory_score", 2, _score, deterministic=True)
+            rows = conn.execute(
+                "SELECT *, memory_score(?, text) AS relevance FROM memory_items "
+                "WHERE status='active' AND relevance > 0 "
+                "ORDER BY relevance DESC, updated_at DESC, item_id DESC LIMIT ? OFFSET ?",
+                (query, limit, offset),
+            ).fetchall()
+        return tuple(_record(row) for row in rows)
 
     def context(self, query: str = "") -> str:
-        active = self._active()
-        pinned = [
-            item for item in active
-            if item.section == "decisions"
-            or (item.section == "facts" and re.search(r"偏好|习惯|默认|喜欢", item.text))
-        ]
-        selected: list[MemoryRecord] = pinned[:4]
+        with self._connection(write=False) as conn:
+            if conn is None:
+                return ""
+            rows = conn.execute(
+                "SELECT * FROM memory_items WHERE status='active' AND "
+                "(section='decisions' OR (section='facts' AND "
+                "(text LIKE '%偏好%' OR text LIKE '%习惯%' OR text LIKE '%默认%' OR text LIKE '%喜欢%'))) "
+                "ORDER BY updated_at DESC, item_id DESC LIMIT 4"
+            ).fetchall()
+        selected: list[MemoryRecord] = [_record(row) for row in rows]
         if query.strip():
             seen = {item.item_id for item in selected}
             for item in self.search(query, limit=5):
@@ -263,11 +271,6 @@ class MemoryRecordStore:
                     version=existing["version"],
                     content_sha256=_digest(text),
                 )
-            count = conn.execute(
-                "SELECT COUNT(*) FROM memory_items WHERE status='active'"
-            ).fetchone()[0]
-            if count >= _MAX_ITEMS:
-                raise ValueError("当前作用域记忆条目已满，请由 Owner 整理")
             if supersedes_id:
                 changed = conn.execute(
                     "UPDATE memory_items SET status='superseded', updated_at=? "
@@ -337,6 +340,11 @@ class MemoryRecordStore:
                 "updated_at=? WHERE text!=''",
                 (_now(),),
             )
+
+
+def _validate_page(*, offset: int, limit: int) -> None:
+    if type(offset) is not int or offset < 0 or type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("offset 必须为非负整数，limit 必须在 1 到 100 之间")
 
 
 __all__ = ["MemoryRecordStore"]

@@ -198,6 +198,17 @@ def test_request_rejects_url_hint_without_concrete_url() -> None:
         )
 
 
+def test_thorough_request_preserves_all_five_explicit_sources():
+    request = SearchRequest.from_args({
+        "objective": "compare everything", "depth": "thorough", "verification": "none",
+        "urls": ["https://example.com"],
+        "source_hints": ["web", "experience", "commerce", "github", "url"],
+    })
+    router = SearchRouter(main_llm=_ScriptedLLM(["{}"]), budget=SubagentBudgetSpec())
+    plan = router.route(request, available_sources=("web", "experience", "commerce", "github", "url"))
+    assert {step.source for step in plan.steps} == {"web", "experience", "commerce", "github", "url"}
+
+
 def test_router_does_not_cache_transient_fallback() -> None:
     llm = _ScriptedLLM(
         [

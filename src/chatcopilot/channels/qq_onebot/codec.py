@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chatcopilot.contracts.resources import OUTBOUND_RESOURCE_SOURCE_CHARS
+
 import base64
 import binascii
 from dataclasses import dataclass
@@ -34,7 +36,8 @@ _MAX_SEGMENTS = 128
 _MAX_TEXT_CHARS = 64 * 1024
 _MAX_NATIVE_KIND_CHARS = 64
 _MAX_PROVIDER_REF_CHARS = 4096
-_MAX_OUTBOUND_SOURCE_CHARS = 8 * 1024 * 1024
+# Includes base64 expansion and source prefixes across all resource segments.
+_MAX_OUTBOUND_SOURCE_CHARS = OUTBOUND_RESOURCE_SOURCE_CHARS
 _RESOURCE_KIND_BY_SEGMENT: Mapping[str, ResourceKind] = {
     "image": "image",
     "record": "audio",

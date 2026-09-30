@@ -101,20 +101,19 @@ def _successful_actual_sources(results: Sequence[dict[str, Any]]) -> list[str]:
 
 
 def _compact_results(results: list[dict[str, Any]], *, budget: SearchBudget) -> list[dict[str, Any]]:
-    remaining = budget.max_result_chars
+    remaining = budget.max_result_chars - 2  # JSON array brackets.
     compacted: list[dict[str, Any]] = []
     for item in results:
+        separator = 2 if compacted else 0
         item = _limit_summary_items(item, max_items=budget.max_result_items)
         encoded = json.dumps(item, ensure_ascii=False)
-        if len(encoded) <= remaining:
+        if len(encoded) + separator <= remaining:
             compacted.append(item)
-            remaining -= len(encoded)
+            remaining -= len(encoded) + separator
             continue
-        trimmed = dict(item)
-        if "summary" in trimmed:
-            trimmed["summary"] = _truncate_value(trimmed["summary"], max(0, remaining))
-        trimmed["truncated"] = True
-        compacted.append(trimmed)
+        trimmed = _bounded_preview(item, remaining - separator)
+        if trimmed is not None:
+            compacted.append(trimmed)
         break
     return compacted
 
@@ -136,15 +135,25 @@ def _limit_summary_items(result: dict[str, Any], *, max_items: int) -> dict[str,
     return {**result, "summary": trimmed, "items_limited": True}
 
 
-def _truncate_value(value: Any, max_chars: int) -> Any:
-    if max_chars <= 0:
-        return "[truncated]"
-    if isinstance(value, str):
-        return value if len(value) <= max_chars else value[:max_chars] + "\n[truncated]"
-    encoded = json.dumps(value, ensure_ascii=False)
-    if len(encoded) <= max_chars:
-        return value
-    return encoded[:max_chars] + "\n[truncated]"
+def _bounded_preview(item: dict[str, Any], max_chars: int) -> dict[str, Any] | None:
+    # URL steps carry pages instead of summary. Both must respect the inline
+    # budget; the complete collected item remains in full_results for readback.
+    preview = {key: item[key] for key in ("ok", "logical_source", "actual_source") if key in item}
+    preview.update(truncated=True, summary="")
+    if len(json.dumps(preview, ensure_ascii=False)) > max_chars:
+        return None
+    body = item.get("summary", item.get("pages", item))
+    text = body if isinstance(body, str) else json.dumps(body, ensure_ascii=False)
+    low, high = 0, min(len(text), max_chars)
+    while low < high:
+        middle = (low + high + 1) // 2
+        preview["summary"] = text[:middle]
+        if len(json.dumps(preview, ensure_ascii=False)) <= max_chars:
+            low = middle
+        else:
+            high = middle - 1
+    preview["summary"] = text[:low]
+    return preview
 
 
 __all__ = [

@@ -116,6 +116,13 @@ def test_runtime_config_is_strict_and_redacts_both_credentials(tmp_path: Path) -
     assert config.state_root.name == "gateway"
     assert "g" * 16 not in repr(config)
     assert "q" * 16 not in repr(config)
+    assert config.onebot.action_timeout_seconds == 120.0
+
+
+def test_runtime_preserves_configured_onebot_acknowledgement_timeout(tmp_path: Path) -> None:
+    runtime = _runtime()
+    runtime.channels = ChannelsSpec(qq=QQChannelSpec(action_timeout_seconds=240.5))
+    assert parse_gateway_runtime_config(runtime, _environment(tmp_path)).onebot.action_timeout_seconds == 240.5
 
 
 @pytest.mark.parametrize(

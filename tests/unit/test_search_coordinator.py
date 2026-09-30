@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
 import threading
 import time
 from unittest import mock
@@ -159,12 +160,14 @@ def _router_for_web(query: str = "package release") -> _FakeLLM:
 
 
 @pytest.mark.parametrize(
-    ("turn_timeout", "expected_wall"),
-    [(100.0, 100.0), (1000.0, 120.0), (None, 120.0)],
+    ("turn_timeout", "budget_timeout", "expected_wall"),
+    [(100.0, 120, 100.0), (1000.0, 120, 120.0), (None, 120, 120.0),
+     (1000.0, 600, 600.0), (100.0, 600, 100.0)],
 )
 def test_search_wall_budget_intersects_declared_and_parent_budget(
     monkeypatch: pytest.MonkeyPatch,
     turn_timeout: float | None,
+    budget_timeout: int,
     expected_wall: float,
 ) -> None:
     captured: list[float] = []
@@ -178,7 +181,7 @@ def test_search_wall_budget_intersects_declared_and_parent_budget(
 
     search = build_search_tool(
         main_llm=_router_for_web(),
-        budget=SubagentBudgetSpec(),
+        budget=SubagentBudgetSpec(timeout_seconds=budget_timeout),
         tools=(),
         raw_mcp_tools=(raw,),
         turn_timeout_seconds=turn_timeout,
@@ -608,3 +611,76 @@ def test_compaction_uses_the_request_budget_for_counts_and_text():
     text = _compact_results([{"summary": "x" * 500}], budget=SearchBudget(3, max_result_chars=100))
     assert text[0]["truncated"] is True
     assert len(text[0]["summary"]) < 150
+    pages = [{"ok": True, "pages": [{"summary": '中文\\"\n' * 1000}]}]
+    preview = _compact_results(pages, budget=SearchBudget(3, max_result_chars=200))
+    assert preview[0]["truncated"] is True
+    assert len(json.dumps(preview, ensure_ascii=False)) <= 200
+    assert len(pages[0]["pages"][0]["summary"]) > 200
+
+
+def test_configured_url_batch_reaches_actual_page_reads():
+    from chatcopilot.contracts.subagents import SearchLimitsSpec
+    calls = []
+    page = _tool("web_fetch_page", "fixture page")
+    original = page.handler
+    def read(args, ctx):
+        calls.append(args["url"])
+        return original(args, ctx)
+    page = replace(page, handler=read)
+    search = build_search_tool(main_llm=_router_for_web(), budget=SubagentBudgetSpec(timeout_seconds=600),
+        tools=(page,), limits=SearchLimitsSpec(max_urls=25))
+    assert search is not None
+    urls = [f"https://example.com/{i}" for i in range(21)]
+    result = search.handler({"objective": "read all pages", "urls": urls, "verification": "none"}, ToolContext())
+    assert result.ok and calls == urls
+    assert len(result.data["full_results"][0]["pages"]) == 21
+    rejected = search.handler({"objective": "read all pages", "urls": urls + [f"https://other.example/{i}" for i in range(5)]}, ToolContext())
+    assert not rejected.ok and len(calls) == 21
+
+
+def test_collected_search_results_after_preview_are_readable():
+    from chatcopilot.agent.tools.result_reader import SessionResultStore
+    entries = [{"title": f"package result {i}", "url": f"https://example.com/{i}",
+                "content": f"package EVIDENCE-{i}- " + "x" * 1500} for i in range(30)]
+    provider = _raw_search("tavily", {"results": entries}, [])
+    search = build_search_tool(main_llm=_router_for_web(), budget=SubagentBudgetSpec(),
+                               tools=(), raw_mcp_tools=(provider,))
+    assert search is not None
+    store = SessionResultStore()
+    executor = ToolExecutor(caller_role_hint="owner", tools=[search], result_store=store)
+    result = executor.execute("search_information", {"objective": "package release", "verification": "none"})
+    assert result.ok
+    assert len(result.data["full_results"][0]["summary"]["items"]) == 30
+    projected = executor.project_result(search.name, {"ok": True, "summary": result.summary, "data": result.data})
+    assert "full_results" not in projected["data"]
+    assert len(projected["data"]["results"][0]["summary"]["items"]) <= 15
+    read = store.read({"result_id": projected["result_ref"]["id"], "query": "EVIDENCE-29-"}, ToolContext(caller_role="owner"))
+    assert read.ok and read.data["found"] and "EVIDENCE-29-" in read.data["text"]
+    executor.close()
+
+
+def test_thorough_limits_reach_router_and_deep_reader():
+    from chatcopilot.contracts.subagents import SearchLimitsSpec
+    from chatcopilot.agent.search.router import SearchRouter
+    limits = SearchLimitsSpec(thorough_max_steps=10, thorough_max_deep_read_urls=8)
+    request = SearchRequest.from_args({"objective": "compare A versus B", "depth": "thorough", "verification": "none"}, limits=limits)
+    llm = _FakeLLM(json.dumps({"operation": "search", "steps": [
+        {"source": "web", "query": f"package {i}", "read_strategy": "search_only"} for i in range(10)
+    ], "cross_check": False}))
+    plan = SearchRouter(main_llm=llm, budget=SubagentBudgetSpec(timeout_seconds=600)).route(request, available_sources=("web",))
+    assert len(plan.steps) == 10
+    assert json.loads(llm.calls[0]["messages"][1]["content"])["max_steps"] == 10
+    pages = []
+    page = _tool("web_fetch_page", "fixture page")
+    original = page.handler
+    def read(args, ctx):
+        pages.append(args["url"])
+        return original(args, ctx)
+    page = replace(page, handler=read)
+    provider = _raw_search("tavily", {"results": [
+        {"title": f"package {i}", "url": f"https://example.com/{i}", "content": "package reference"} for i in range(10)
+    ]}, [])
+    search = build_search_tool(main_llm=_router_for_web(), budget=SubagentBudgetSpec(timeout_seconds=600),
+                               tools=(page,), raw_mcp_tools=(provider,), limits=limits)
+    result = search.handler({"objective": "package reference", "depth": "thorough", "verification": "none"}, ToolContext())
+    assert result.ok and len(pages) == 8

@@ -1,6 +1,8 @@
 """Workspace file read and archive extraction handlers."""
 from __future__ import annotations
 
+import codecs
+
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List
@@ -52,6 +54,9 @@ def _handler_write_workspace_file(args: Dict[str, Any], ctx: ToolContext) -> Too
 def _handler_read_text_head(args: Dict[str, Any], _ctx: ToolContext) -> ToolResult:
     raw_path = _require(args, "path")
     kb = int(args.get("kb") or 4)
+    offset = args.get("offset", 0)
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset 必须为非负字节偏移")
     if kb <= 0 or kb > 512:
         raise ValueError("kb 必须在 (0, 512] 区间内")
 
@@ -92,17 +97,23 @@ def _handler_read_text_head(args: Dict[str, Any], _ctx: ToolContext) -> ToolResu
     size_limit = kb * 1024
     from chatcopilot.core.scoped_files import read_bytes
 
-    raw = read_bytes(target, size_limit)
+    raw = read_bytes(target, size_limit + 1, offset=offset)
     if b"\x00" in raw:
         raise ValueError(f"疑似二进制文件，拒绝读取: {ws.relpath(target)}")
-    text = raw.decode("utf-8", errors="replace")
-    truncated = target.stat().st_size > size_limit
-    truncated_hint = "（已截断，仅展示前 %d KB）" % kb if truncated else ""
+    has_more = len(raw) > size_limit
+    decoder = codecs.getincrementaldecoder("utf-8")(errors="replace")
+    page = raw[:size_limit]
+    text = decoder.decode(page, final=not has_more)
+    consumed = len(page) - len(decoder.getstate()[0])
+    next_offset = offset + consumed if has_more else None
+    truncated = has_more
+    truncated_hint = f"（可从 offset={next_offset} 继续读取）" if has_more else ""
     return ToolResult(
         ok=True,
-        summary=f"读取 {ws.relpath(target)} 前 {kb}KB{truncated_hint}\n----\n{text}",
+        summary=f"读取 {ws.relpath(target)}，offset={offset}，最多 {kb}KiB{truncated_hint}\n----\n{text}",
         outputs=[str(target)],
-        data={"content": text, "kb": kb, "truncated": truncated},
+        data={"content": text, "kb": kb, "truncated": truncated,
+              "offset": offset, "next_offset": next_offset},
     )
 
 

@@ -252,7 +252,7 @@ class SearchRouter:
         self, request: SearchRequest, available: tuple[str, ...]
     ) -> str:
         payload = json.dumps(
-            {"request": request.to_dict(), "available": list(available)},
+            {"request": request.to_dict(), "available": list(available), "budget": dataclasses.asdict(request.budget)},
             ensure_ascii=False,
             sort_keys=True,
         )

@@ -299,7 +299,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
                 }.get(name)
 
             @staticmethod
-            def read(_size: int = -1) -> bytes:
+            def read1(_size: int = -1) -> bytes:
                 raise AssertionError("oversized response must fail before reading")
 
         connection = mock.Mock()
@@ -338,7 +338,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
             def getheader(name: str):
                 return {"Content-Type": "image/png", "Location": ""}.get(name)
 
-            def read(self, _size: int = -1) -> bytes:
+            def read1(self, _size: int = -1) -> bytes:
                 return self._chunks.pop(0)
 
         connection = mock.Mock()
@@ -362,6 +362,56 @@ class DownloadImageUrlsTests(unittest.TestCase):
         names = {tool.name for tool in discover_tools(tool_packs=("workspace.read_write",))}
         self.assertIn("download_image_urls", names)
         self.assertIn("send_image_urls_to_user", names)
+
+    def test_explicit_large_budget_and_six_images_are_not_silently_clamped(self) -> None:
+        with self._public_dns(), mock.patch.object(image_tools, "_request_image_once", return_value=
+                image_tools._ImageHttpResponse(status=200, content_type="image/png", data=_PNG)) as request, \
+                bind_workspace_service(_WorkspaceService(self.root)):
+            result = workspace_tools._handler_download_image_urls({
+                "urls": [f"https://example.com/{i}.png" for i in range(6)],
+                "limit": 6, "max_bytes": 30 * 1024 * 1024,
+            }, ToolContext())
+        self.assertEqual(len(result.outputs), 6)
+        self.assertEqual(request.call_args_list[0].kwargs["max_bytes"], 30 * 1024 * 1024)
+
+    def test_explicit_oversized_budget_is_rejected_before_download(self) -> None:
+        with mock.patch.object(image_tools, "_download_image_batch") as download:
+            with self.assertRaisesRegex(ValueError, "超过单文件预算"):
+                workspace_tools._handler_download_image_urls({
+                    "urls": ["https://example.com/a.png"], "max_bytes": 64 * 1024 * 1024,
+                }, ToolContext())
+        download.assert_not_called()
+
+    def test_real_http_connection_close_returns_complete_body(self) -> None:
+        from http.server import BaseHTTPRequestHandler, HTTPServer
+        from threading import Thread
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_GET(self):
+                self.send_response(200)
+                self.send_header("Content-Type", "image/png")
+                self.send_header("Content-Length", str(len(_PNG)))
+                self.end_headers()
+                self.wfile.write(_PNG)
+            def log_message(self, *args):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=lambda: server.serve_forever(poll_interval=.01), daemon=True)
+        thread.start()
+        try:
+            # Exercise the transport with a real loopback socket; public URL
+            # admission has separate tests and isn't bypassed in production.
+            resolved = image_tools._ResolvedPublicUrl(
+                image_tools.urllib.parse.urlsplit(f"http://127.0.0.1:{server.server_port}/image.png"),
+                "127.0.0.1", server.server_port, ("127.0.0.1",),
+            )
+            response = image_tools._request_image_once(resolved, max_bytes=100)
+            self.assertEqual(response.data, _PNG)
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
 
 
 if __name__ == "__main__":

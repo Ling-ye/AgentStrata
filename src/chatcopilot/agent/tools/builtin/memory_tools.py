@@ -67,6 +67,8 @@ def _handler_read_memory(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
     state = _persistent_state(ctx)
     item_id = str(args.get("item_id") or "").strip()
     query = str(args.get("query") or "").strip()
+    limit = args.get("limit", 5)
+    offset = args.get("offset", 0)
     if item_id and query:
         return ToolResult(ok=False, error="item_id 与 query 只能选择一个", stage="validation")
     if item_id:
@@ -75,13 +77,14 @@ def _handler_read_memory(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
             return ToolResult(ok=False, error="当前作用域没有该有效记忆", stage="lookup")
         items = [_record_payload(record)]
     else:
-        items = [_record_payload(item) for item in state.memory_search(query, limit=5)]
+        items = [_record_payload(item) for item in state.memory_search(query, limit=limit, offset=offset)]
     text = "\n".join(f"[{item['item_id']}] {item['text']}" for item in items)
     return ToolResult(
         ok=True,
         summary=(f"当前 {state.memory_scope} 作用域长期记忆：\n{text}" if items
                  else f"当前 {state.memory_scope} 作用域尚无长期记忆或无匹配结果。"),
-        data={"scope": state.memory_scope, "text": text, "has_memory": bool(items), "items": items},
+        data={"scope": state.memory_scope, "text": text, "has_memory": bool(items), "items": items,
+              "next_offset": offset + len(items) if not item_id and len(items) == limit else None},
     )
 
 
@@ -246,6 +249,7 @@ _MEMORY_READ_RESULT_SCHEMA = object_schema(
         "text": {"type": "string"},
         "has_memory": {"type": "boolean"},
         "items": {"type": "array", "items": {"type": "object"}},
+        "next_offset": {"type": ["integer", "null"]},
     },
     required=("scope", "text", "has_memory", "items"),
 )
@@ -259,6 +263,8 @@ TOOLS: List[ToolDef] = [
         input_schema=object_schema({
             "query": {"type": "string", "description": "本地关键词或短语"},
             "item_id": {"type": "string", "description": "上次查询返回的条目 ID"},
+            "offset": {"type": "integer", "minimum": 0, "default": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 5},
         }),
         output_schema=_MEMORY_READ_RESULT_SCHEMA,
         handler=_handler_read_memory,

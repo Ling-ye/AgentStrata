@@ -14,7 +14,6 @@ from chatcopilot.core.file_integrity import FileMetadataError, require_regular_f
 from chatcopilot.contracts.persistent_state import (
     PERSONA_INITIAL_TEMPLATE,
     PERSONA_MAX_BYTES,
-    PERSONA_MAX_ITEM_CHARS,
     PERSONA_SCOPES,
     MemoryAppendReceipt,
     has_meaningful_persona,
@@ -84,15 +83,15 @@ class FilesystemPersistentConversationState:
 
         return MemoryRecordStore(self)
 
-    def memory_snapshot(self) -> str:
-        """Full active view for explicit inspection and evaluation, never prompt injection."""
-        return self._memory_store().snapshot()
+    def memory_snapshot(self, *, offset: int = 0, limit: int = 100) -> str:
+        """Paged active view for explicit inspection, never prompt injection."""
+        return self._memory_store().snapshot(offset=offset, limit=limit)
 
     def memory_context(self, query: str = "") -> str:
         return self._memory_store().context(query)
 
-    def memory_search(self, query: str, *, limit: int = 5):
-        return self._memory_store().search(query, limit=limit)
+    def memory_search(self, query: str, *, limit: int = 5, offset: int = 0):
+        return self._memory_store().search(query, limit=limit, offset=offset)
 
     def memory_read(self, item_id: str):
         return self._memory_store().read(item_id)
@@ -178,14 +177,14 @@ class FilesystemPersistentConversationState:
         return normalize_chat_kind(self.workspace.chat_kind, self.workspace.chat_id) == "group"
 
     def _normalize_persona(self, text: str) -> str:
-        stripped = (text or "").strip()
+        stripped = (text or "").strip().replace("\r\n", "\n").replace("\r", "\n")
         if not stripped:
             raise ValueError("text 不能为空")
-        if len(stripped) > PERSONA_MAX_ITEM_CHARS:
+        if len((stripped + "\n").encode("utf-8")) > PERSONA_MAX_BYTES:
             raise ValueError(
-                f"text 长度 {len(stripped)} 超过上限 {PERSONA_MAX_ITEM_CHARS}，请精简后再写。"
+                f"人格正文超过 {PERSONA_MAX_BYTES} 字节，请精简后再写。"
             )
-        return stripped.replace("\r\n", "\n").replace("\r", "\n")
+        return stripped
 
 
     def _read_protected(self, path: Path, *, max_bytes: int) -> str:

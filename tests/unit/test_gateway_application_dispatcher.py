@@ -1120,6 +1120,8 @@ async def test_stale_generation_fails_closed(tmp_path: Path) -> None:
     ("end_turn", "answer"), ("cancelled", ""),
     pytest.param("end_turn", "x" * 70_000, id="large-success"),
     pytest.param("llm_error", "x" * 70_000, id="large-error"),
+    pytest.param("end_turn", "x" * (1024 * 1024 + 1), id="over-1MiB-success"),
+    pytest.param("llm_error", "x" * (1024 * 1024 + 1), id="over-1MiB-error"),
     ("tool_failure_cap", "stopped"), ("iteration_cap", "stopped"),
     ("tool_call_cap", "stopped"), ("timeout_cap", "stopped"),
 ])
@@ -1165,6 +1167,8 @@ async def test_agent_result_terminal_preserves_execution_and_delivery(
         assert run.state == expected_state
         assert run.error_code == ("agent_llm_error" if stop_reason == "llm_error" else None)
         assert run.result == {"final_text": final_text, "stop_reason": stop_reason}
+        if len(final_text) > 1024 * 1024:
+            assert GatewayStateStore(state.root).get_run(run_id).result == run.result
         assert len(actor.requests) == 1
         assert state.get_session(run.session_id).active_run_id is None
         terminals = [event for event in state.events_after(0, limit=100)
@@ -1207,11 +1211,12 @@ async def test_agent_result_terminal_preserves_execution_and_delivery(
 
 
 @pytest.mark.parametrize("failure", ["delivery", "unknown_delivery", "exchange", "terminal_write", "generation"])
+@pytest.mark.parametrize("final_text", ["Execution failed", pytest.param("x" * (1024 * 1024 + 1), id="over-1MiB")])
 @_async_test
-async def test_agent_failure_does_not_override_delivery_or_persistence_errors(tmp_path, monkeypatch, failure):
+async def test_agent_failure_does_not_override_delivery_or_persistence_errors(tmp_path, monkeypatch, failure, final_text):
     from chatcopilot.gateway.state_store import StaleWriterGeneration
 
-    actor = _ImmediateExecutor(AgentResult("Execution failed", "llm_error"))
+    actor = _ImmediateExecutor(AgentResult(final_text, "llm_error"))
     state, _, _, _, coordinator, channels, _, _, _ = _runtime(tmp_path, executor=actor)
 
     class Driver(_Driver):
@@ -1247,7 +1252,7 @@ async def test_agent_failure_does_not_override_delivery_or_persistence_errors(tm
         run = state.get_run(actor.requests[0].run_id)
         assert run.error_code != "agent_llm_error"
         if failure != "generation":
-            assert run.result == {"final_text": "Execution failed", "stop_reason": "llm_error"}
+            assert run.result == {"final_text": final_text, "stop_reason": "llm_error"}
         assert len(driver.sent) == 1
         receipts = state.delivery_receipts(driver.sent[0].outbound_id)
         if failure in {"exchange", "terminal_write"}:

@@ -8,10 +8,14 @@ import http.client
 import ipaddress
 import socket
 import ssl
+import time
 from typing import Protocol
 from urllib.parse import urlsplit
 
-from chatcopilot.contracts.resources import FetchedResource
+from chatcopilot.contracts.resources import (
+    DOWNLOAD_BATCH_TIMEOUT_SECONDS, DOWNLOAD_IO_TIMEOUT_SECONDS, FetchedResource,
+)
+from chatcopilot.core.download_deadline import apply_download_timeout
 from chatcopilot.contracts.gateway import ResourceTicket
 
 
@@ -169,14 +173,16 @@ class _PinnedHttpsByteReader:
         parsed = urlsplit(url)
         target = parsed.path + (("?" + parsed.query) if parsed.query else "")
         last_error: OSError | None = None
+        deadline = time.monotonic() + DOWNLOAD_BATCH_TIMEOUT_SECONDS
         for address in addresses:
             connection = _PinnedHttpsConnection(
                 host=host,
                 address=address,
                 port=443,
-                timeout=15.0,
+                timeout=DOWNLOAD_IO_TIMEOUT_SECONDS,
             )
             try:
+                apply_download_timeout(connection, deadline)
                 connection.request(
                     "GET",
                     target,
@@ -187,6 +193,8 @@ class _PinnedHttpsByteReader:
                         "User-Agent": "AgentStrata-Gateway/1",
                     },
                 )
+                apply_download_timeout(connection, deadline)
+                response_socket = connection.sock
                 response = connection.getresponse()
                 if response.status != 200:
                     raise GatewayResourceFetchError(
@@ -210,7 +218,8 @@ class _PinnedHttpsByteReader:
                 chunks: list[bytes] = []
                 observed = 0
                 while True:
-                    chunk = response.read(min(64 * 1024, max_bytes - observed + 1))
+                    apply_download_timeout(connection, deadline, sock=response_socket)
+                    chunk = response.read1(min(64 * 1024, max_bytes - observed + 1))
                     if not chunk:
                         break
                     observed += len(chunk)

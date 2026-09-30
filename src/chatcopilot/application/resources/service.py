@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import asyncio
 import hashlib
 import math
 import os
@@ -10,10 +11,13 @@ from pathlib import Path
 import re
 import secrets
 import stat
+import time
 
 from chatcopilot.contracts.agent import ResourceRef
 from chatcopilot.core.file_integrity import require_regular_file
-from chatcopilot.contracts.resources import FetchedResource, ResourceFetcherPort
+from chatcopilot.contracts.resources import (
+    DOWNLOAD_BATCH_TIMEOUT_SECONDS, INBOUND_FILE_MAX_BYTES, FetchedResource, ResourceFetcherPort,
+)
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
     MessageSegment,
@@ -29,9 +33,9 @@ from chatcopilot.contracts.workspace import (
 
 ATTACHMENTS_DIRNAME = "attachments"
 INBOUND_RESOURCES_DIRNAME = "inbound"
-DEFAULT_MAX_FILES = 8
-DEFAULT_MAX_FILE_BYTES = 25 * 1024 * 1024
-DEFAULT_MAX_TOTAL_BYTES = 50 * 1024 * 1024
+DEFAULT_MAX_FILES = 32
+DEFAULT_MAX_FILE_BYTES = INBOUND_FILE_MAX_BYTES
+DEFAULT_MAX_TOTAL_BYTES = 256 * 1024 * 1024
 
 _RESOURCE_SEGMENT_KINDS = frozenset({"image", "audio", "video", "file"})
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
@@ -119,6 +123,7 @@ class ResourceMaterializationService:
         _preflight_workspace_storage(workspace)
         prepared: list[_PreparedResource] = []
         total_bytes = 0
+        deadline = time.monotonic() + DOWNLOAD_BATCH_TIMEOUT_SECONDS
         for item in bound:
             remaining = self._limits.max_total_bytes - total_bytes
             if remaining <= 0:
@@ -128,7 +133,14 @@ class ResourceMaterializationService:
                 )
             fetch_limit = min(self._limits.max_file_bytes, remaining)
             try:
-                fetched = await self._fetcher.fetch(item.ticket, max_bytes=fetch_limit)
+                fetched = await asyncio.wait_for(
+                    self._fetcher.fetch(item.ticket, max_bytes=fetch_limit),
+                    timeout=max(0.0, deadline - time.monotonic()),
+                )
+            except TimeoutError as exc:
+                raise ResourceMaterializationError(
+                    "resource_fetch_timeout", "Resource download batch time budget exhausted",
+                ) from exc
             except Exception as exc:
                 raise ResourceMaterializationError(
                     "resource_fetch_failed",
@@ -142,6 +154,10 @@ class ResourceMaterializationService:
             total_bytes += len(prepared_item.data)
             prepared.append(prepared_item)
 
+        if time.monotonic() >= deadline:
+            raise ResourceMaterializationError(
+                "resource_fetch_timeout", "Resource download batch time budget exhausted",
+            )
         return _commit_resources(workspace, event=event, resources=tuple(prepared))
 
 

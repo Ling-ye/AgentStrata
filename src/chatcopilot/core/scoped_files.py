@@ -41,14 +41,18 @@ def require_single_link_regular_file(info: os.stat_result) -> None:
     require_regular_file(info, single_link=True)
 
 
-def read_bytes(path: Path, limit: int) -> bytes:
+def read_bytes(path: Path, limit: int, *, offset: int = 0) -> bytes:
+    if type(offset) is not int or offset < 0:
+        raise ValueError("offset must be a non-negative byte offset")
     if current_execution_scope() is None:
         with path.open("rb") as stream:
+            stream.seek(offset)
             return stream.read(limit)
     with _parent(path) as parent:
         fd = os.open(path.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
         with os.fdopen(fd, "rb") as stream:
             require_regular_file(os.fstat(stream.fileno()))
+            stream.seek(offset)
             return stream.read(limit)
 
 

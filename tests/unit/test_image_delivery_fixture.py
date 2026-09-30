@@ -84,3 +84,18 @@ def test_file_sender_rejects_oversize_instead_of_sending_truncated_bytes(tmp_pat
     with pytest.raises(ValueError, match="exceeds"):
         sender([str(tmp_path / "large.bin")], "")
     dispatch.assert_not_called()
+
+
+def test_file_sender_checks_aggregate_budget_before_dispatch(tmp_path, monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import Mock
+    from chatcopilot.application import file_delivery
+    monkeypatch.setattr(file_delivery, "OUTBOUND_RESOURCE_SOURCE_CHARS", 25)
+    paths = [tmp_path / name for name in ("first.bin", "second.bin")]
+    for path in paths:
+        path.write_bytes(b"123456")
+    dispatch = Mock()
+    sender = file_delivery.create_file_sender(SimpleNamespace(root=tmp_path), dispatch)
+    with pytest.raises(ValueError, match="combined byte budget"):
+        sender([str(p) for p in paths], "")
+    dispatch.assert_not_called()

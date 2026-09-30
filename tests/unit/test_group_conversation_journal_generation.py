@@ -364,3 +364,21 @@ def test_commit_fsyncs_files_and_state_directory_and_leaves_no_temp_files(
     assert any(stat.S_ISDIR(mode) for mode in synced_modes)
     assert not list(journal.path.parent.glob("*.tmp"))
     assert not list(journal.path.parent.glob(".*.tmp"))
+
+
+def test_full_exchange_survives_reopen_while_context_is_bounded(tmp_path):
+    from chatcopilot.application.conversation_journal import GroupConversationJournal as GatewayJournal
+    workspace = _workspace(tmp_path)
+    journal = GatewayJournal(workspace, _conversation())
+    user = "问" * 40_000
+    assistant = "答" * 100_000
+    identity = _identity(100)
+    sequence = journal.append(identity=identity, user_text=user, assistant_text=assistant, exchange_id="outbound_budget_test")
+    reopened = GatewayJournal(workspace, _conversation())
+    assert _records(reopened)[0]["user_text"] == user
+    assert _records(reopened)[0]["assistant_text"] == assistant
+    assert reopened.append(identity=identity, user_text=user, assistant_text=assistant, exchange_id="outbound_budget_test") == sequence
+    context, latest = reopened.context_since(0)
+    assert latest == sequence and "[truncated]" in context
+    assert len(context) < 65_000
+    assert _records(reopened)[0]["assistant_text"] == assistant

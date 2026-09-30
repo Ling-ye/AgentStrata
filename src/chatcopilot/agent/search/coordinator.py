@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from chatcopilot.contracts.subagents import SearchLimitsSpec
+
 import contextvars
 import dataclasses
 import hashlib
@@ -48,6 +50,7 @@ class SearchCoordinator:
         page_reader: PageReader,
         reranker: ResultReranker | None = None,
         max_wall_seconds: float | None = None,
+        limits: SearchLimitsSpec | None = None,
     ) -> None:
         self._router = router
         self._registry = registry
@@ -55,8 +58,11 @@ class SearchCoordinator:
         self._page_reader = page_reader
         self._reranker = reranker
         self._max_wall = max_wall_seconds
+        self._limits = limits
 
     def run(self, request: SearchRequest) -> dict[str, Any]:
+        if self._limits is not None:
+            request = SearchRequest.from_args(request.to_dict(), limits=self._limits)
         started = time.monotonic()
         deadline = started + self._max_wall if self._max_wall else None
         available = self._registry.available_sources()
@@ -105,6 +111,7 @@ class SearchCoordinator:
             "summary": _summary_for(completed, ok_results, results, reflection),
             "plan": plan.to_dict(),
             "results": _compact_results(results, budget=request.budget),
+            "full_results": results,
             "actual_sources": actual_sources,
             "reflection": reflection,
             "result_processing": result_processing,

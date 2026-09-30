@@ -236,6 +236,21 @@ class CustomSubagentSpec:
 
 
 @dataclass(frozen=True)
+class SearchLimitsSpec:
+    """Instance-owned search breadth; requests cannot raise these limits."""
+
+    max_urls: int = 20
+    thorough_max_steps: int = 10
+    thorough_max_deep_read_urls: int = 8
+
+    def __post_init__(self) -> None:
+        for name in ("max_urls", "thorough_max_steps", "thorough_max_deep_read_urls"):
+            value = getattr(self, name)
+            if type(value) is not int or value <= 0:
+                raise ValueError(f"search limits.{name} must be a positive integer")
+
+
+@dataclass(frozen=True)
 class SubagentSpec:
     """Bot-level subagent configuration."""
 
@@ -248,6 +263,7 @@ class SubagentSpec:
     search_budget: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)
     research_enabled: bool = False
     research_budget: SubagentBudgetSpec = field(default_factory=SubagentBudgetSpec)
+    search_limits: SearchLimitsSpec = field(default_factory=SearchLimitsSpec)
     search_providers: tuple[SearchProviderSpec, ...] = ()
     agents: dict[str, SubagentBudgetSpec] = field(default_factory=dict)
     overrides: dict[str, CustomSubagentSpec] = field(default_factory=dict)
@@ -278,6 +294,7 @@ __all__ = [
     "CodexMainSessionPolicy",
     "ContextPolicySpec",
     "SearchProviderSpec",
+    "SearchLimitsSpec",
     "CustomSubagentSpec",
     "SubagentBudgetSpec",
     "SubagentSpec",

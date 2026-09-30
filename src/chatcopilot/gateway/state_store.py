@@ -44,7 +44,8 @@ from .protocol import GATEWAY_EVENTS
 
 SCHEMA_VERSION = 4
 MAX_STATE_JSON_BYTES = 1024 * 1024
-MAX_OUTBOUND_ENVELOPE_JSON_BYTES = 8 * 1024 * 1024
+MAX_OUTBOUND_ENVELOPE_JSON_BYTES = 128 * 1024 * 1024
+MAX_RUN_RESULT_JSON_BYTES = MAX_OUTBOUND_ENVELOPE_JSON_BYTES
 _INSTANCE_LEASE_FILENAME = "gateway.instance.lock"
 INGRESS_STATES = frozenset({"accepted", "processing", "completed", "failed", "recovery_required"})
 OUTBOX_STATES = frozenset(
@@ -2524,7 +2525,8 @@ def _validate_run_terminal_payload(
     normalized_result = dict(result) if result is not None else None
     if normalized_result is not None and any(not isinstance(key, str) for key in normalized_result):
         raise ValueError("run result keys must be strings")
-    result_json = _json_dump(normalized_result) if normalized_result is not None else None
+    result_json = (_json_dump(normalized_result, max_bytes=MAX_RUN_RESULT_JSON_BYTES)
+                   if normalized_result is not None else None)
     if outcome == "failed":
         if error_code is None:
             raise ValueError("failed run requires an error_code")

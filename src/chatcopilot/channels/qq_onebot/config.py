@@ -30,9 +30,9 @@ class OneBotChannelConfig:
     account_id: str
     websocket_url: str
     access_token: str = field(repr=False)
-    action_timeout_seconds: float = 10.0
+    action_timeout_seconds: float = 120.0
     max_frame_bytes: int = 256 * 1024
-    max_outbound_frame_bytes: int = 8 * 1024 * 1024
+    max_outbound_frame_bytes: int = 128 * 1024 * 1024
     max_pending_actions: int = 64
     max_pending_events: int = 64
     resource_ticket_ttl_seconds: float = 300.0
@@ -78,11 +78,11 @@ class OneBotChannelConfig:
         if (
             isinstance(self.max_outbound_frame_bytes, bool)
             or not isinstance(self.max_outbound_frame_bytes, int)
-            or not 1024 <= self.max_outbound_frame_bytes <= 32 * 1024 * 1024
+            or not 1024 <= self.max_outbound_frame_bytes <= 128 * 1024 * 1024
         ):
             raise OneBotConfigError(
                 "onebot_outbound_frame_limit_invalid",
-                "max_outbound_frame_bytes must be between 1024 and 33554432",
+                "max_outbound_frame_bytes must be between 1024 and 134217728",
             )
         if (
             isinstance(self.max_pending_actions, bool)

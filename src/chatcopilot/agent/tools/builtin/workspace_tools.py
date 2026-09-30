@@ -30,7 +30,6 @@ from chatcopilot.agent.tools.builtin.workspace.delivery import (
 from chatcopilot.agent.tools.builtin.workspace.images import (
     _IMAGE_DEFAULT_LIMIT,
     _IMAGE_DEFAULT_MAX_BYTES,
-    _IMAGE_MAX_LIMIT,
 )
 
 
@@ -135,6 +134,8 @@ _TEXT_RESULT_SCHEMA = object_schema(
         "content": {"type": "string"},
         "kb": {"type": "integer"},
         "truncated": {"type": "boolean"},
+        "offset": {"type": "integer"},
+        "next_offset": {"type": ["integer", "null"]},
     },
     required=("content", "kb", "truncated"),
 )
@@ -289,7 +290,7 @@ TOOLS: List[ToolDef] = [
     ToolDef(
         access="member",
         name="read_text_head",
-        summary="读取当前工作区文本文件开头；拒绝目录、二进制和越界路径。",
+        summary="分页读取当前工作区文本文件；按 next_offset 继续读取，拒绝目录、二进制和越界路径。",
         input_schema=object_schema(
             {
                 "path": {
@@ -298,8 +299,14 @@ TOOLS: List[ToolDef] = [
                 },
                 "kb": {
                     "type": "integer",
-                    "description": "最大 KB，默认 4。",
+                    "description": "单页最大 KiB，默认 4，上限 512。",
                     "default": 4,
+                    "minimum": 1,
+                    "maximum": 512,
+                },
+                "offset": {
+                    "type": "integer", "minimum": 0, "default": 0,
+                    "description": "字节偏移；从上一页 next_offset 继续可保持 UTF-8 字符完整。",
                 },
             },
             required=("path",),
@@ -375,12 +382,15 @@ TOOLS: List[ToolDef] = [
                 },
                 "limit": {
                     "type": "integer",
-                    "description": "最大张数；默认 3，上限 5。",
+                    "description": "最多下载的成功图片数；默认 3，受批次总字节与时间预算约束。",
+                    "minimum": 1,
                     "default": _IMAGE_DEFAULT_LIMIT,
                 },
                 "max_bytes": {
                     "type": "integer",
-                    "description": "单张最大字节数；默认 5MB，上限 20MB。",
+                    "description": "单张最大字节数；默认约 48 MiB，与文件发送预算一致。",
+                    "minimum": 1,
+                    "maximum": _IMAGE_DEFAULT_MAX_BYTES,
                     "default": _IMAGE_DEFAULT_MAX_BYTES,
                 },
             },
@@ -408,9 +418,8 @@ TOOLS: List[ToolDef] = [
                 "urls": {
                     "type": "array",
                     "items": {"type": "string", "minLength": 1},
-                    "description": "需要发送的公网 HTTP(S) 图片 URL，最多 5 个。",
+                    "description": "需要发送的公网 HTTP(S) 图片 URL，受单次交付的总字节预算约束。",
                     "minItems": 1,
-                    "maxItems": _IMAGE_MAX_LIMIT,
                 },
                 "message": {
                     "type": "string",

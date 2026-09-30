@@ -84,8 +84,8 @@ def test_bound_instances_keep_separate_frozen_timeouts_after_environment_changes
             projection.command_timeouts.timeout_max = 1
 
 
-@pytest.mark.parametrize("requested, expected", [(None, 45), (800, 800), (2000, 1200), (0, 1)])
-def test_run_command_applies_frozen_budget_and_clamps_request(tmp_path, monkeypatch, requested, expected):
+@pytest.mark.parametrize("requested, expected", [(None, 45), (800, 800), (2000, None), (0, None)])
+def test_run_command_applies_frozen_budget_and_rejects_out_of_range_requests(tmp_path, monkeypatch, requested, expected):
     scope = execution_scope(Role.OWNER, tmp_path, command_timeouts=CommandTimeouts(45, 1200))
     captured = []
     monkeypatch.setenv("CHATCOPILOT_DEV_SHELL_TIMEOUT_MAX", "2")
@@ -100,7 +100,24 @@ def test_run_command_applies_frozen_budget_and_clamps_request(tmp_path, monkeypa
         arguments["timeout_seconds"] = requested
     with bind_execution_scope(scope):
         result = shell_tools._handle_run_command(arguments, ToolContext(execution_scope=scope))
-    assert result.ok and captured == [expected]
+    if expected is None:
+        assert not result.ok and result.error_code == "command_timeout_invalid"
+        assert "1200" in result.error and not captured
+    else:
+        assert result.ok and captured == [expected]
+
+
+@pytest.mark.parametrize("requested", [True, 1.5, "1200"])
+def test_run_command_does_not_coerce_non_integer_timeouts(tmp_path, monkeypatch, requested):
+    from unittest.mock import Mock
+    scope = execution_scope(Role.OWNER, tmp_path, command_timeouts=CommandTimeouts(120, 1800))
+    run = Mock()
+    monkeypatch.setattr(shell_tools.subprocess, "run", run)
+    with bind_execution_scope(scope):
+        result = shell_tools._handle_run_command(
+            {"command": "echo probe", "timeout_seconds": requested}, ToolContext(execution_scope=scope))
+    assert not result.ok and result.error_code == "command_timeout_invalid"
+    run.assert_not_called()
 
 
 def test_gateway_actor_binds_runtime_command_timeouts(tmp_path):

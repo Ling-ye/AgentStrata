@@ -174,6 +174,7 @@ class AgentRuntime:
             main_llm=(self.search_model_client or self.research_model_client
                       or self.subagent_default_model_client),
             budget=self.subagents.research_budget,
+            limits=self.subagents.search_limits,
             tools=self.tools,
             raw_mcp_tools=raw_mcp_search_tools,
             provider_specs=self.subagents.search_providers,

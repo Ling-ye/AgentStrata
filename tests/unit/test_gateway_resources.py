@@ -237,3 +237,32 @@ def test_default_https_connection_rejects_peer_ip_drift() -> None:
         )
         with pytest.raises(OSError, match="identity changed"):
             connection.connect()
+
+
+def test_cdn_socket_waits_follow_the_shared_deadline_even_after_connection_close(monkeypatch):
+    from unittest.mock import Mock
+    from chatcopilot.channels.qq_onebot import resources
+    now = [0.0]
+    monkeypatch.setattr(resources.time, "monotonic", lambda: now[0])
+    sock = Mock()
+    connection = Mock(sock=sock)
+    response = Mock(status=200)
+    response.getheader.side_effect = lambda name: "image/png" if name == "Content-Type" else None
+    chunks = iter((b"x", b""))
+    def read1(size):
+        chunk = next(chunks)
+        now[0] = 290.0
+        return chunk
+    response.read1.side_effect = read1
+    def getresponse():
+        connection.sock = None  # HTTPConnection drops its reference for Connection: close.
+        return response
+    connection.getresponse.side_effect = getresponse
+    constructor = Mock(return_value=connection)
+    monkeypatch.setattr(resources, "_PinnedHttpsConnection", constructor)
+    data, media = resources._PinnedHttpsByteReader._read_sync(
+        _https_url(_QPIC_HOST), host=_QPIC_HOST, addresses=("1.1.1.1",), max_bytes=100)
+    assert (data, media) == (b"x", "image/png")
+    assert constructor.call_args.kwargs["timeout"] == 60.0
+    assert sock.settimeout.call_args.args == (10.0,)
+    connection.close.assert_called_once()
