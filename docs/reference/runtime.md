@@ -20,6 +20,21 @@ Channel 转换平台帧并负责实际传输；Gateway 采信身份、调用准�
 
 Application 的 `ActorTurnExecutor` 准备回合、管理 actor 和待确认交换，`execute()` 只返回 `TurnOutcome(result, exchange)`，不暴露 actor_state。`ExchangeRef` 是绑定本进程、本轮、session 和 Principal 的不透明引用；Gateway 保留准入、run、取消、outbox、交付和 writer generation。Provider 确认且 generation 仍有效后调用 `commit_exchange()`，Application 复检 envelope/receipt 绑定并幂等提交；未确认群交换由 `discard_exchange()` 丢弃并逐出 actor。交付已确认而 journal 失败不能改写为未送达或自动重发。
 
+生产 Channel 的 `accept_inbound()` 在身份与准入通过、ingress 持久化后返回；Gateway 从既有
+ingress 表调度长回合，不让 OneBot 接收 worker 等待整个 Agent。默认最多 8 个并发回合及
+1,024 条待执行/执行中消息，均由 [gateway 配置](configuration.md#gateway) 调整；容量耗尽
+明确拒绝新消息，不逐出已接受消息。每个精确 conversation key 按持久化插入顺序执行，
+不同会话不再因哈希锁碰撞串行。空闲与取消等待者退出后释放 Channel 会话锁。
+
+同步 `handle_inbound()` 等待本条执行结果；取消会终止该条执行。停止 runtime 时取消活动
+回合，尚未开始的 accepted ingress 保留，重启用保存的 Principal 恢复；已开始且无法确定
+结果的记录继续遵守既有恢复规则，不自动重放。OneBot 接收队列默认 256 条，短时排队采用
+有界背压，不因队列暂满主动断开连接；接收预算不保证 provider 在外部断连时补发消息。
+
+OneBot 入站帧默认 4 MiB，可配置到 16 MiB；单文本段最多 256 Ki 个字符、每条最多
+512 段。规范化 ingress JSON 单独允许 8 MiB，普通控制状态 JSON 仍限 1 MiB；配置更大
+原始帧并不会绕过规范化落库预算。准入、账号、证据与资源绑定校验仍在持久化前执行。
+
 ## RuntimeAdapter 创建具体 session
 
 生产 QQ 会话通过 ActorSessionFactory 注入绑定工作区与 Gateway session 的 FileSender。

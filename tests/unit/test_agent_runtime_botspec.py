@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 from chatcopilot.botspec import assemble_runtime_context
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
+import pytest
 
 
 def _write_bot(base: Path, agents_block: str = "") -> Path:
@@ -136,3 +137,17 @@ class RuntimeAdapterBotSpecTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@pytest.mark.parametrize("budget", [1024, 64 * 1024 * 1024, 128 * 1024 * 1024])
+def test_codex_protocol_record_budget_loads(tmp_path, budget):
+    spec = load_botspec(_write_bot(tmp_path, f"runtime: codex\nruntime_options:\n  codex:\n    max_protocol_record_bytes: {budget}"))
+    assert not [issue for issue in validate_botspec(spec) if issue.level == "error"]
+    assert spec.agents.codex_protocol_record_max_bytes == budget
+
+
+@pytest.mark.parametrize("budget", [0, 129 * 1024 * 1024])
+def test_codex_protocol_record_budget_rejects_out_of_range(tmp_path, budget):
+    spec = load_botspec(_write_bot(tmp_path, f"runtime: codex\nruntime_options:\n  codex:\n    max_protocol_record_bytes: {budget}"))
+    assert "agents.runtime_options.codex.max_protocol_record_bytes" in {
+        issue.field for issue in validate_botspec(spec) if issue.level == "error"}

@@ -48,6 +48,8 @@ class GatewaySpec:
     port_env: str = "CHATCOPILOT_GATEWAY_PORT"
     token_env: str = "CHATCOPILOT_GATEWAY_TOKEN"
     state_root_env: str = "CHATCOPILOT_GATEWAY_STATE_ROOT"
+    max_concurrent_turns: int = 8
+    max_pending_ingress: int = 1024
 
 
 @dataclass(frozen=True)
@@ -62,6 +64,7 @@ class QQChannelSpec:
     account_env: str = "QQ_ACCOUNT"
     mention_only_groups: bool = True
     action_timeout_seconds: float = 120.0
+    max_frame_bytes: int = 4 * 1024 * 1024
 
 
 @dataclass(frozen=True)

@@ -54,13 +54,21 @@ BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 sess
  - **直接搜索执行**：`agents.unified_search.providers` 按顺序声明 `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。Tavily、Brave 与 SearXNG 由有界进程内 HTTP client 执行，账号态或垂直来源继续直接调用 search-only MCP tool；两者都跳过 subagent LLM 并共享 `SearchCircuitBreaker`、deadline、结果归一化与多源降级。凭据 provider 只允许审核过的官方 HTTPS endpoint，SearXNG 只允许回环 endpoint，redirect 不得携带 credential。
  - **显式来源约束**：用户点名小红书 / XHS / Xiaohongshu 时，`ResearchRequest` 归一为 `source_hints=["experience"]`，router 只保留显式来源，避免静默回退到通用网页搜索。
  - **完整结果与预览**：预览仍按条目与字符预算压缩；已收集、去重排序后的完整结果存入当前 actor 的会话结果缓存，通过 `result_ref` 和 `read_tool_result` 分页读取。来源的相关性过滤与 HTTP 容量校验仍生效；缓存关闭或淘汰后明确返回引用失效，不自动重放搜索。
+ - **网页全文**：静态抓取最多读取 2 MiB 响应字节，HTTP 等待 60 秒，超限明确失败，不把
+   响应前缀称为完整正文。提取正文与模型预览分别保存；`max_chars` 只控制预览，允许 1 到
+   50,000 个字符，越界报错。统一入口的页面 `content` 保留全文，`summary` 保留预览。
+   既有会话缓存总容量仍为 16 MiB，过大聚合结果会标记 `not_cached_oversized`，不能承诺
+   这类结果获得持久的全文引用；本次不改变缓存策略。
+ - **完成度**：有可用证据与请求完整完成分别判断。任一计划步骤或请求页面失败、页面标记
+   不完整、指定来源/URL 未覆盖或交叉核实未完成，均令搜索数据 `ok=false`，有证据时
+   `limits.partial=true`；同时报告计划/完成步骤、页面和未读取请求 URL 数。
  - **时间预算**：统一搜索使用 `agents.unified_search.timeout_seconds`，并服从更小的上层回合预算。当前 QQ 实例为 600 秒，Tavily 请求 30 秒、SearXNG 请求 60 秒；并行步骤超时会标记 `time_budget_exhausted`。该调度预算不强杀正在执行的同步下游调用，实际返回仍受下游超时约束。
  - **搜索范围**：`agents.unified_search.limits` 声明 `max_urls`、`thorough_max_steps`、`thorough_max_deep_read_urls`，默认分别为 20、10、8。配置冻结后同时用于请求校验、路由和页面读取；不再固定最多 5 个 URL 或 3 类来源。quick/standard 的步骤预算仍为 1/3；显式来源需要足够步骤，预算不足时要求选择更深入的模式，不静默丢弃来源。模型参数不能提高宿主配置。
   - **熔断器递增 TTL**：`SearchCircuitBreaker` 对 `mcp_quota_exceeded` 使用指数递增 TTL（1h → 2h → … → 24h 上限，env `CHATCOPILOT_SEARCH_QUOTA_MAX_TTL`），成功后重置。直接搜索和 delegate 路径共享同一 `SearchCircuitBreaker` 实例。
   - **浏览器降级**：`_needs_browser` 识别 HTTP 403/401/429 为浏览器可解决错误，自动尝试 Playwright 渲染。
   - **Router fallback 降级**：Router LLM 异常时 `thorough` 自动降到 `standard`，runner 同步降级 request.depth，避免 fallback plan 浪费步数和 subagent 预算。
-  - **同 turn 不重复搜索**：唯一 `runtime.accuracy_and_search` layer 指示主 Agent 不在同一轮重复调用 `search_information`，避免双倍时间开销。
- - **同轮搜索硬保护**：`AgentSession` 会在同一轮首个成功 `search_information` 后拦截后续重复搜索，把上一次搜索结果作为工具结果回灌，并要求模型基于已有证据作答。
+ - **同轮搜索硬保护**：Native/LangGraph 会在同一轮首个完整成功的 `search_information`
+   后拦截后续重复搜索并回灌已有结果；部分证据不触发该保护，允许补查未完成内容。
   - **搜索 subagent 快速退出**：搜索 subagent prompt 指示在遇到 quota/unavailable 等基础设施错误时立即 `submit_result(ok=false)`，禁止盲猜 URL 或重试。
 
 ## RAG

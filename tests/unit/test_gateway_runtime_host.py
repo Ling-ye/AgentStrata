@@ -125,6 +125,15 @@ def test_runtime_preserves_configured_onebot_acknowledgement_timeout(tmp_path: P
     assert parse_gateway_runtime_config(runtime, _environment(tmp_path)).onebot.action_timeout_seconds == 240.5
 
 
+def test_runtime_preserves_intake_and_native_frame_budgets(tmp_path):
+    runtime = _runtime()
+    runtime.gateway = GatewaySpec(max_concurrent_turns=12, max_pending_ingress=4096)
+    runtime.channels = ChannelsSpec(qq=QQChannelSpec(max_frame_bytes=8 * 1024 * 1024))
+    config = parse_gateway_runtime_config(runtime, _environment(tmp_path))
+    assert config.max_concurrent_turns == 12 and config.max_pending_ingress == 4096
+    assert config.onebot.max_frame_bytes == 8 * 1024 * 1024
+
+
 @pytest.mark.parametrize(
     "legacy_key",
     (

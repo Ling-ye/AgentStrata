@@ -12,6 +12,8 @@ repositories:
     include_globs:
       - "**"
     deny_globs:
+      - ".worktrees/**"
+      - ".cache/**"
       - "console/web/dist/**"
       - "scratch_unit_tests/**"
       - "scratch_unit_tests2/**"

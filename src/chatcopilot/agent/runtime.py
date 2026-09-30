@@ -431,6 +431,8 @@ class AgentRuntime:
             runtime_policy=(replace(self.subagents.codex, web_search_mode="disabled")
                             if runtime_id == "codex" and search_tool is not None else self.subagents.codex),
             turn_timeout_seconds=self.route.turn_timeout_seconds,
+            **({"max_protocol_record_bytes": self.subagents.codex_protocol_record_max_bytes}
+               if runtime_id == "codex" else {}),
             llm=self.main_model_client,
             tools_schema=merged_schema,
             disclosure=disclosure,

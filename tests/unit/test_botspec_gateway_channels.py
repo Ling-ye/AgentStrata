@@ -111,6 +111,26 @@ def test_onebot_acknowledgement_timeout_loads(tmp_path, timeout):
     assert spec.channels.qq.action_timeout_seconds == timeout
 
 
+def test_intake_budgets_load_without_ignoring_configuration(tmp_path):
+    data = deepcopy(_BASE)
+    data["gateway"].update(max_concurrent_turns=12, max_pending_ingress=4096)
+    data["channels"]["qq"]["max_frame_bytes"] = 8 * 1024 * 1024
+    spec = load_botspec(_write_spec(tmp_path, data))
+    assert not [issue for issue in validate_botspec(spec) if issue.level == "error"]
+    assert spec.gateway.max_concurrent_turns == 12
+    assert spec.gateway.max_pending_ingress == 4096
+    assert spec.channels.qq.max_frame_bytes == 8 * 1024 * 1024
+
+
+@pytest.mark.parametrize("section,field,value", [("gateway", "max_concurrent_turns", 0),
+    ("gateway", "max_pending_ingress", -1), ("qq", "max_frame_bytes", 17 * 1024 * 1024)])
+def test_invalid_intake_budgets_are_rejected(tmp_path, section, field, value):
+    data = deepcopy(_BASE)
+    target = data["gateway"] if section == "gateway" else data["channels"]["qq"]
+    target[field] = value
+    assert f'{"gateway" if section == "gateway" else "channels.qq"}.{field}' in _error_fields(_write_spec(tmp_path, data))
+
+
 @pytest.mark.parametrize("timeout", [0, -1, float("inf"), float("nan")])
 def test_invalid_onebot_acknowledgement_timeout_is_rejected(tmp_path, timeout):
     data = deepcopy(_BASE)

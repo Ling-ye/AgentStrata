@@ -60,7 +60,7 @@ def _group(message: object, **changes: object) -> dict[str, object]:
 
 def _decode(event: dict[str, object], *, observed_at: float = 1000.0):
     raw = json.dumps(event, ensure_ascii=False, separators=(",", ":"))
-    frame = parse_native_frame(raw, max_frame_bytes=256 * 1024)
+    frame = parse_native_frame(raw, max_frame_bytes=4 * 1024 * 1024)
     result = decode_inbound_message(
         frame,
         account_id=BOT,
@@ -126,6 +126,21 @@ def test_native_frame_is_bounded_bound_to_exact_bytes_and_requires_object() -> N
     with pytest.raises(OneBotCodecError) as not_object:
         parse_native_frame("[]", max_frame_bytes=100)
     assert not_object.value.code == "onebot_frame_not_object"
+
+
+def test_larger_text_and_segment_budgets_reach_normalized_input():
+    text = "汉" * (256 * 1024)
+    segments = [{"type": "text", "data": {"text": text}}]
+    segments.extend({"type": "at", "data": {"qq": BOT}} for _ in range(511))
+    raw, _, decoded = _decode(_group(segments))
+    assert len(raw.encode()) > 256 * 1024
+    assert decoded.event.segments[0].text == text
+    assert len(decoded.event.segments) == 512
+    with pytest.raises(OneBotCodecError):
+        _decode(_group(segments + [{"type": "at", "data": {"qq": BOT}}]))
+    with pytest.raises(OneBotCodecError):
+        _decode(_group([{"type": "at", "data": {"qq": BOT}},
+                        {"type": "text", "data": {"text": text + "汉"}}]))
 
 
 def test_group_structured_mention_normalizes_evidence_segments_and_resource_ticket() -> None:

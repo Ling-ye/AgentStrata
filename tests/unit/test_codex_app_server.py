@@ -177,9 +177,10 @@ def run_fixture(tmp_path, mode, *, on_poll=lambda: None, thread_id="", timeout_s
     return result, threads, events
 
 
-def test_stdio_accepts_bounded_multi_megabyte_command_record(tmp_path):
+@pytest.mark.parametrize("size", [2 * 1024 * 1024, 9 * 1024 * 1024])
+def test_stdio_accepts_bounded_multi_megabyte_command_record(tmp_path, size):
     script = tmp_path / "server.py"
-    script.write_text(_SERVER)
+    script.write_text(_SERVER.replace("2*1024*1024", str(size)))
     events = []
     run_app_server([sys.executable, str(script), "large"], cwd=tmp_path, env=dict(os.environ),
         prompt="fixture", model="model", effort="medium", thread_id="", image_paths=(), timeout_seconds=3,
@@ -187,7 +188,17 @@ def test_stdio_accepts_bounded_multi_megabyte_command_record(tmp_path):
         on_poll=lambda: None)
     command = next(params["item"] for method, params in events
                    if method == "item/completed" and params["item"]["type"] == "commandExecution")
-    assert len(command["aggregatedOutput"]) == 2 * 1024 * 1024
+    assert len(command["aggregatedOutput"]) == size
+
+
+def test_stdio_honors_explicit_smaller_record_budget(tmp_path):
+    script = tmp_path / "server.py"
+    script.write_text(_SERVER)
+    with pytest.raises(RuntimeError, match="protocol record exceeds"):
+        run_app_server([sys.executable, str(script), "large"], cwd=tmp_path, env=dict(os.environ),
+            prompt="fixture", model="model", effort="medium", thread_id="", image_paths=(), timeout_seconds=3,
+            on_notification=lambda *_: None, on_thread=lambda _: None, on_poll=lambda: None,
+            max_record_bytes=1024 * 1024)
 
 
 @pytest.mark.parametrize("thread_id", ["", "thread-fixture"])

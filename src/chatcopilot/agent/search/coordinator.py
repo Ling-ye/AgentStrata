@@ -93,7 +93,16 @@ class SearchCoordinator:
         ok_results = [item for item in results if item.get("ok")]
         actual_sources = _successful_actual_sources(results)
         cross_check_completed = not plan.cross_check or len(actual_sources) >= 2
-        completed = bool(ok_results) and cross_check_completed
+        required_results = results[:len(plan.steps)]
+        requested_sources = set(request.source_hints)
+        if request.urls:
+            requested_sources.add("url")
+        fulfilled_sources = {item.get("logical_source") for item in required_results if item.get("ok")}
+        completed_urls = {page.get("url") for item in required_results for page in item.get("pages", [])
+                          if isinstance(page, dict) and _complete_page(page)}
+        completed = (bool(ok_results) and len(required_results) == len(plan.steps)
+                     and all(_complete_step(item) for item in required_results) and cross_check_completed
+                     and requested_sources <= fulfilled_sources and set(request.urls) <= completed_urls)
         reflection = _reflect_results(results)
         if ok_results and not completed:
             reflection["status"] = "partial_enough"
@@ -121,6 +130,9 @@ class SearchCoordinator:
                 "cross_check_requested": plan.cross_check,
                 "cross_check_completed": cross_check_completed,
                 "partial": bool(ok_results) and not completed,
+                "planned_steps": len(plan.steps),
+                "completed_steps": sum(_complete_step(item) for item in required_results),
+                "unread_requested_urls": len(set(request.urls) - completed_urls),
             },
         }
         if reranked is not None:
@@ -345,6 +357,9 @@ class SearchCoordinator:
         )
         return {
             "ok": any(item.get("ok") for item in pages),
+            "complete": len(pages) == len(urls) and all(_complete_page(item) for item in pages),
+            "requested_pages": len(urls),
+            "completed_pages": sum(_complete_page(item) for item in pages),
             "logical_source": "url",
             "actual_source": "url",
             "pages": pages,
@@ -375,6 +390,8 @@ class SearchCoordinator:
         )
         result = dict(result)
         result["summary"] = {**summary, "fetched_pages": fetched_pages}
+        if fetched_pages:
+            result["complete"] = all(_complete_page(item) for item in fetched_pages)
         return result
 
     def _cross_check(
@@ -543,6 +560,14 @@ def _rewrite_query(query: str) -> str:
 
 
 
+
+
+def _complete_page(page: dict[str, Any]) -> bool:
+    return page.get("ok") is True and page.get("complete") is not False
+
+
+def _complete_step(result: dict[str, Any]) -> bool:
+    return result.get("ok") is True and result.get("complete") is not False
 
 
 __all__ = ["SearchCoordinator"]

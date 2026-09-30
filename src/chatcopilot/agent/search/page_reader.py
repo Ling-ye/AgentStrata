@@ -27,6 +27,8 @@ class PageReadResult:
     summary: Any
     outputs: list[Any]
     actual_source: str
+    content: Any = None
+    complete: bool = True
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -36,6 +38,8 @@ class PageReadResult:
             "summary": self.summary,
             "outputs": self.outputs,
             "actual_source": self.actual_source,
+            "content": self.content,
+            "complete": self.ok and self.complete,
         }
 
 
@@ -97,6 +101,8 @@ class PageReader:
             summary=summary,
             outputs=list(tool_result.outputs),
             actual_source="web_fetch",
+            content=tool_result.data.get("content", summary) if tool_result.ok else None,
+            complete=tool_result.ok and tool_result.data.get("complete") is not False,
         )
         if (
             allow_dynamic
@@ -182,6 +188,8 @@ class PageReader:
             summary=payload if payload else (tool_result.summary or tool_result.error or ""),
             outputs=list(tool_result.outputs),
             actual_source="playwright",
+            content=payload.get("content", payload) if payload else tool_result.summary,
+            complete=ok and payload.get("complete") is not False,
         )
 
 

@@ -56,7 +56,8 @@ _BOT_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2"}
 _GATEWAY_FIELDS = frozenset(
-    {"protocol_version", "host", "port_env", "token_env", "state_root_env"}
+    {"protocol_version", "host", "port_env", "token_env", "state_root_env",
+     "max_concurrent_turns", "max_pending_ingress"}
 )
 _CHANNELS_FIELDS = frozenset({"qq"})
 _QQ_CHANNEL_FIELDS = frozenset(
@@ -69,6 +70,7 @@ _QQ_CHANNEL_FIELDS = frozenset(
         "account_env",
         "mention_only_groups",
         "action_timeout_seconds",
+        "max_frame_bytes",
     }
 )
 _SUBAGENT_NAME_RE = re.compile(r"^[a-z][a-z0-9_]{1,40}$")
@@ -394,6 +396,10 @@ def _validate_gateway_channels(
 
     gateway = spec.gateway
     if gateway is not None:
+        for name in ("max_concurrent_turns", "max_pending_ingress"):
+            value = getattr(gateway, name)
+            if type(value) is not int or value <= 0:
+                issues.append(ValidationIssue("error", f"gateway.{name} 必须为正整数。", f"gateway.{name}"))
         if type(gateway.protocol_version) is not int or gateway.protocol_version != 1:
             issues.append(
                 ValidationIssue(
@@ -472,6 +478,9 @@ def _validate_gateway_channels(
             )
 
         timeout = qq.action_timeout_seconds
+        if type(qq.max_frame_bytes) is not int or not 1024 <= qq.max_frame_bytes <= 16 * 1024 * 1024:
+            issues.append(ValidationIssue("error", "OneBot 入站帧预算须在 1024 到 16777216 字节之间。",
+                                          "channels.qq.max_frame_bytes"))
         if (isinstance(timeout, bool) or not isinstance(timeout, (int, float))
                 or not math.isfinite(timeout) or timeout <= 0):
             issues.append(ValidationIssue("error", "OneBot 回执等待必须为有限正数。",
@@ -625,6 +634,10 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                     ),
                     "gateway.state_root_env",
                 ),
+                max_concurrent_turns=_strict_integer(gateway.get("max_concurrent_turns"),
+                    "gateway.max_concurrent_turns", 8),
+                max_pending_ingress=_strict_integer(gateway.get("max_pending_ingress"),
+                    "gateway.max_pending_ingress", 1024),
             )
             if gateway_configured
             else None
@@ -668,6 +681,8 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                         qq_channel.get("action_timeout_seconds"),
                         "channels.qq.action_timeout_seconds", 120.0,
                     ),
+                    max_frame_bytes=_strict_integer(qq_channel.get("max_frame_bytes"),
+                        "channels.qq.max_frame_bytes", 4 * 1024 * 1024),
                 )
                 if qq_channel is not None
                 else None
@@ -892,7 +907,7 @@ def _parse_subagents(
     if set(native_options) - {"env_prefix"}:
         raise ValueError("unsupported Native runtime option")
     codex_options = _mapping(options.get("codex", {}), "agents.runtime_options.codex")
-    if set(codex_options) - {"turn_timeout_seconds", "extensions"}:
+    if set(codex_options) - {"turn_timeout_seconds", "extensions", "max_protocol_record_bytes"}:
         raise ValueError("unsupported Codex runtime option")
     if "persona_control" in raw:
         raise ValueError(
@@ -946,6 +961,8 @@ def _parse_subagents(
         codex_extensions=_optional_str(codex_options.get("extensions")),
         codex_turn_timeout_seconds=_strict_positive_int(codex_options.get("turn_timeout_seconds"),
             "agents.runtime_options.codex.turn_timeout_seconds", 21600),
+        codex_protocol_record_max_bytes=_strict_integer(codex_options.get("max_protocol_record_bytes"),
+            "agents.runtime_options.codex.max_protocol_record_bytes", 32 * 1024 * 1024),
         codex=_parse_codex_main_session_policy(raw, field_prefix=field_prefix),
         include=include,
         defaults=defaults,
@@ -1343,6 +1360,10 @@ def _is_loopback_host(hostname: str) -> bool:
 
 
 def _validate_subagents(spec: BotSpec, issues: list[ValidationIssue]) -> None:
+    record_budget = spec.agents.codex_protocol_record_max_bytes
+    if type(record_budget) is not int or not 1024 <= record_budget <= 128 * 1024 * 1024:
+        issues.append(ValidationIssue("error", "Codex 协议记录预算须在 1024 到 134217728 字节之间。",
+                                      "agents.runtime_options.codex.max_protocol_record_bytes"))
     if spec.agents.runtime not in RUNTIME_IDS:
         issues.append(
             ValidationIssue(

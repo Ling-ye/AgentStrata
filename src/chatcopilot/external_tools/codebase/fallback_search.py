@@ -1,6 +1,7 @@
 """Portable read-only search used when ripgrep is unavailable."""
 from __future__ import annotations
 
+import os
 import re
 from pathlib import Path
 
@@ -29,15 +30,27 @@ def list_visible_files(
         raise ValueError(f"search root escapes repository: {root}") from exc
 
     files: list[str] = []
-    for path in root.rglob("*"):
-        if path.is_symlink() or not path.is_file():
-            continue
-        try:
-            rel_path = path.resolve().relative_to(repository_root).as_posix()
-        except ValueError:
-            continue
-        if is_visible(repository, rel_path):
-            files.append(rel_path)
+    subtree_denials = tuple(pattern for pattern in repository.deny_globs if pattern.endswith("/**"))
+    for directory, dirs, names in os.walk(root, followlinks=False):
+        parent = Path(directory)
+        dirs[:] = [
+            name for name in dirs
+            if not (parent / name).is_symlink()
+            and not matches_any(
+                (parent / name).relative_to(repository_root).as_posix() + "/",
+                subtree_denials,
+            )
+        ]
+        for name in names:
+            path = parent / name
+            if path.is_symlink() or not path.is_file():
+                continue
+            try:
+                rel_path = path.resolve().relative_to(repository_root).as_posix()
+            except ValueError:
+                continue
+            if is_visible(repository, rel_path):
+                files.append(rel_path)
     return sorted(files)
 
 

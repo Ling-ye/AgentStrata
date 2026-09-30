@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import hmac
 import math
+import logging
 import re
 import time
 from typing import Any, Literal, Protocol
@@ -20,6 +21,7 @@ from chatcopilot.channels.base import (
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.gateway import (
     CanonicalInboundEvent,
+    ChannelInputObservation,
     ChannelAccountRef,
     DeliveryReceipt,
     OutboundEnvelope,
@@ -29,7 +31,7 @@ from chatcopilot.core.runtime_observation import capture_payload, outbound_summa
 from chatcopilot.contracts.gateway_rpc import DeliveryUpdatedEvent
 
 from .rpc_validation import serialize_event_payload
-from .state_store import GatewayStateStore, IngressConflict, IngressRecord
+from .state_store import GatewayStateStore, IngressConflict, IngressRecord, StaleWriterGeneration
 
 
 ChannelRuntimeState = Literal[
@@ -42,6 +44,9 @@ ChannelRuntimeState = Literal[
 ]
 _IDENTITY_RE = re.compile(r"^[^\x00\r\n]{1,256}$")
 _ERROR_CODE_RE = re.compile(r"^[a-z][a-z0-9_.-]{0,127}$")
+_LOGGER = logging.getLogger(__name__)
+ConversationKey = tuple[str, str, str, str]
+IngressKey = tuple[str, str, str]
 
 
 class GatewayIngressPort(Protocol):
@@ -101,6 +106,8 @@ class ChannelRuntimeManager:
         event_sink: DeliveryEventSinkPort | None = None,
         writer_generation: int | None = None,
         ingress_retention_limit: int = 10_000,
+        max_concurrent_turns: int = 8,
+        max_pending_ingress: int = 1024,
         clock: Callable[[], float] = time.time,
     ) -> None:
         if writer_generation is not None and (
@@ -119,6 +126,17 @@ class ChannelRuntimeManager:
         self._configured_writer_generation = writer_generation
         self._ingress_retention_limit = ingress_retention_limit
         self._clock = clock
+        for name, value in (("max_concurrent_turns", max_concurrent_turns),
+                            ("max_pending_ingress", max_pending_ingress)):
+            if type(value) is not int or value < 1:
+                raise ValueError(f"{name} must be positive")
+        self._max_pending_ingress = max_pending_ingress
+        self._turn_slots = asyncio.Semaphore(max_concurrent_turns)
+        self._ingress_tasks: dict[ConversationKey, asyncio.Task[None]] = {}
+        self._ingress_completions: dict[IngressKey, asyncio.Future[None]] = {}
+        self._completion_conversations: dict[IngressKey, ConversationKey] = {}
+        self._active_ingress: dict[IngressKey, asyncio.Task[None]] = {}
+        self._live_observations: dict[IngressKey, ChannelInputObservation] = {}
         self._drivers: dict[str, _RegisteredDriver] = {}
         self._drivers_by_account: dict[ChannelAccountRef, _RegisteredDriver] = {}
         self._state: ChannelRuntimeState = "stopped"
@@ -283,6 +301,17 @@ class ChannelRuntimeManager:
             self._accepting = False
             self._state = "stopping"
             self._activation_gate.set()
+            tasks = tuple(self._ingress_tasks.values())
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+            for completion in self._ingress_completions.values():
+                if not completion.done():
+                    completion.set_exception(ChannelRuntimeError(
+                        "channel_ingress_stopped", "Unstarted intake remains durably accepted"))
+            self._ingress_completions.clear()
+            self._completion_conversations.clear()
+            self._live_observations.clear()
             failed = False
             for registered in reversed(tuple(self._drivers.values())):
                 try:
@@ -310,7 +339,36 @@ class ChannelRuntimeManager:
         )
 
     async def handle_inbound(self, event: CanonicalInboundEvent) -> None:
-        """Authorize first, then persist and uniquely claim only admitted ingress."""
+        """Submit admitted intake and await only this event's execution outcome."""
+
+        completion = await self._accept_inbound(event)
+        if completion is None:
+            return
+        try:
+            await asyncio.shield(completion)
+        except asyncio.CancelledError:
+            identity = _ingress_key(event)
+            active = self._active_ingress.get(identity)
+            if active is not None:
+                active.cancel()
+                await asyncio.gather(active, return_exceptions=True)
+            else:
+                generation = self._active_generation()
+                async with self._ingress_claim_lock:
+                    if self._state_store.claim_ingress(generation=generation,
+                            channel=identity[0], account_id=identity[1], event_id=identity[2], now=self._now()):
+                        self._state_store.finish_ingress(generation=generation,
+                            channel=identity[0], account_id=identity[1], event_id=identity[2],
+                            succeeded=False, retain_terminal=self._ingress_retention_limit, now=self._now())
+                self._settle_ingress(identity, asyncio.CancelledError())
+            raise
+
+    async def accept_inbound(self, event: CanonicalInboundEvent) -> None:
+        """Production Channel callback: return after admission and durable acceptance."""
+
+        await self._accept_inbound(event)
+
+    async def _accept_inbound(self, event: CanonicalInboundEvent) -> asyncio.Future[None] | None:
 
         await self._activation_gate.wait()
         generation = self._active_generation()
@@ -355,6 +413,9 @@ class ChannelRuntimeManager:
                 if existing.state != "accepted":
                     return
             principal = self._gateway_ingress.authorize_inbound(event)
+            if existing is None and self._state_store.pending_ingress_count() >= self._max_pending_ingress:
+                raise ChannelRuntimeError("channel_ingress_capacity_exceeded",
+                                          "Gateway pending intake reached its configured budget")
             reservation = self._state_store.reserve_ingress(
                 generation=generation,
                 event=event,
@@ -363,40 +424,97 @@ class ChannelRuntimeManager:
             )
             if reservation.state not in {"reserved", "accepted"}:
                 return
-            claimed = self._state_store.claim_ingress(
-                generation=generation,
-                channel=evidence.account.channel,
-                account_id=evidence.account.account_id,
-                event_id=evidence.event_id,
-                now=self._now(),
-            )
-            if not claimed:
-                return
-        try:
-            await self._gateway_ingress.handle_authorized_inbound(event, principal)
-        except BaseException as exc:
-            try:
-                self._state_store.finish_ingress(
-                    generation=generation,
-                    channel=evidence.account.channel,
-                    account_id=evidence.account.account_id,
-                    event_id=evidence.event_id,
-                    succeeded=False,
-                    retain_terminal=self._ingress_retention_limit,
-                    now=self._now(),
-                )
-            except Exception as finish_error:
-                raise finish_error from exc
-            raise
-        self._state_store.finish_ingress(
-            generation=generation,
-            channel=evidence.account.channel,
-            account_id=evidence.account.account_id,
-            event_id=evidence.event_id,
-            succeeded=True,
-            retain_terminal=self._ingress_retention_limit,
-            now=self._now(),
-        )
+            identity = _ingress_key(event)
+            completion = self._ingress_completions.get(identity)
+            if event.input_observation is not None:
+                self._live_observations.setdefault(identity, event.input_observation)
+            if completion is None:
+                completion = asyncio.get_running_loop().create_future()
+                completion.add_done_callback(_observe_ingress_completion)
+                self._ingress_completions[identity] = completion
+                self._completion_conversations[identity] = _conversation_key(event)
+            self._schedule_conversation(_conversation_key(event))
+            return completion
+
+    def _schedule_conversation(self, key: ConversationKey) -> None:
+        if key in self._ingress_tasks:
+            return
+        task = asyncio.create_task(self._drain_conversation(key), name="gateway-channel-intake")
+        self._ingress_tasks[key] = task
+        task.add_done_callback(lambda finished: self._conversation_finished(key, finished))
+
+    def _conversation_finished(self, key: ConversationKey, task: asyncio.Task[None]) -> None:
+        if self._ingress_tasks.get(key) is task:
+            del self._ingress_tasks[key]
+        error = None if task.cancelled() else task.exception()
+        if error is not None:
+            _LOGGER.warning("Gateway intake scheduler failed | error_type=%s", type(error).__name__)
+            for identity, conversation in tuple(self._completion_conversations.items()):
+                if conversation == key:
+                    self._settle_ingress(identity, error)
+        if self._writer_generation != self._state_store.current_writer_generation():
+            self._accepting = False
+            self._state = "error"
+            self._detail_code = "channel_writer_generation_stale"
+            for identity in tuple(self._ingress_completions):
+                self._settle_ingress(identity, StaleWriterGeneration("Gateway intake generation changed"))
+            return
+        if (error is None and self._accepting
+                and self._state_store.list_ingress(states=("accepted",), limit=1, conversation_key=key)):
+            self._schedule_conversation(key)
+
+    async def _drain_conversation(self, key: ConversationKey) -> None:
+        while self._accepting:
+            async with self._turn_slots:
+                generation = self._active_generation()
+                self._state_store.assert_writer_generation(generation)
+                rows = self._state_store.list_ingress(states=("accepted",), limit=1, conversation_key=key)
+                if not rows:
+                    return
+                record = rows[0]
+                async with self._ingress_claim_lock:
+                    claimed = self._state_store.claim_ingress(generation=generation, channel=record.channel,
+                        account_id=record.account_id, event_id=record.event_id, now=self._now())
+                if not claimed:
+                    continue
+                identity = _ingress_key(record.event)
+                task = asyncio.current_task()
+                assert task is not None
+                self._active_ingress[identity] = task
+                error: BaseException | None = None
+                try:
+                    observed = self._live_observations.pop(identity, None)
+                    event = replace(record.event, input_observation=observed)
+                    await self._gateway_ingress.handle_authorized_inbound(event, record.principal)
+                except BaseException as exc:
+                    error = exc
+                try:
+                    self._finish_recovered_ingress(record, generation=generation,
+                        succeeded=error is None, original_error=error)
+                except BaseException as exc:
+                    error = exc
+                finally:
+                    self._active_ingress.pop(identity, None)
+                    self._settle_ingress(identity, error)
+                if isinstance(error, asyncio.CancelledError):
+                    raise error
+                if self._state_store.current_writer_generation() != generation:
+                    return
+
+    def _settle_ingress(self, identity: IngressKey, error: BaseException | None) -> None:
+        self._live_observations.pop(identity, None)
+        self._completion_conversations.pop(identity, None)
+        completion = self._ingress_completions.pop(identity, None)
+        if completion is not None and not completion.done():
+            if error is None:
+                completion.set_result(None)
+            else:
+                completion.set_exception(error)
+
+    async def wait_idle(self) -> None:
+        """Await current durable intake for local evaluation and lifecycle verification."""
+        while self._ingress_tasks:
+            await asyncio.gather(*tuple(self._ingress_tasks.values()), return_exceptions=True)
 
     async def send(self, envelope: OutboundEnvelope) -> DeliveryReceipt:
         """Submit one newly durable outbound exactly once through its registered account."""
@@ -535,61 +653,16 @@ class ChannelRuntimeManager:
             return receipt
 
     async def _recover_accepted_ingress(self) -> None:
-        """Replay only intake durably admitted before any application side effect."""
-
+        """Schedule admitted, unstarted intake without blocking Channel activation."""
         generation = self._active_generation()
-        while True:
-            records = self._state_store.list_ingress(
-                states=("accepted",),
-                limit=1000,
-            )
-            if not records:
-                return
-            for record in records:
-                registered = self._drivers_by_account.get(record.event.evidence.account)
-                if registered is None:
-                    raise ChannelRuntimeError(
-                        "channel_recovery_account_unavailable",
-                        "Recovered ingress account is not registered",
-                    )
-                self._validate_ready_driver(registered)
-                async with self._ingress_claim_lock:
-                    self._state_store.assert_writer_generation(generation)
-                    claimed = self._state_store.claim_ingress(
-                        generation=generation,
-                        channel=record.channel,
-                        account_id=record.account_id,
-                        event_id=record.event_id,
-                        now=self._now(),
-                    )
-                if not claimed:
-                    continue
-                try:
-                    await self._gateway_ingress.handle_authorized_inbound(
-                        record.event,
-                        record.principal,
-                    )
-                except asyncio.CancelledError as exc:
-                    self._finish_recovered_ingress(
-                        record,
-                        generation=generation,
-                        succeeded=False,
-                        original_error=exc,
-                    )
-                    raise
-                except Exception as exc:
-                    self._finish_recovered_ingress(
-                        record,
-                        generation=generation,
-                        succeeded=False,
-                        original_error=exc,
-                    )
-                    continue
-                self._finish_recovered_ingress(
-                    record,
-                    generation=generation,
-                    succeeded=True,
-                )
+        self._state_store.assert_writer_generation(generation)
+        for key in self._state_store.accepted_ingress_conversations():
+            registered = self._drivers_by_account.get(ChannelAccountRef(key[0], key[1]))
+            if registered is None:
+                raise ChannelRuntimeError("channel_recovery_account_unavailable",
+                                          "Recovered ingress account is not registered")
+            self._validate_ready_driver(registered)
+            self._schedule_conversation(key)
 
     def _finish_recovered_ingress(
         self,
@@ -802,3 +875,22 @@ __all__ = [
     "ChannelRuntimeState",
     "DeliveryEventSinkPort",
 ]
+
+
+def _conversation_key(event: CanonicalInboundEvent) -> ConversationKey:
+    evidence = event.evidence
+    return (evidence.account.channel, evidence.account.account_id,
+            evidence.conversation.kind, evidence.conversation.conversation_id)
+
+
+def _ingress_key(event: CanonicalInboundEvent) -> IngressKey:
+    evidence = event.evidence
+    return evidence.account.channel, evidence.account.account_id, evidence.event_id
+
+
+def _observe_ingress_completion(completion: asyncio.Future[None]) -> None:
+    if completion.cancelled():
+        return
+    error = completion.exception()
+    if error is not None and not isinstance(error, asyncio.CancelledError):
+        _LOGGER.warning("Gateway ingress execution failed | error_type=%s", type(error).__name__)

@@ -659,6 +659,63 @@ def test_collected_search_results_after_preview_are_readable():
     executor.close()
 
 
+def test_full_fetched_page_tail_survives_search_preview_and_result_readback(monkeypatch):
+    from chatcopilot.agent.tools.result_reader import SessionResultStore
+    from chatcopilot.external_tools.web_fetch import tools as fetch
+    from tests.unit.test_web_fetch import _FakeResponse
+
+    body = ("<p>" + "正文" * 20000 + "TAIL-EVIDENCE</p>").encode()
+    monkeypatch.setattr(fetch.urllib.request, "urlopen",
+                        lambda *args, **kwargs: _FakeResponse(body, "text/html; charset=utf-8"))
+    search = build_search_tool(main_llm=_router_for_web(), budget=SubagentBudgetSpec(),
+                               tools=(fetch.web_fetch_page,))
+    assert search is not None
+    store = SessionResultStore()
+    executor = ToolExecutor(caller_role_hint="owner", tools=[search], result_store=store)
+    try:
+        result = executor.execute(search.name, {"objective": "read all", "urls": ["https://example.com"],
+                                                "verification": "none"})
+        assert result.ok and result.data["ok"]
+        page = result.data["full_results"][0]["pages"][0]
+        assert "TAIL-EVIDENCE" not in page["summary"]
+        assert "TAIL-EVIDENCE" in page["content"] and page["complete"]
+        projected = executor.project_result(search.name, result.to_llm_payload())
+        read = store.read({"result_id": projected["result_ref"]["id"], "query": "TAIL-EVIDENCE"},
+                          ToolContext(caller_role="owner"))
+        assert read.ok and read.data["found"] and "TAIL-EVIDENCE" in read.data["text"]
+    finally:
+        executor.close()
+
+
+@pytest.mark.parametrize("mode", ["failed", "incomplete", "complete"])
+def test_url_completion_requires_every_requested_page(mode):
+    def read(args, _ctx):
+        affected = args["url"].endswith("/2") and mode != "complete"
+        return ToolResult(ok=not (affected and mode == "failed"), summary="page content",
+                          error="fixture unavailable" if affected and mode == "failed" else "",
+                          data={"content": "full page", "complete": not affected})
+    page = replace(_tool("web_fetch_page", "page"), handler=read)
+    search = build_search_tool(main_llm=_router_for_web(), budget=SubagentBudgetSpec(), tools=(page,))
+    urls = [f"https://example.com/{i}" for i in range(3)]
+    result = search.handler({"objective": "read all", "urls": urls, "verification": "none"}, ToolContext())
+    assert result.ok  # usable evidence is still delivered
+    assert result.data["ok"] is (mode == "complete")
+    assert result.data["limits"]["partial"] is (mode != "complete")
+    assert result.data["limits"]["unread_requested_urls"] == (0 if mode == "complete" else 1)
+    assert result.data["full_results"][0]["completed_pages"] == (3 if mode == "complete" else 2)
+
+
+def test_missing_url_reader_cannot_claim_explicit_urls_completed():
+    provider = _raw_search("tavily", {"results": [{"title": "package", "url": "https://example.com",
+                                                 "content": "package evidence"}]}, [])
+    search = build_search_tool(main_llm=_router_for_web(), budget=SubagentBudgetSpec(),
+                               tools=(), raw_mcp_tools=(provider,))
+    result = search.handler({"objective": "package", "urls": ["https://example.com"],
+                             "verification": "none"}, ToolContext())
+    assert result.data["ok"] is False
+    assert result.data["limits"]["unread_requested_urls"] == 1
+
+
 def test_thorough_limits_reach_router_and_deep_reader():
     from chatcopilot.contracts.subagents import SearchLimitsSpec
     from chatcopilot.agent.search.router import SearchRouter

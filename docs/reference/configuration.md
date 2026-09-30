@@ -89,6 +89,8 @@ QQ Owner/Admin 只按稳定 `user_id` 授权。
 - `port_env`：Gateway 监听端口的环境变量名。
 - `token_env`：强每实例 Gateway client token 的环境变量名。
 - `state_root_env`：私有 SQLite 状态根的环境变量名。
+- `max_concurrent_turns`：Channel 长回合并发数，默认 `8`，必须为正整数。
+- `max_pending_ingress`：已接受及执行中的 Channel 消息合计预算，默认 `1024`，必须为正整数。
 
 Gateway 负责 typed WebSocket RPC、session、run、durable ingress/outbox、投递 receipt、
 writer generation 和 Channel lifecycle。ACP credential 只获得显式 session/read scope，不能
@@ -103,6 +105,8 @@ writer generation 和 Channel lifecycle。ACP credential 只获得显式 session
 - `mention_only_groups: true` 要求群消息含明确指向当前 Bot 的结构化 `at` segment。
 - `action_timeout_seconds`：OneBot 动作回执等待秒数，默认 `120`，必须为有限正数；
   配置随实例装配传到驱动。修改后需重启实例，发送器等待余量见[消息运行链](runtime.md)。
+- `max_frame_bytes`：OneBot 入站帧字节预算，默认 `4194304`（4 MiB），允许 `1024` 到
+  `16777216`（16 MiB）。只控制传输帧，规范化入站 JSON 另受 8 MiB 落库预算约束。
 
 当前实现直接连接用户独立安装的 NapCat/OneBot provider，但不复制、内嵌或分发 NapCat，
 也不会把 provider 实现名写入身份、session 或权限 key。没有自动 provider failover。
@@ -181,6 +185,9 @@ llm:
 
 主 Agent 仍由 `agents.runtime` 选择；Codex 整轮时限使用
 `agents.runtime_options.codex.turn_timeout_seconds`。原生扩展 TOML 与权限归属见[Agent](agent.md)。
+`agents.runtime_options.codex.max_protocol_record_bytes` 控制 App Server stdout 单条 JSON
+记录，默认 `33554432`（32 MiB），允许 `1024` 到 `134217728`（128 MiB）；实例装配将该值
+传到实际 stdio reader，超限显式失败，公开观测预览仍独立压缩。
 
 旧运行策略字段的清理边界见[配置收敛规格](../../specs/obsolete-configuration-removal/spec.md)。
 

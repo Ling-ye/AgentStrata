@@ -569,6 +569,7 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         assert recovered.events == []
         await replacement.activate()
         await replacement.activate()
+        await replacement.wait_idle()
 
         record = self.state_store.get_ingress(
             channel="qq",
@@ -612,9 +613,9 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         )
         replacement.register(_Driver("recovery-fenced", ACCOUNT, self.log))
         await replacement.start()
-        with pytest.raises(ChannelRuntimeError) as caught:
-            await replacement.activate()
-        assert caught.value.code == "channel_activation_failed"
+        await replacement.activate()
+        await replacement.wait_idle()
+        assert replacement.health().detail_code == "channel_writer_generation_stale"
         record = self.state_store.get_ingress(
             channel="qq",
             account_id="10001",

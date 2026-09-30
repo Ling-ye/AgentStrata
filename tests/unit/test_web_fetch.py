@@ -140,7 +140,7 @@ class TestToolDef:
         assert web_fetch_page.properties["max_chars"]["type"] == "integer"
         assert (
             web_fetch_page.properties["max_chars"]["description"]
-            == "Maximum characters of page text to return (100-50000)."
+            == "Maximum preview characters (1-50000); full fetched text is retained separately."
         )
 
 
@@ -161,28 +161,43 @@ class TestHandler:
         assert result.error_code == "max_chars_invalid"
         assert result.outputs == []
 
-    def test_max_chars_is_clamped_low(self, monkeypatch):
+    def test_small_preview_is_honored_without_cutting_full_content(self, monkeypatch):
         captured = {}
 
-        def fake_fetch(url, max_chars):
+        def fake_fetch(url):
             captured["url"] = url
-            captured["max_chars"] = max_chars
-            return "ok"
+            return web_fetch_tools._FetchedPage(url, "title", "x" * 120, 120)
 
-        monkeypatch.setattr(web_fetch_tools, "_fetch_page", fake_fetch)
+        monkeypatch.setattr(web_fetch_tools, "_fetch_document", fake_fetch)
 
         result = web_fetch_page.handler(
             {"url": "https://example.com", "max_chars": 10}, ToolContext()
         )
 
         assert result.ok is True
-        assert result.summary == "ok"
-        assert result.data == {"url": "https://example.com", "content": "ok"}
-        assert captured == {"url": "https://example.com", "max_chars": 100}
+        assert "Content:\n" + "x" * 10 + "\nTruncated:" in result.summary
+        assert "x" * 120 in result.data["content"]
+        assert result.data["preview_truncated"] is True
+        assert captured == {"url": "https://example.com"}
         assert result.outputs == []
 
 
 class TestFetchOutput:
+    def test_response_over_byte_budget_is_explicit_failure(self, monkeypatch):
+        monkeypatch.setattr(web_fetch_tools.urllib.request, "urlopen", lambda *a, **kw:
+                            _FakeResponse(b"x" * (web_fetch_tools._MAX_RESPONSE_BYTES + 1), "text/plain"))
+        result = web_fetch_page.handler({"url": "https://example.com"}, ToolContext())
+        assert not result.ok and "byte budget" in result.error
+        assert "content" not in result.data
+
+    @pytest.mark.parametrize("max_chars", [0, 50001])
+    def test_preview_outside_budget_is_rejected_before_fetch(self, monkeypatch, max_chars):
+        def unexpected(*args, **kwargs):
+            pytest.fail("invalid preview must not start HTTP request")
+        monkeypatch.setattr(web_fetch_tools.urllib.request, "urlopen", unexpected)
+        result = web_fetch_page.handler({"url": "https://example.com", "max_chars": max_chars}, ToolContext())
+        assert not result.ok and result.error_code == "max_chars_invalid"
+
     def test_success_output_has_consistent_fields(self, monkeypatch):
         html = b"<html><head><title>Example</title></head><body><p>Hello</p></body></html>"
         monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)
@@ -285,7 +300,7 @@ class TestFetchErrors:
 
         result = _fetch_page("https://example.com", 8000)
 
-        assert result == "Error: Request timed out after 15 seconds."
+        assert result == "Error: Request timed out after 60 seconds."
 
     def test_unsupported_content_type_is_readable(self, monkeypatch):
         monkeypatch.setattr(web_fetch_tools, "validate_url", lambda url: url)

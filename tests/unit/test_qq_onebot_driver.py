@@ -499,12 +499,14 @@ class OneBotDriverTests(IsolatedAsyncioTestCase):
         release_handler.set()
         await channel.stop()
 
-    async def test_ingress_queue_overflow_fails_connection_closed(self) -> None:
+    async def test_ingress_queue_overflow_uses_backpressure_without_disconnect(self) -> None:
         connection = _FakeConnection()
         handler_started = asyncio.Event()
         release_handler = asyncio.Event()
+        received = []
 
         async def on_event(_event: CanonicalInboundEvent) -> None:
+            received.append(next(segment.text for segment in _event.segments if segment.kind == "text"))
             handler_started.set()
             await release_handler.wait()
 
@@ -519,15 +521,15 @@ class OneBotDriverTests(IsolatedAsyncioTestCase):
         await connection.incoming.put(json.dumps(_group_event("second")))
         await connection.incoming.put(json.dumps(_group_event("overflow")))
 
-        for _ in range(20):
-            if channel.health().state == "error":
-                break
-            await asyncio.sleep(0.01)
-
-        assert channel.health().state == "error"
-        assert channel.health().detail_code == "onebot_ingress_queue_full"
-        assert connection.closed
+        await asyncio.sleep(.05)
+        assert channel.health().state == "ready"
+        assert not connection.closed
         release_handler.set()
+        for _ in range(100):
+            if len(received) == 3:
+                break
+            await asyncio.sleep(.01)
+        assert received == ["first", "second", "overflow"]
         await channel.stop()
 
     async def test_event_handler_failure_does_not_disconnect_transport(self) -> None:

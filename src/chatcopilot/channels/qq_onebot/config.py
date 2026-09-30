@@ -31,10 +31,10 @@ class OneBotChannelConfig:
     websocket_url: str
     access_token: str = field(repr=False)
     action_timeout_seconds: float = 120.0
-    max_frame_bytes: int = 256 * 1024
+    max_frame_bytes: int = 4 * 1024 * 1024
     max_outbound_frame_bytes: int = 128 * 1024 * 1024
     max_pending_actions: int = 64
-    max_pending_events: int = 64
+    max_pending_events: int = 256
     resource_ticket_ttl_seconds: float = 300.0
     reconnect_initial_seconds: float = 1.0
     reconnect_max_seconds: float = 30.0

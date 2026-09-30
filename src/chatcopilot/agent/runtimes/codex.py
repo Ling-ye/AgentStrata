@@ -137,6 +137,7 @@ class CodexRuntimeAdapter:
         tool_payload_filter: ToolPayloadFilter | None = None,
         runtime_policy: CodexMainSessionPolicy | None = None,
         turn_timeout_seconds: float | None = 21600,
+        max_protocol_record_bytes: int = 32 * 1024 * 1024,
         **_: Any,
     ) -> None:
         if route.runtime_id != "codex":
@@ -146,6 +147,9 @@ class CodexRuntimeAdapter:
         self._route = route
         self._runtime_config = runtime_config
         self._turn_timeout = turn_timeout_seconds
+        if type(max_protocol_record_bytes) is not int or not 1024 <= max_protocol_record_bytes <= 128 * 1024 * 1024:
+            raise ValueError("max_protocol_record_bytes must be between 1024 and 134217728")
+        self._max_protocol_record_bytes = max_protocol_record_bytes
         self._tool_names = frozenset(tool_names)
         self._tools = tuple(tools)
         self._tool_executor = tool_executor
@@ -200,6 +204,7 @@ class CodexRuntimeAdapter:
         policy_fingerprint = hashlib.sha256((policy_fingerprint + request.capability_snapshot.fingerprint +
             request.route.behavior_fingerprint +
             request.host_policy.fingerprint + extension_digest(self._runtime_config.codex_extensions) + str(self._turn_timeout) +
+            str(self._max_protocol_record_bytes) +
             json.dumps(sorted(request.allowed_tool_names))).encode()).hexdigest()
         if scope is not None:
             policy_fingerprint = hashlib.sha256(
@@ -585,6 +590,7 @@ class CodexRuntimeAdapter:
                 cwd=state.workdir,
                 prompt=prompt,
                 timeout_seconds=self._turn_timeout,
+                max_record_bytes=self._max_protocol_record_bytes,
                 env=subprocess_env,
                 model=selection.model,
                 effort=selection.reasoning_effort,

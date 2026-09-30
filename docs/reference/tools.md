@@ -149,3 +149,5 @@ Admin 与 User 均为成员。ToolContext 保留可信调用者及 ExecutionScop
 ## Codebase (legacy)
 
 `external_tools/codebase/` 中 `codebase.read` 只读检索仍可用；`codebase.change` 已从工具包 catalog 移除，托管写入流程由 dev tools 替代。
+
+无 ripgrep 时，后备搜索在进入 `deny_globs` 禁止的子树前剪枝，避免遍历已排除的依赖目录；文件筛选和符号链接边界保持不变。当前 QQ Bot 的源码检索排除 `.worktrees` 和 `.cache`，只索引当前仓库，历史工作树需单独注册。

@@ -541,7 +541,7 @@ class TurnOps:
         state.consecutive_failures = 0
         if not discovery and tool_result.summary:
             state.last_successful_tool_summary = tool_result.summary
-            if name == _SEARCH_INFORMATION_TOOL:
+            if name == _SEARCH_INFORMATION_TOOL and tool_result.data.get("ok") is True:
                 state.last_successful_search_summary = tool_result.summary
         if not discovery:
             artifact_kind = _primary_artifact_kind(tool_result.artifact_kinds)

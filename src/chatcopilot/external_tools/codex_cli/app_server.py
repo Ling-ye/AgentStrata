@@ -14,13 +14,16 @@ from contextlib import nullcontext
 from typing import Any, Callable
 
 
-_MAX_PROTOCOL_RECORD_BYTES = 8 * 1024 * 1024
+_MAX_PROTOCOL_RECORD_BYTES = 32 * 1024 * 1024
 
 
 class AppServerProcess:
     def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str],
                  timeout_seconds: float | None, on_notification: Callable[[str, dict], None],
-                 on_poll: Callable[[], None]) -> None:
+                 on_poll: Callable[[], None], max_record_bytes: int = _MAX_PROTOCOL_RECORD_BYTES) -> None:
+        if type(max_record_bytes) is not int or not 1024 <= max_record_bytes <= 128 * 1024 * 1024:
+            raise ValueError("max_record_bytes must be between 1024 and 134217728")
+        self.max_record_bytes = max_record_bytes
         self.command, self.cwd, self.env = command, cwd, env
         self.deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
         self.on_notification, self.on_poll = on_notification, on_poll
@@ -67,10 +70,10 @@ class AppServerProcess:
     def _read(self) -> None:
         try:
             while not self.closed.is_set():
-                line = self.process.stdout.readline(_MAX_PROTOCOL_RECORD_BYTES + 1)
+                line = self.process.stdout.readline(self.max_record_bytes + 1)
                 if not line:
                     break
-                if len(line) > _MAX_PROTOCOL_RECORD_BYTES:
+                if len(line) > self.max_record_bytes:
                     raise RuntimeError("App Server protocol record exceeds limit")
                 value = json.loads(line)
                 if not isinstance(value, dict):
@@ -257,13 +260,15 @@ def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt
                    on_request: Callable[[str, dict], dict] | None = None,
                    dynamic_tools: list[dict] | None = None,
                    authentication: dict | None = None,
-                   approval_policy: str = "never") -> subprocess.CompletedProcess:
+                   approval_policy: str = "never",
+                   max_record_bytes: int = _MAX_PROTOCOL_RECORD_BYTES) -> subprocess.CompletedProcess:
     owned = connection is None
     if connection:
         process = connection[0]
     else:
         process = AppServerProcess(command, cwd=cwd, env=env, timeout_seconds=timeout_seconds,
-                                   on_notification=on_notification, on_poll=on_poll)
+                                   on_notification=on_notification, on_poll=on_poll,
+                                   max_record_bytes=max_record_bytes)
         if connection is not None:
             process.__enter__()
             connection.append(process)

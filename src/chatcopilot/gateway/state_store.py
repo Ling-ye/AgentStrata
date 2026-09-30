@@ -46,6 +46,7 @@ SCHEMA_VERSION = 4
 MAX_STATE_JSON_BYTES = 1024 * 1024
 MAX_OUTBOUND_ENVELOPE_JSON_BYTES = 128 * 1024 * 1024
 MAX_RUN_RESULT_JSON_BYTES = MAX_OUTBOUND_ENVELOPE_JSON_BYTES
+MAX_INGRESS_JSON_BYTES = 8 * 1024 * 1024
 _INSTANCE_LEASE_FILENAME = "gateway.instance.lock"
 INGRESS_STATES = frozenset({"accepted", "processing", "completed", "failed", "recovery_required"})
 OUTBOX_STATES = frozenset(
@@ -1223,7 +1224,7 @@ class GatewayStateStore:
         _required_identity(evidence.event_id, "event_id", max_chars=256)
         _require_sha256(evidence.frame_sha256, "frame_sha256")
         _validate_ingress_principal(principal, event)
-        payload_json = _json_dump(canonical_inbound_payload(event))
+        payload_json = _json_dump(canonical_inbound_payload(event), max_bytes=MAX_INGRESS_JSON_BYTES)
         principal_json = _json_dump(asdict(principal))
         with self._write_connection() as connection:
             self._assert_generation(connection, generation)
@@ -1363,6 +1364,7 @@ class GatewayStateStore:
         *,
         states: tuple[str, ...] = ("accepted", "recovery_required"),
         limit: int = 100,
+        conversation_key: tuple[str, str, str, str] | None = None,
     ) -> tuple[IngressRecord, ...]:
         if not states or any(state not in INGRESS_STATES for state in states):
             raise ValueError("states contains an invalid ingress state")
@@ -1371,17 +1373,43 @@ class GatewayStateStore:
         if limit < 1 or limit > 1000:
             raise ValueError("limit must be between 1 and 1000")
         placeholders = ",".join("?" for _ in states)
+        parameters: tuple[Any, ...] = states
+        conversation_filter = ""
+        if conversation_key is not None:
+            channel, account_id, kind, conversation_id = conversation_key
+            conversation_filter = (
+                " AND channel = ? AND account_id = ? "
+                "AND json_extract(payload_json, '$.evidence.conversation.kind') = ? "
+                "AND json_extract(payload_json, '$.evidence.conversation.conversation_id') = ?"
+            )
+            parameters = (*parameters, channel, account_id, kind, conversation_id)
         with self._read_connection() as connection:
             rows = connection.execute(
                 "SELECT channel, account_id, event_id, frame_sha256, state, generation, "
                 "payload_json, principal_json, created_at, updated_at FROM ingress "
-                f"WHERE state IN ({placeholders}) ORDER BY created_at ASC LIMIT ?",
-                (*states, limit),
+                f"WHERE state IN ({placeholders}){conversation_filter} ORDER BY rowid ASC LIMIT ?",
+                (*parameters, limit),
             ).fetchall()
         return tuple(
             _ingress_record(str(row[0]), str(row[1]), str(row[2]), row[3:])
             for row in rows
         )
+
+    def pending_ingress_count(self) -> int:
+        with self._read_connection() as connection:
+            return int(connection.execute(
+                "SELECT COUNT(*) FROM ingress WHERE state IN ('accepted', 'processing')"
+            ).fetchone()[0])
+
+    def accepted_ingress_conversations(self) -> tuple[tuple[str, str, str, str], ...]:
+        with self._read_connection() as connection:
+            rows = connection.execute(
+                "SELECT DISTINCT channel, account_id, "
+                "json_extract(payload_json, '$.evidence.conversation.kind'), "
+                "json_extract(payload_json, '$.evidence.conversation.conversation_id') "
+                "FROM ingress WHERE state = 'accepted'"
+            ).fetchall()
+        return tuple(tuple(str(value) for value in row) for row in rows)
 
     def resolve_ingress_recovery(
         self,
@@ -2721,7 +2749,8 @@ def _canonical_inbound_event(payload: Mapping[str, Any]) -> CanonicalInboundEven
         )
     except (KeyError, TypeError, ValueError) as exc:
         raise GatewayStateError("Gateway ingress payload is corrupt") from exc
-    if _json_dump(canonical_inbound_payload(event)) != _json_dump(payload):
+    if (_json_dump(canonical_inbound_payload(event), max_bytes=MAX_INGRESS_JSON_BYTES)
+            != _json_dump(payload, max_bytes=MAX_INGRESS_JSON_BYTES)):
         raise GatewayStateError("Gateway ingress payload shape is corrupt")
     return event
 

@@ -32,8 +32,8 @@ from .input_observation import project_message
 _QQ_ID_RE = re.compile(r"^[1-9][0-9]{4,19}$")
 _SHA256_RE = re.compile(r"^[0-9a-fA-F]{64}$")
 _ACTION_RE = re.compile(r"^[a-z][a-z0-9_]{0,63}$")
-_MAX_SEGMENTS = 128
-_MAX_TEXT_CHARS = 64 * 1024
+_MAX_SEGMENTS = 512
+_MAX_TEXT_CHARS = 256 * 1024
 _MAX_NATIVE_KIND_CHARS = 64
 _MAX_PROVIDER_REF_CHARS = 4096
 # Includes base64 expansion and source prefixes across all resource segments.

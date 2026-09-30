@@ -256,6 +256,7 @@ class SubagentSpec:
 
     runtime: str = "native"
     codex_turn_timeout_seconds: int = 21600
+    codex_protocol_record_max_bytes: int = 32 * 1024 * 1024
     native_env_prefix: str | None = None
     codex_extensions: str | None = None
     include: tuple[str, ...] = ()

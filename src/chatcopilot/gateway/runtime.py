@@ -119,6 +119,8 @@ class GatewayRuntimeConfig:
     wiki_root: Path | None
     onebot: OneBotChannelConfig
     policy_version: str
+    max_concurrent_turns: int = 8
+    max_pending_ingress: int = 1024
 
 
 @dataclass(frozen=True)
@@ -500,6 +502,11 @@ def parse_gateway_runtime_config(
         ) from exc
 
     port = _required_port(values, gateway.port_env)
+    for name in ("max_concurrent_turns", "max_pending_ingress"):
+        value = getattr(gateway, name)
+        if type(value) is not int or value <= 0:
+            raise GatewayRuntimeConfigurationError("gateway_ingress_budget_invalid",
+                                                   f"gateway.{name} must be positive")
     try:
         GatewayServerConfig(host=gateway.host, port=port)
     except ValueError as exc:
@@ -552,6 +559,7 @@ def parse_gateway_runtime_config(
             websocket_url=_required_env(values, qq.endpoint_env),
             access_token=onebot_token,
             action_timeout_seconds=qq.action_timeout_seconds,
+            max_frame_bytes=qq.max_frame_bytes,
         )
     except OneBotConfigError as exc:
         raise GatewayRuntimeConfigurationError(
@@ -569,6 +577,8 @@ def parse_gateway_runtime_config(
         wiki_root=wiki_root,
         onebot=onebot,
         policy_version=f"gateway-v{gateway.protocol_version}",
+        max_concurrent_turns=gateway.max_concurrent_turns,
+        max_pending_ingress=gateway.max_pending_ingress,
     )
 
 
@@ -712,9 +722,11 @@ def build_gateway_runtime_host(
             gateway_ingress=coordinator,
             event_sink=events,
             writer_generation=generation,
+            max_concurrent_turns=config.max_concurrent_turns,
+            max_pending_ingress=config.max_pending_ingress,
         )
         driver: ChannelDriver = OneBotForwardWebSocketDriver(
-            config.onebot, channel_runtime.handle_inbound,
+            config.onebot, channel_runtime.accept_inbound,
             **({"connection_factory": onebot_connection_factory} if onebot_connection_factory is not None else {}),
         )
         channel_runtime.register(driver)

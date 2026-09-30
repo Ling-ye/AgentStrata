@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable, Mapping
-import hashlib
+from contextlib import asynccontextmanager
 import logging
 import secrets
 import time
@@ -67,7 +67,6 @@ class OneBotDefinitelyNotSubmittedError(
 
 _LOGGER = logging.getLogger(__name__)
 _MAX_EVENT_WORKERS = 8
-_EVENT_LANE_COUNT = 64
 
 
 class OneBotForwardWebSocketDriver:
@@ -95,7 +94,7 @@ class OneBotForwardWebSocketDriver:
             maxsize=config.max_pending_events
         )
         self._pending: dict[str, asyncio.Future[OneBotActionResponse]] = {}
-        self._event_lanes = tuple(asyncio.Lock() for _ in range(_EVENT_LANE_COUNT))
+        self._event_lanes: dict[tuple[str, str, str, str], tuple[asyncio.Lock, int]] = {}
         self._lifecycle_lock = asyncio.Lock()
         self._ready = False
         self._desired_running = False
@@ -427,13 +426,10 @@ class OneBotForwardWebSocketDriver:
                     resource_ticket_ttl_seconds=self._config.resource_ticket_ttl_seconds,
                 )
                 if decoded.event is not None:
-                    try:
-                        self._event_queue.put_nowait(decoded.event)
-                    except asyncio.QueueFull as exc:
-                        raise OneBotDriverError(
-                            "onebot_ingress_queue_full",
-                            "OneBot ingress queue reached its configured limit",
-                        ) from exc
+                    # Gateway's production callback only admits and persists intake.
+                    # Brief transport backpressure must not cancel unrelated turns
+                    # or fail pending delivery acknowledgements by disconnecting.
+                    await self._event_queue.put(decoded.event)
         except asyncio.CancelledError:
             return
         except Exception as exc:
@@ -470,21 +466,23 @@ class OneBotForwardWebSocketDriver:
         except Exception as exc:
             await self._record_connection_failure(connection, exc)
 
-    def _event_lane(self, event: CanonicalInboundEvent) -> asyncio.Lock:
+    @asynccontextmanager
+    async def _event_lane(self, event: CanonicalInboundEvent):
         evidence = event.evidence
         conversation = evidence.conversation
-        digest = hashlib.sha256(
-            (
-                evidence.account.channel
-                + "\0"
-                + evidence.account.account_id
-                + "\0"
-                + conversation.kind
-                + "\0"
-                + conversation.conversation_id
-            ).encode("utf-8")
-        ).digest()
-        return self._event_lanes[int.from_bytes(digest[:8], "big") % len(self._event_lanes)]
+        key = (evidence.account.channel, evidence.account.account_id,
+               conversation.kind, conversation.conversation_id)
+        lock, users = self._event_lanes.get(key, (asyncio.Lock(), 0))
+        self._event_lanes[key] = (lock, users + 1)
+        try:
+            async with lock:
+                yield
+        finally:
+            _, remaining = self._event_lanes[key]
+            if remaining == 1:
+                del self._event_lanes[key]
+            else:
+                self._event_lanes[key] = (lock, remaining - 1)
 
     async def _record_connection_failure(
         self,

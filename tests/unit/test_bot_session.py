@@ -362,6 +362,25 @@ class AgentSessionTests(unittest.TestCase):
 
         self.assertEqual(result.produced_resources, ())
 
+    def test_partial_search_can_continue_but_complete_search_is_reused(self) -> None:
+        for complete, expected_calls in ((False, 2), (True, 1)):
+            with self.subTest(complete=complete):
+                calls = []
+                def search_handler(args, ctx):
+                    calls.append(args)
+                    return ToolResult(ok=True, summary="usable search evidence",
+                                      data={"ok": complete, "limits": {"partial": not complete}})
+                tool = ToolDef(name="search_information", summary="search", handler=search_handler,
+                               input_schema=object_schema(additional_properties=True),
+                               output_schema=object_schema(additional_properties=True))
+                session = _make_session(_FakeLLM([
+                    ChatResult(tool_calls=[_tool_call(tool.name, {"objective": "first"})]),
+                    ChatResult(tool_calls=[_tool_call(tool.name, {"objective": "remaining"})]),
+                    ChatResult(content="完成")]), [tool])
+                result = session.run_task(AgentTask(text="搜索全部页面"), on_event=lambda _: None)
+                self.assertEqual(result.stop_reason, "end_turn")
+                self.assertEqual(len(calls), expected_calls)
+
     def test_dev_write_finishes_without_implicit_self_update(self) -> None:
         def edit_handler(_args: dict, _context: ToolContext) -> ToolResult:
             return ToolResult(ok=True, summary="已修改文件")
