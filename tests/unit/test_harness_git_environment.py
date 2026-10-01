@@ -89,6 +89,7 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         git(repository, "worktree", "add", "-q", "-b", "candidate", str(root))
     elif kind == "detached":
         git(root, "checkout", "--detach", "-q")
+    original_root_entries = set(root.iterdir())
     (root / "src/example.py").write_text("value = 2\n")
     before = metadata_bytes(root)
     head = git_output(root, "rev-parse", "HEAD")
@@ -103,6 +104,13 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
     role_name = {"prepare": "test", "run": "coding", "review": "review", "main": "main", "plan": "plan"}[stage]
     seen = {}
     real_permissions = codex_adapter.permission_config
+    real_wrap_command = codex_adapter.wrap_command
+
+    def wrap_command(command, **kwargs):
+        seen["execution_scope"] = kwargs["scope"]
+        return real_wrap_command(command, **kwargs)
+
+    monkeypatch.setattr(codex_adapter, "wrap_command", wrap_command)
 
     def permissions(scope, **kwargs):
         seen["scope"] = scope
@@ -132,7 +140,7 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         "    try:",
         "        p=Path(name); p.parent.mkdir(parents=True, exist_ok=True); p.write_text('candidate write'); return True",
         "    except OSError: return False",
-        f"role_writes=[write_probe(p) for p in {[str(root/'src/chatcopilot/core/probe.py'), str(root/'tests/test_probe.py'), str(output/'draft/probe.py'), str(root/'docs/README.md'), str(root/'docs/reference/rules.md'), str(root/'docs/reference/new.md'), str(root/'.env.example'), str(root/'unexpected-root.py'), str(root/'.codex/config.toml')]!r}]",
+        f"role_writes=[write_probe(p) for p in {[str(root/'src/chatcopilot/core/probe.py'), str(root/'tests/test_probe.py'), str(output/'draft/probe.py'), str(root/'docs/README.md'), str(root/'docs/reference/rules.md'), str(root/'docs/reference/new.md'), str(root/'.env.example'), str(root/'unexpected-root.py'), str(root/'.codex/config.toml'), str(root.parent/'sessions'/role_name/'config.toml'), str(root.parent/'sessions'/role_name/'auth.json')]!r}]",
         "print(json.dumps(dict(reads=reads, denied=denied, rg=rg, role_writes=role_writes, search=search.stdout if search else None, private_visible=private_visible, original_visible=original_visible)))",
     ])
 
@@ -152,11 +160,13 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
         assert not report["private_visible"]
         assert report["role_writes"][:2] == [stage == "run", False]
         gc_write = stage == "run" and source_kind == "code_health"
-        assert report["role_writes"][3:] == [gc_write, False, False, gc_write, False, False]
+        assert report["role_writes"][3:] == [gc_write, False, False, gc_write, False, False, False, False]
         assert (root / "docs/reference/rules.md").read_text() == "frozen rules\n"
         assert not (root / "docs/reference/new.md").exists()
         assert not (root / "unexpected-root.py").exists()
         assert not (root / ".codex/config.toml").exists()
+        assert (kwargs["home"] / "auth.json").read_text() == "synthetic-credential"
+        assert (kwargs["home"] / "config.toml").read_text() == ""
         # Unmounted /tmp paths may be writable only in the private namespace;
         # authority concerns changes to host files, not disposable scratch data.
         assert (root / "src/chatcopilot/core/probe.py").read_text() == ("candidate write" if stage == "run" else "value = 1\n")
@@ -177,8 +187,15 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
     adapter._execute_impl(root, AgentCall("fixture", Role(role_name), 1, "fixture", {**evidence, "base_commit": head}), RepairOptions("unused"), output, lambda: None)
     assert seen["model_boundary"]
     assert metadata_bytes(root) == before
+    assert set(root.iterdir()) == original_root_entries
+    execution_scope = seen["execution_scope"]
+    assert root not in execution_scope.writable_roots
+    assert not execution_scope.permits(root / "unexpected-root.py", write=True)
+    if source_kind == "code_health" and stage == "run":
+        assert root / ".env.example" in execution_scope.writable_roots
+        assert (root / ".env.example").read_text() == "candidate write"
     for path in codex_environment.git_metadata(root):
-        assert not seen["scope"].permits(path, write=True)
+        assert not execution_scope.permits(path, write=True)
 
 
 @pytest.mark.parametrize("broken", ["missing", "wrong_head", "unmounted"])

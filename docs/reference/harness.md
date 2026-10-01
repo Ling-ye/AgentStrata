@@ -87,6 +87,14 @@ Harness 的任务、角色交接和验收由宿主负责；[AgentRunner](../../s
 [Harness 会话状态](../../src/chatcopilot/harness/agent_session_state.py)持有，
 执行追踪和角色结果校验由[宿主执行包装](../../src/chatcopilot/harness/agent_execution.py)持有。
 新增厂商只需实现现有 AgentRunner 契约，不从原生会话推断宿主验收、工作区权限或交付成功。
+
+Harness 的外层 bubblewrap 始终按原始 `ExecutionScope` 挂载：候选根只读，获准目录和
+精确文件可写，Git 元数据与受保护文件只读。涉及根目录配置文件写入时，Codex 的可写
+根仍要求目录，内层权限因此投影到外层已隔离的命名空间；该投影只能配合既有外层挂载
+使用，不把宿主父目录改为可写，也不预建厂商保护目录。Git 预检和角色执行使用相同处理。
+
+所有角色的原生子命令只能读角色运行目录，禁止修改 `config.toml`，`auth.json` 继续禁读；
+App Server 父进程仍可维护自己的状态。角色命令网络保持关闭。
 设计边界遵循[多 Agent 修复规格](../../specs/harness-multi-agent/spec.md)。
 
 ## 修复流程记录

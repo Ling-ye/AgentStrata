@@ -174,19 +174,17 @@ class CodexCoder:
             "failure_brief_bytes": len(json_text(evidence.get("failure_brief")).encode()) if evidence.get("failure_brief") else 0,
             "command_count": 0, "command_output_chars": 0, "max_command_output_chars": 0,
             "truncated_command_count": 0, "context_budget_warning": []}
-        # Native Codex treats writable roots as directories. Exact root-file
-        # writes remain confined by the outer sandbox's individual file mounts.
-        native_scope = replace(scope, writable_roots=tuple(dict.fromkeys(
-            path.parent if path.is_file() else path for path in scope.writable_roots))) if governance and role == Role.CODING else scope
-        if governance and role == Role.CODING and worktree in native_scope.writable_roots:
-            # Native Codex protects these directories beneath writable roots.
-            # Create empty mountpoints in the task workspace before its root is
-            # mounted read-only; this does not create tracked product content.
-            for name in (".codex", ".agents"):
-                target = worktree / name
-                if target.is_symlink() or target.exists() and not target.is_dir():
-                    raise HarnessError("coding_environment", "任务沙箱保留目录不是普通目录")
-                target.mkdir(mode=0o700, exist_ok=True)
+        native_scope = replace(scope, protected_roots=(*scope.protected_roots, runtime_home))
+        if any(path.is_file() for path in scope.writable_roots):
+            # Codex writable roots require directories. The outer namespace
+            # keeps the original exact file mounts and read-only parent, while
+            # the native child protects Git and the parent's runtime state.
+            # No vendor-specific mountpoints are created in the candidate.
+            native_scope = replace(
+                native_scope,
+                readable_roots=(),
+                writable_roots=(Path("/"),),
+            )
         config = permission_config(
             native_scope, workdir=execution_directory, private_paths=(str(runtime_home / "auth.json"),), network_access=False
         )
