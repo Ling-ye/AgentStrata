@@ -64,6 +64,11 @@ console = [
     "fastapi>=0.110",
     "uvicorn>=0.29",
 ]
+weixin = [
+    "aiohttp>=3.11,<4",
+    "cryptography>=44",
+    "qrcode>=8,<9",
+]
 desktop = [
     "numpy>=2.2,<2.3",
     "pandas==2.3.3",

@@ -7,6 +7,8 @@
 """
 from __future__ import annotations
 
+from chatcopilot.botspec.channel_configuration import configuration_adapter
+
 import errno
 import json
 import os
@@ -959,7 +961,7 @@ def _provision_context(inst: BotInstance):
     ):
         raise ProvisioningError("provision_botspec_outside_repo")
     spec = load_botspec(bot_yaml)
-    adapter = get_adapter(spec.platform.type)
+    adapter = configuration_adapter(spec, resolver=get_adapter)
     local_env = bot_yaml.parent / "local.env"
     configured_values = read_local_env_for_provision(
         local_env,

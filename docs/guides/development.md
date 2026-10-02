@@ -7,7 +7,7 @@
 默认 WSL/Linux。安装仓库声明的开发依赖，使用同一个解释器运行检查：
 
 ```bash
-uv sync --frozen --extra agent --extra acp --extra dev
+uv sync --frozen --extra agent --extra acp --extra dev --extra weixin
 uv run agentstrata --help
 uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 ```

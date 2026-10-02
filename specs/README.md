@@ -13,6 +13,8 @@
 
 ## 待确认的设计条件
 
+- [微信 ClawBot 渠道](weixin-clawbot-channel/spec.md)：代码与本地验证已完成；真实微信扫码和媒体往返需独立验收。
+
 - [隔离修复会话与宿主验收](harness-repair-v2/spec.md)：修复内核、独立沙箱和图片交付验证的实施与真实模型验收。
 - [独立 Codex 认证通道](codex-independent-auth-lanes/spec.md)：实现已在代码中存在；独立通道授权和实际部署验收无法由静态源码确认，保留原 accepted 状态。
 - [Canary 自更新与恢复](canary-self-update-e2e/spec.md)：受控端到端验收仍需独立运行，不把可用的测试骨架当作完整外部能力。

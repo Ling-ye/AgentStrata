@@ -68,10 +68,26 @@ class QQChannelSpec:
 
 
 @dataclass(frozen=True)
+class WeixinChannelSpec:
+    """Personal ClawBot channel configured by private credential references."""
+
+    type: str = "weixin_clawbot"
+    provider: str = "ilink"
+    channel_id: str = "weixin"
+    access_token_env: str = "WEIXIN_BOT_TOKEN"
+    account_env: str = "WEIXIN_BOT_ID"
+    user_env: str = "WEIXIN_USER_ID"
+    endpoint_env: str = "WEIXIN_API_BASE_URL"
+    action_timeout_seconds: float = 120.0
+    max_frame_bytes: int = 4 * 1024 * 1024
+
+
+@dataclass(frozen=True)
 class ChannelsSpec:
     """Transport Channels owned by the Bot's Gateway."""
 
     qq: QQChannelSpec | None = None
+    weixin: WeixinChannelSpec | None = None
 
 
 @dataclass(frozen=True)

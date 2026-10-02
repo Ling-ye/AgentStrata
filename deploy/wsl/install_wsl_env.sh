@@ -29,6 +29,7 @@ INSTALL_SYSTEM_PACKAGES=1
 INSTALL_CC_CONNECT=1
 INSTALL_CONSOLE=0
 INSTALL_CONSOLE_DEPS=0
+INSTALL_WEIXIN_DEPS=0
 SKIP_WEB=0
 INIT_ENV=0
 VERIFY=1
@@ -41,6 +42,7 @@ usage() {
 
 Options:
   --with-console          Also install/repair the optional Console service.
+  --with-weixin           Include the locked Weixin channel dependencies.
   --with-console-deps     Include the locked Console Python dependencies only.
   --skip-web              Pass --skip-web when --with-console is used.
   --no-system-packages    Do not install apt packages; isolated runtimes are still installed.
@@ -57,6 +59,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --with-console) INSTALL_CONSOLE=1; INSTALL_CONSOLE_DEPS=1 ;;
         --with-console-deps) INSTALL_CONSOLE_DEPS=1 ;;
+        --with-weixin) INSTALL_WEIXIN_DEPS=1 ;;
         --skip-web) SKIP_WEB=1 ;;
         --no-system-packages) INSTALL_SYSTEM_PACKAGES=0 ;;
         --skip-cc-connect) INSTALL_CC_CONNECT=0 ;;
@@ -536,7 +539,10 @@ install_python_env() {
     if [ "$INSTALL_CONSOLE_DEPS" -eq 1 ]; then
         # Console launches Harness verification/review workers with this same
         # interpreter; their trusted repository/commit checks need dev tools.
-        sync_args+=(--extra console --extra evaluation --extra dev)
+        sync_args+=(--extra console --extra evaluation --extra dev --extra weixin)
+    fi
+    if [ "$INSTALL_WEIXIN_DEPS" -eq 1 ]; then
+        sync_args+=(--extra weixin)
     fi
     sync_args+=(--no-config)
     run "${uv_env[@]}" "$UV_BIN" "${sync_args[@]}"

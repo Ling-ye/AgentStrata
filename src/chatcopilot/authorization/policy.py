@@ -89,7 +89,7 @@ class IdentityPolicy:
         evidence_digest: str,
     ) -> Principal:
         # QQ display names are descriptive and never participate in role matching.
-        allow_name_match = turn.conversation.platform.strip().lower() != "qq"
+        allow_name_match = turn.conversation.platform.strip().lower() not in {"qq", "weixin"}
         matched_name = turn.sender_user_name if allow_name_match else None
         role = Role.USER
         for identity in self.owners:
@@ -115,6 +115,8 @@ class IdentityPolicy:
 class AdmissionPolicy:
     qq_users: NumericAllowlist
     policy_version: str
+    weixin_account: str | None = None
+    weixin_user: str | None = None
 
     @classmethod
     def from_raw(
@@ -122,10 +124,14 @@ class AdmissionPolicy:
         *,
         qq_users: str | None,
         policy_version: str,
+        weixin_account: str | None = None,
+        weixin_user: str | None = None,
     ) -> "AdmissionPolicy":
         return cls(
             qq_users=parse_numeric_allowlist(qq_users, field="QQ_ALLOW_FROM"),
             policy_version=policy_version,
+            weixin_account=weixin_account,
+            weixin_user=weixin_user,
         )
 
     def decide(self, request: AuthorizationRequest) -> AuthorizationDecision:
@@ -138,6 +144,17 @@ class AdmissionPolicy:
             )
         principal = request.principal
         conversation = principal.conversation
+        if conversation.platform.strip().lower() == "weixin":
+            if principal.account_id != self.weixin_account or not self.weixin_account:
+                code = "weixin-account-invalid"
+            elif conversation.chat_kind != "p2p":
+                code = "weixin-chat-kind-invalid"
+            elif principal.user_id != self.weixin_user or conversation.chat_id != self.weixin_user or not self.weixin_user:
+                code = "weixin-sender-not-allowed"
+            else:
+                code = "weixin-private-user-allowed"
+            return _decision(request, allowed=code == "weixin-private-user-allowed", code=code,
+                             policy_version=self.policy_version)
         if conversation.platform.strip().lower() != "qq":
             return _decision(
                 request,

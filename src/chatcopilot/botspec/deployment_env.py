@@ -8,7 +8,6 @@ from typing import Iterable, Mapping
 from chatcopilot.botspec.runtime_env import llm_runtime_env_defaults
 from chatcopilot.core.settings import expand_leading_home
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
-from chatcopilot.platforms import registry as _registry
 
 _CC_CONNECT_VERSION = "1.4.0-beta.3"
 
@@ -33,7 +32,7 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
     )
     log_dir = expand_deploy_path(deploy.log_dir) or str(home / "chatcopilot-logs" / instance_id)
     env_file = expand_deploy_path(deploy.env_file) or str(home / f".chatcopilot-{instance_id}.env")
-    qq_gateway = spec.channels.qq is not None
+    qq_gateway = spec.gateway is not None
     cc_config_dir = ""
     if not qq_gateway:
         cc_config_dir = expand_deploy_path(deploy.cc_connect_config_dir) or str(
@@ -45,7 +44,8 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
     except ValueError:
         runtime_bot_spec = str(spec.source_path)
 
-    adapter = _registry.get_adapter(spec.platform.type)
+    from .channel_configuration import configuration_adapter
+    adapter = configuration_adapter(spec)
     values = {
         item.env_key: item.default
         for item in adapter.required_secrets()
@@ -164,6 +164,9 @@ def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None)
     from chatcopilot.core.model_settings import read_settings
     document = read_settings(environment)
     references = []
+    if spec.channels.weixin is not None:
+        channel = spec.channels.weixin
+        references.extend((channel.account_env, channel.user_env, channel.endpoint_env, channel.access_token_env))
     for purpose in runtime_model_bindings(spec):
         profile = document["profiles"].get(document["bindings"].get(purpose))
         if profile is None:
@@ -206,6 +209,7 @@ def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None)
         "CHATCOPILOT_ADD_OWNER_IDS",
         "FEISHU_APP_ID",
         "FEISHU_APP_SECRET",
+        "WEIXIN_BOT_TOKEN", "WEIXIN_BOT_ID", "WEIXIN_USER_ID", "WEIXIN_API_BASE_URL",
         "QQ_ACCOUNT",
         "CHATCOPILOT_QQ_ONEBOT_WS_URL",
         "QQ_ACCESS_TOKEN",

@@ -32,6 +32,7 @@ from chatcopilot.contracts.authorization import AuthorizationDecision
 from chatcopilot.contracts.gateway_protocol import EventFrame, GatewayScope, RequestFrame
 from chatcopilot.contracts.gateway_rpc import ChatErrorEvent
 from chatcopilot.contracts.identity import Role
+from chatcopilot.contracts.weixin import WeixinChannelConfig, WeixinError
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, OutboundEnvelope
 from chatcopilot.core.access import get_admins, get_owners
 from chatcopilot.core.config import load_config
@@ -117,10 +118,11 @@ class GatewayRuntimeConfig:
     state_anchor: Path
     workspace_root: Path
     wiki_root: Path | None
-    onebot: OneBotChannelConfig
+    onebot: OneBotChannelConfig | None
     policy_version: str
     max_concurrent_turns: int = 8
     max_pending_ingress: int = 1024
+    weixin: WeixinChannelConfig | None = None
 
 
 @dataclass(frozen=True)
@@ -469,10 +471,11 @@ def parse_gateway_runtime_config(
     values = os.environ if environ is None else environ
     gateway = runtime.gateway
     qq = runtime.channels.qq
-    if gateway is None or qq is None:
+    weixin = runtime.channels.weixin
+    if gateway is None or (qq is None and weixin is None) or (qq is not None and weixin is not None):
         raise GatewayRuntimeConfigurationError(
             "gateway_qq_botspec_required",
-            "Gateway runtime requires both gateway and channels.qq declarations",
+            "Gateway runtime requires gateway and exactly one QQ or Weixin channel",
         )
     for key in _LEGACY_QQ_ENV_KEYS:
         if key in values:
@@ -482,7 +485,9 @@ def parse_gateway_runtime_config(
             )
 
     gateway_token = _required_env(values, gateway.token_env)
-    onebot_token = _required_env(values, qq.access_token_env)
+    channel_spec = qq if qq is not None else weixin
+    assert channel_spec is not None
+    onebot_token = _required_env(values, channel_spec.access_token_env)
     if gateway_token == onebot_token:
         raise GatewayRuntimeConfigurationError(
             "gateway_token_reused",
@@ -552,8 +557,20 @@ def parse_gateway_runtime_config(
             private=False,
         )
 
+    onebot = None
+    weixin_config = None
     try:
-        onebot = OneBotChannelConfig(
+        if weixin is not None:
+            weixin_config = WeixinChannelConfig(
+                account_id=_required_env(values, weixin.account_env),
+                user_id=_required_env(values, weixin.user_env), token=onebot_token,
+                base_url=_required_env(values, weixin.endpoint_env),
+                action_timeout_seconds=weixin.action_timeout_seconds, max_frame_bytes=weixin.max_frame_bytes)
+            if weixin_config.user_id not in {value.strip() for value in str(values.get("CHATCOPILOT_ADD_OWNER_IDS", "")).split(",")}:
+                raise WeixinError("weixin_owner_not_configured")
+        else:
+            assert qq is not None
+            onebot = OneBotChannelConfig(
             channel_id=qq.channel_id,
             account_id=_required_env(values, qq.account_env),
             websocket_url=_required_env(values, qq.endpoint_env),
@@ -561,7 +578,7 @@ def parse_gateway_runtime_config(
             action_timeout_seconds=qq.action_timeout_seconds,
             max_frame_bytes=qq.max_frame_bytes,
         )
-    except OneBotConfigError as exc:
+    except (OneBotConfigError, WeixinError) as exc:
         raise GatewayRuntimeConfigurationError(
             exc.code,
             "OneBot Channel configuration is invalid",
@@ -576,6 +593,7 @@ def parse_gateway_runtime_config(
         workspace_root=workspace_root,
         wiki_root=wiki_root,
         onebot=onebot,
+        weixin=weixin_config,
         policy_version=f"gateway-v{gateway.protocol_version}",
         max_concurrent_turns=gateway.max_concurrent_turns,
         max_pending_ingress=gateway.max_pending_ingress,
@@ -605,6 +623,7 @@ def build_gateway_runtime_host(
     environ: Mapping[str, str] | None = None,
     onebot_connection_factory: ConnectionFactory | None = None,
     resource_fetcher: ResourceFetcherPort | None = None,
+    weixin_client: Any = None,
 ) -> GatewayRuntimeHost:
     """Materialize one production host without opening either external listener."""
 
@@ -652,7 +671,7 @@ def build_gateway_runtime_host(
             )
 
         def file_sender_factory(principal, workspace, session_id):
-            if principal.channel != "qq":
+            if principal.channel not in {"qq", "weixin"}:
                 return None
             loop = asyncio.get_running_loop()
             account = ChannelAccountRef(principal.channel, principal.account_id)
@@ -666,12 +685,18 @@ def build_gateway_runtime_host(
                 run = state_store.get_run(session.active_run_id)
                 if run is None or run.state != "running":
                     raise GatewayRuntimeLifecycleError("delivery_run_inactive", "File delivery requires an active run")
-                envelope = OutboundEnvelope("outbound_" + uuid.uuid4().hex, account, conversation, segments,
-                                            time.time(), session_id=session_id, run_id=run.run_id)
-                receipt = await channel_runtime.send(envelope)
-                if receipt.outbound_id != envelope.outbound_id:
-                    raise GatewayRuntimeLifecycleError("delivery_receipt_mismatch", "File delivery receipt does not match")
-                return receipt
+                batches = tuple((segment,) for segment in segments) if principal.channel == "weixin" else (segments,)
+                receipts = []
+                for batch in batches:
+                    envelope = OutboundEnvelope("outbound_" + uuid.uuid4().hex, account, conversation, batch,
+                                                time.time(), session_id=session_id, run_id=run.run_id)
+                    receipt = await channel_runtime.send(envelope)
+                    if receipt.outbound_id != envelope.outbound_id:
+                        raise GatewayRuntimeLifecycleError("delivery_receipt_mismatch", "File delivery receipt does not match")
+                    receipts.append(receipt)
+                    if receipt.stage != "provider_acknowledged":
+                        break
+                return tuple(receipts) if principal.channel == "weixin" else receipts[0]
 
             def dispatch(segments):
                 # Agent tools run off the Gateway loop; never synchronously block that loop.
@@ -683,11 +708,12 @@ def build_gateway_runtime_host(
                     raise GatewayRuntimeLifecycleError("delivery_loop_unavailable", "File delivery must run on an Agent tool worker")
                 future = asyncio.run_coroutine_threadsafe(deliver(segments), loop)
                 try:
-                    return future.result(timeout=config.onebot.action_timeout_seconds + 15)
+                    timeout = (config.weixin.action_timeout_seconds + 75) * len(segments) if config.weixin else config.onebot.action_timeout_seconds + 15
+                    return future.result(timeout=timeout)
                 except BaseException:
                     future.cancel()
                     raise
-            return create_file_sender(workspace, dispatch)
+            return create_file_sender(workspace, dispatch, require_image_message_id=principal.channel == "qq")
 
         actor_factory = ActorSessionFactory(
             runtime=runtime,
@@ -699,20 +725,33 @@ def build_gateway_runtime_host(
             on_authorization_decision=record_authorization_decision,
             file_sender_factory=file_sender_factory,
         )
+        if config.weixin is not None:
+            from chatcopilot.channels.weixin_ilink.client import WeixinClient
+            from chatcopilot.channels.weixin_ilink.resources import WeixinResourceFetcher
+            from chatcopilot.contracts.identity import Identity
+            weixin_client = weixin_client or WeixinClient(base_url=config.weixin.base_url, token=config.weixin.token,
+                                                          max_frame_bytes=config.weixin.max_frame_bytes)
+            default_fetcher = WeixinResourceFetcher(weixin_client, account_id=config.weixin.account_id)
+            owners = (Identity(user_id=config.weixin.user_id),)
+        else:
+            default_fetcher = QqCdnResourceFetcher()
+            owners = get_owners()
         actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=ResourceMaterializationService(
-            resource_fetcher if resource_fetcher is not None else QqCdnResourceFetcher()))
+            resource_fetcher if resource_fetcher is not None else default_fetcher))
         coordinator = GatewayTurnCoordinator(
             state_store=state_store,
             sessions=sessions,
             events=events,
             actor_executor=actor_executor,
             identity_policy=IdentityPolicy.from_iterables(
-                owners=get_owners(),
+                owners=owners,
                 admins=get_admins(),
             ),
             admission_policy=AdmissionPolicy.from_raw(
                 qq_users=values.get("QQ_ALLOW_FROM"),
                 policy_version=config.policy_version,
+                weixin_account=config.weixin.account_id if config.weixin else None,
+                weixin_user=config.weixin.user_id if config.weixin else None,
             ),
             generation=generation,
             on_admission_decision=record_authorization_decision,
@@ -725,10 +764,16 @@ def build_gateway_runtime_host(
             max_concurrent_turns=config.max_concurrent_turns,
             max_pending_ingress=config.max_pending_ingress,
         )
-        driver: ChannelDriver = OneBotForwardWebSocketDriver(
-            config.onebot, channel_runtime.accept_inbound,
-            **({"connection_factory": onebot_connection_factory} if onebot_connection_factory is not None else {}),
-        )
+        if config.weixin is not None:
+            from chatcopilot.channels.weixin_ilink.driver import WeixinDriver
+            from chatcopilot.channels.weixin_ilink.state import WeixinState
+            driver: ChannelDriver = WeixinDriver(config.weixin, channel_runtime.accept_inbound,
+                state=WeixinState(config.state_root / "weixin", config.weixin.account_id), client=weixin_client)
+        else:
+            assert config.onebot is not None
+            driver = OneBotForwardWebSocketDriver(
+                config.onebot, channel_runtime.accept_inbound,
+                **({"connection_factory": onebot_connection_factory} if onebot_connection_factory is not None else {}))
         channel_runtime.register(driver)
         coordinator.set_channel_runtime(channel_runtime)
         readiness = _RuntimeReadiness(
@@ -816,7 +861,7 @@ def build_gateway_runtime_host(
             readiness=readiness,
             schedules=ScheduleRuntime(ScheduleService(config.state_root),
                 GatewayScheduleExecutor(coordinator, state_store, ChannelAccountRef("qq", config.onebot.account_id)),
-                ready=readiness),
+                ready=readiness) if config.onebot is not None else None,
         )
     except BaseException:
         try:

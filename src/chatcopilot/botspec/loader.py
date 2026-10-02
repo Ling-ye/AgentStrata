@@ -37,6 +37,7 @@ from chatcopilot.botspec.model import (
     PlatformSpec,
     PromptSpec,
     QQChannelSpec,
+    WeixinChannelSpec,
     RagSpec,
     SkillsSpec,
     SubagentBudgetSpec,
@@ -59,7 +60,7 @@ _GATEWAY_FIELDS = frozenset(
     {"protocol_version", "host", "port_env", "token_env", "state_root_env",
      "max_concurrent_turns", "max_pending_ingress"}
 )
-_CHANNELS_FIELDS = frozenset({"qq"})
+_CHANNELS_FIELDS = frozenset({"qq", "weixin"})
 _QQ_CHANNEL_FIELDS = frozenset(
     {
         "type",
@@ -139,7 +140,7 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
         # 配置层（本模块）按需 lazy import 平台层查询，避免再维护一份白名单。
         from chatcopilot.platforms.registry import is_supported, supported_platform_types
 
-        if not is_supported(platform_type):
+        if not is_supported(platform_type) and not (platform_type == "weixin" and spec.channels.weixin is not None):
             issues.append(
                 ValidationIssue(
                     "error",
@@ -318,6 +319,26 @@ def _validate_gateway_channels(
     raw_platform = raw.get("platform")
     raw_gateway = raw.get("gateway")
     raw_channels = raw.get("channels")
+    weixin = spec.channels.weixin
+    if weixin is not None:
+        fields = set(WeixinChannelSpec.__dataclass_fields__)
+        native = raw_channels.get("weixin", {}) if isinstance(raw_channels, dict) else {}
+        if set(native) - fields:
+            issues.append(ValidationIssue("error", "channels.weixin 包含未知字段", "channels.weixin"))
+        if spec.channels.qq is not None or spec.gateway is None or "platform" in raw:
+            issues.append(ValidationIssue("error", "微信实例只允许 gateway + channels.weixin 单渠道", "channels.weixin"))
+        if (weixin.type, weixin.provider, weixin.channel_id) != ("weixin_clawbot", "ilink", "weixin"):
+            issues.append(ValidationIssue("error", "微信渠道必须使用 weixin_clawbot/ilink/weixin", "channels.weixin"))
+        for field in ("access_token_env", "account_env", "user_env", "endpoint_env"):
+            if not _ENV_PREFIX_RE.fullmatch(getattr(weixin, field)):
+                issues.append(ValidationIssue("error", "微信凭证引用必须为环境变量名", "channels.weixin." + field))
+        timeout = weixin.action_timeout_seconds
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
+            issues.append(ValidationIssue("error", "微信超时必须为有限正数", "channels.weixin.action_timeout_seconds"))
+        if type(weixin.max_frame_bytes) is not int or not 1024 <= weixin.max_frame_bytes <= 16 * 1024 * 1024:
+            issues.append(ValidationIssue("error", "微信帧预算须在 1024 到 16777216 字节之间", "channels.weixin.max_frame_bytes"))
+        if spec.deploy.cc_connect_config_dir:
+            issues.append(ValidationIssue("error", "微信 Gateway 不使用 cc-connect", "deploy.cc_connect_config_dir"))
 
     if isinstance(raw_gateway, dict):
         unknown = sorted(set(raw_gateway) - _GATEWAY_FIELDS)
@@ -559,6 +580,13 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         qq_channel = qq_value
     else:
         raise ValueError("channels.qq 必须是 mapping")
+    weixin_value = channels.get("weixin", _MISSING)
+    if weixin_value is _MISSING:
+        weixin_channel = None
+    elif isinstance(weixin_value, dict):
+        weixin_channel = weixin_value
+    else:
+        raise ValueError("channels.weixin 必须是 mapping")
     prompts = _mapping(data.get("prompts"), "prompts")
     tools = _mapping(data.get("tools", {}), "tools")
     llm = _mapping(data.get("llm", {}), "llm")
@@ -598,6 +626,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     platform_projection = (
         PlatformSpec(type="qq", adapter="gateway")
         if qq_channel is not None
+        else PlatformSpec(type="weixin", adapter="gateway") if weixin_channel is not None
         else PlatformSpec(
             type=str(platform.get("type", "")).strip(),
             adapter=str(platform.get("adapter", "")).strip(),
@@ -686,7 +715,15 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                 )
                 if qq_channel is not None
                 else None
-            )
+            ),
+            weixin=(WeixinChannelSpec(
+                **{name: _strict_string(weixin_channel.get(name, getattr(WeixinChannelSpec(), name)),
+                                        "channels.weixin." + name)
+                   for name in ("type", "provider", "channel_id", "access_token_env", "account_env", "user_env", "endpoint_env")},
+                action_timeout_seconds=_strict_number(weixin_channel.get("action_timeout_seconds"),
+                    "channels.weixin.action_timeout_seconds", 120.0),
+                max_frame_bytes=_strict_integer(weixin_channel.get("max_frame_bytes"),
+                    "channels.weixin.max_frame_bytes", 4 * 1024 * 1024)) if weixin_channel is not None else None),
         ),
         llm=LLMSpec(
             env_prefix=chat_env_prefix,

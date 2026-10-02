@@ -25,6 +25,7 @@ from console.backend.routes import (  # noqa: E402
     overview,
     shared_services,
     schedules,
+    weixin,
     tasks,
 )
 from chatcopilot.evals.service import EvaluationServiceClient  # noqa: E402
@@ -41,6 +42,8 @@ async def lifespan(application: FastAPI):
             # Optional Harness failure must not disable unrelated Console pages.
             logging.getLogger(__name__).error("Harness control initialization failed")
     yield
+    if hasattr(application.state, "weixin"):
+        await application.state.weixin.close()
 
 
 app = FastAPI(title="AgentStrata Console", version="1.0", lifespan=lifespan)
@@ -70,6 +73,7 @@ app.include_router(overview.router)
 app.include_router(architecture.router)
 # Fixed bot resources must precede the /{instance_id}/{verb} control fallback.
 app.include_router(schedules.router)
+app.include_router(weixin.router)
 app.include_router(bots.router)
 app.include_router(catalog.router)
 app.include_router(console_self.router)

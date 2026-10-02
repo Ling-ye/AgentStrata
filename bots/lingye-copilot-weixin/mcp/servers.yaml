@@ -1,0 +1,10 @@
+# External MCP servers used by this bot.
+servers:
+- ref: xiaohongshu-search
+  enabled: false
+- ref: playwright-browser
+  enabled: true
+- ref: github-readonly
+  enabled: true
+- ref: git-local
+  enabled: true

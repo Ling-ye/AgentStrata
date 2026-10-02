@@ -14,7 +14,8 @@ from chatcopilot.core.scoped_files import read_bytes
 
 
 def create_file_sender(workspace: WorkspaceView,
-                       dispatch: Callable[[tuple[MessageSegment, ...]], DeliveryReceipt]) -> FileSender:
+                       dispatch: Callable[[tuple[MessageSegment, ...]], DeliveryReceipt | tuple[DeliveryReceipt, ...]],
+                       *, require_image_message_id: bool = True) -> FileSender:
     def send(files: Sequence[str], message: str) -> FileDeliveryResult:
         if not files:
             raise ValueError("No files to deliver")
@@ -41,10 +42,14 @@ def create_file_sender(workspace: WorkspaceView,
             paths.append(path)
         if message:
             segments.append(MessageSegment(kind="text", text=message))
-        receipt = dispatch(tuple(segments))
-        if not isinstance(receipt, DeliveryReceipt) or receipt.stage != "provider_acknowledged":
+        result = dispatch(tuple(segments))
+        receipts = result if isinstance(result, tuple) else (result,)
+        if isinstance(result, tuple) and len(receipts) != len(segments):
+            confirmed = sum(isinstance(receipt, DeliveryReceipt) and receipt.stage == "provider_acknowledged" for receipt in receipts)
+            raise RuntimeError(f"File delivery acknowledgement is incomplete: provider confirmed {confirmed}/{len(segments)} requests; do not resend confirmed or unknown requests")
+        if not receipts or any(not isinstance(receipt, DeliveryReceipt) or receipt.stage != "provider_acknowledged" for receipt in receipts):
             raise RuntimeError("File delivery acknowledgement is incomplete")
-        if any(segment.kind == "image" for segment in segments) and not receipt.provider_message_id:
+        if require_image_message_id and any(segment.kind == "image" for segment in segments) and not all(receipt.provider_message_id for receipt in receipts):
             raise RuntimeError("Image delivery acknowledgement has no provider message identity")
         return FileDeliveryResult(tuple(p.name for p in paths), tuple(str(p) for p in paths), message)
     return send

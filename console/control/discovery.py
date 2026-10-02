@@ -54,6 +54,8 @@ def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
                 platform_type = value
             elif section == "channels" and key == "qq":
                 platform_type = "qq"
+            elif section == "channels" and key == "weixin":
+                platform_type = "weixin"
             elif section == "deploy":
                 deploy[key] = value
 

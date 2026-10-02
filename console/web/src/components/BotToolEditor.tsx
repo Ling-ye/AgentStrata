@@ -4,6 +4,7 @@ import { Alert, Button, Modal, Space, Switch, Tag } from "@arco-design/web-react
 import { api } from "../api";
 import type { BotToolEditorProps } from "../features/bots/tool-editor/model";
 import ToolPickerModal from "./ToolPickerModal";
+import WeixinBinding from "../features/bots/WeixinBinding";
 import { useBotToolEditor } from "../features/bots/tool-editor/useBotToolEditor";
 import ConfigurationPane from "../features/architecture/ConfigurationPane";
 import { currentInspection, latestConfiguration } from "../features/architecture/configurationModel";
@@ -42,6 +43,7 @@ export default function BotToolEditor(props: BotToolEditorProps & { visible: boo
     const name = entity.id.slice(entity.id.indexOf(":") + 1);
     const related = configurationRelated(entities, entity);
     return <Space wrap>
+      {entity.id === "channel:weixin" && <WeixinBinding key={instanceId} instanceId={instanceId} running={props.running} />}
       {entity.id.startsWith("mcp:") && (() => {
         const ref = String(entity.config?.catalog_ref ?? entity.config?.ref ?? name);
         const server = editor.draft?.tools.mcp.servers.find((item) => item.ref === ref);

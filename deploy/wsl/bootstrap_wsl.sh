@@ -98,6 +98,9 @@ echo
 _install_args=(--no-system-packages --venv "$MT_HOME/.venv" --no-verify)
 if ccp_bot_uses_gateway "$BOOTSTRAP_BOT_SPEC"; then
     _install_args+=(--skip-cc-connect)
+    if awk '/^channels:/ { channels=1; next } /^[^[:space:]#]/ { channels=0 } channels && /^[[:space:]]+weixin:/ { found=1 } END { exit(found ? 0 : 1) }' "$BOOTSTRAP_BOT_SPEC"; then
+        _install_args+=(--with-weixin)
+    fi
     step "[1/2] 通过 uv.lock 同步隔离 Python Gateway 运行时"
 elif ccp_bot_is_legacy_qq "$BOOTSTRAP_BOT_SPEC"; then
     err "旧 platform=qq + cc-connect/Relay 拓扑已移除；拒绝安装 legacy Node 运行时。"

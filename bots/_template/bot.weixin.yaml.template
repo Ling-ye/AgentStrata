@@ -1,0 +1,114 @@
+id: my-weixin-bot
+display_name: 微信助手
+gateway:
+  protocol_version: 1
+  host: 127.0.0.1
+  port_env: CHATCOPILOT_GATEWAY_PORT
+  token_env: CHATCOPILOT_GATEWAY_TOKEN
+  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+channels:
+  weixin:
+    type: weixin_clawbot
+    provider: ilink
+    channel_id: weixin
+    access_token_env: WEIXIN_BOT_TOKEN
+    account_env: WEIXIN_BOT_ID
+    user_env: WEIXIN_USER_ID
+    endpoint_env: WEIXIN_API_BASE_URL
+llm:
+  chat:
+    env_prefix: CHATCOPILOT_LINGYE_MAIN
+    binding: bot.lingye-copilot-qq.chat
+  research:
+    binding: bot.lingye-copilot-qq.research
+  code:
+    env_prefix: CHATCOPILOT_LINGYE
+    enabled: true
+    timeout_seconds: 21600
+    binding: bot.lingye-copilot-qq.code
+prompts:
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
+  refusal_style: prompts/refusal-style.md
+  role_styles:
+    owner: prompts/roles/owner.md
+tools:
+  packs:
+  - workspace.read_write
+  - memory.chat
+  - persona.control
+  - playbooks.reader
+  - mcp.admin
+  - career.intelligence
+  - wiki.knowledge
+  - dev.code_tasks
+  - filesystem.windows.read
+  features:
+  - chat.file_uploads
+  - chat.image_inputs
+  - chat.private_workspace
+  mcp:
+    servers: mcp/servers.yaml
+agents:
+  runtime: codex
+  runtime_options:
+    native:
+      env_prefix: CHATCOPILOT_LINGYE
+    codex:
+      turn_timeout_seconds: 21600
+  unified_search:
+    enabled: true
+    timeout_seconds: 600
+    limits:
+      max_urls: 20
+      thorough_max_steps: 10
+      thorough_max_deep_read_urls: 8
+    providers:
+    - id: tavily
+      kind: tavily
+      enabled: true
+      endpoint: https://api.tavily.com/search
+      credential_env: TAVILY_API_KEY
+      timeout_seconds: 30
+      max_results: 10
+    - id: brave
+      kind: brave
+      enabled: false
+      endpoint: https://api.search.brave.com/res/v1/web/search
+      credential_env: BRAVE_API_KEY
+      timeout_seconds: 30
+      max_results: 10
+    - id: searxng
+      kind: searxng
+      enabled: true
+      endpoint: http://127.0.0.1:18064
+      timeout_seconds: 60
+      max_results: 10
+context:
+  wiki:
+    enabled: true
+    root_env: CHATCOPILOT_WIKI_ROOT
+    label: private-wiki
+    read_role: owner
+    private_chat_only: true
+    max_chunk_chars: 1200
+  dev:
+    root_env: CHATCOPILOT_DEV_ROOT
+    shell:
+      timeout_default: 120
+      timeout_max: 1800
+  playbooks:
+    manifest: skills/manifest.yaml
+workspace:
+  root_env: CHATCOPILOT_WORKSPACE_ROOT
+deploy:
+  target: wsl2
+  instance_id: my-weixin-bot
+  wsl_home: ~/ChatCopilot-my-weixin-bot
+  workspace_root: ~/chatcopilot-workspaces/my-weixin-bot
+  log_dir: ~/chatcopilot-logs/my-weixin-bot
+  env_file: ~/.chatcopilot-my-weixin-bot.env
+  project_name: chatcopilot-my-weixin-bot
+packaging:
+  allowlist: package.allowlist.yaml

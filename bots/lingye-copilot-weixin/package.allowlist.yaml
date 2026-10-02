@@ -1,0 +1,5 @@
+paths:
+  - src/chatcopilot/**
+  - bots/lingye-copilot-qq/**
+  - deploy/wsl/**
+  - requirements.txt

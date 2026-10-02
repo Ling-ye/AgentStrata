@@ -1,5 +1,6 @@
 import { observationQuery, type ObservationFilters, type Inspection, type ObservationMetrics, type ObservationBody, type EventPage } from "./features/architecture/workbenchModel";
 import type { GatewayOverview, GatewayRunDetail } from "./features/architecture/model";
+import type { WeixinLogin, WeixinStatus } from "./features/bots/weixinModel";
 import type {
   BotInstance,
   BotInventory,
@@ -52,6 +53,11 @@ async function fireAndForgetReq<T>(url: string, init?: RequestInit, fallback?: T
 }
 
 export const api = {
+  weixinStatus: (id: string, signal?: AbortSignal) => req<WeixinStatus>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/status`, { signal }),
+  weixinLogin: (id: string) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login`, { method: "POST" }),
+  weixinLoginStatus: (id: string, login: string, signal?: AbortSignal) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login/${encodeURIComponent(login)}`, { signal }),
+  weixinVerify: (id: string, login: string, code: string) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login/${encodeURIComponent(login)}/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }),
+  weixinCancel: (id: string, login: string) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login/${encodeURIComponent(login)}`, { method: "DELETE" }),
   inspection: (id: string, runId?: string, eventSeq?: number, signal?: AbortSignal) => req<Inspection>(`/api/bots/${encodeURIComponent(id)}/inspection${runId ? `?run_id=${encodeURIComponent(runId)}${eventSeq != null ? `&event_seq=${eventSeq}` : ""}` : ""}`, { signal }),
   observationMetrics: (id: string, filters: ObservationFilters) => req<ObservationMetrics>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/metrics${observationQuery(filters)}`),
   observationEvents: (id: string, runId: string, after = 0, signal?: AbortSignal) => req<EventPage>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/events?after=${after}`, { signal }),

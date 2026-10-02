@@ -34,7 +34,7 @@ def main(argv: list[str] | None = None) -> int:
     runtime = assemble_runtime_context(load_botspec(bot_path))
     set_bot_spec_env(runtime.source_path)
     apply_runtime_env(runtime)
-    if runtime.gateway is not None and runtime.channels.qq is not None:
+    if runtime.gateway is not None and (runtime.channels.qq is not None or runtime.channels.weixin is not None):
         return _run_gateway(runtime)
     if runtime.platform_type != "feishu":
         raise ValueError("QQ requires Gateway; legacy ACP entry is available only for Feishu")

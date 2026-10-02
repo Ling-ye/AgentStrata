@@ -17,6 +17,8 @@ adapter deployment helpers remain only for isolated legacy edges.
 
 from __future__ import annotations
 
+from chatcopilot.botspec.channel_configuration import configuration_adapter
+
 import argparse
 from contextlib import contextmanager
 import datetime
@@ -347,7 +349,7 @@ def _cmd_configure(args: argparse.Namespace) -> int:
         print(f"[ERR] BotSpec 校验失败（{len(issues)} 个 error）")
         return 1
 
-    adapter = _registry.get_adapter(spec.platform.type)
+    adapter = configuration_adapter(spec)
     local_env_path = spec.base_dir / "local.env"
     if args.dry_run:
         plan = build_provision_plan(spec, adapter)
@@ -484,7 +486,7 @@ def _cmd_doctor(args: argparse.Namespace) -> int:
     except (OSError, ProvisioningError, ValueError) as exc:
         config_error = _safe_error_code(exc)
 
-    adapter = _registry.get_adapter(spec.platform.type)
+    adapter = configuration_adapter(spec)
     effective_env = {
         item.env_key: item.default
         for item in adapter.required_secrets()
@@ -629,7 +631,7 @@ def _cmd_external_check(args: argparse.Namespace) -> int:
     effective_env = dict(local_env)
     effective_env.update(os.environ)
 
-    adapter = _registry.get_adapter(spec.platform.type)
+    adapter = configuration_adapter(spec)
     report = adapter.run_external_checks(
         effective_env,
         bot_id=spec.deploy.instance_id or spec.id,
@@ -1035,7 +1037,7 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
         print("      请填写默认配置，或在 Console「模型配置」页保存方案并绑定以上用途；移除旧模型变量后重新更新。")
         print("      API Key、Codex 登录凭据、运行预算和业务数据无需删除。运行时 env 未写入。")
         return 1
-    adapter = _registry.get_adapter(spec.platform.type)
+    adapter = configuration_adapter(spec)
     plan = build_provision_plan(spec, adapter, values)
     missing = [
         item.env_key
@@ -1101,9 +1103,9 @@ def _cmd_provision_env(args: argparse.Namespace) -> int:
 
 def _cmd_render_cc_config(args: argparse.Namespace) -> int:
     spec = load_botspec(args.bot)
-    if spec.channels.qq is not None:
+    if spec.gateway is not None:
         print(
-            "[ERR] qq_gateway_has_no_cc_connect_config: "
+            f"[ERR] {spec.platform.type}_gateway_has_no_cc_connect_config: "
             "Gateway QQ 不生成或启动 cc-connect 配置"
         )
         return 2
@@ -1192,14 +1194,14 @@ def _read_private_session_env(*, directory: str | Path, session_key: str) -> dic
 
 def _cmd_render_session_env(args: argparse.Namespace) -> int:
     spec = load_botspec(args.bot)
-    if spec.channels.qq is not None:
+    if spec.gateway is not None:
         print(
-            "[ERR] qq_gateway_has_no_session_env: "
+            f"[ERR] {spec.platform.type}_gateway_has_no_session_env: "
             "Gateway QQ 身份来自结构化 Channel 事件，不读取 cc-connect hook",
             file=sys.stderr,
         )
         return 2
-    adapter = _registry.get_adapter(spec.platform.type)
+    adapter = configuration_adapter(spec)
     session_key = (
         args.session_key
         or os.environ.get("CC_HOOK_SESSION_KEY")
@@ -1242,9 +1244,9 @@ def _cmd_render_session_env(args: argparse.Namespace) -> int:
 
 def _cmd_exec_session_runtime(args: argparse.Namespace) -> int:
     spec = load_botspec(args.bot)
-    if spec.channels.qq is not None:
+    if spec.gateway is not None:
         print(
-            "[ERR] qq_gateway_has_no_session_runtime: "
+            f"[ERR] {spec.platform.type}_gateway_has_no_session_runtime: "
             "Gateway QQ 不从 cc-connect session env 启动运行时",
             file=sys.stderr,
         )

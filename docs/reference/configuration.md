@@ -322,3 +322,16 @@ Agent inspection 使用显式实例环境与配置文件查找路径调用 Core 
 ## 平台技术能力由 Channel/adapter 声明，实例开关由 BotSpec 声明
 
 Gateway QQ 使用 `channels.qq`；Feishu legacy 使用 adapter；`chat.file_uploads` / `chat.private_workspace` 属于 `tools.features`。
+
+## channels.weixin
+
+微信使用 `gateway + channels.weixin`，不得同时声明 QQ 或 legacy `platform`。
+`type/provider/channel_id` 分别为 `weixin_clawbot/ilink/weixin`；`access_token_env/account_env/user_env/endpoint_env`
+默认引用 `WEIXIN_BOT_TOKEN/WEIXIN_BOT_ID/WEIXIN_USER_ID/WEIXIN_API_BASE_URL`。
+`action_timeout_seconds` 默认 120 秒，`max_frame_bytes` 默认 4 MiB、最大 16 MiB。
+凭据与本人稳定 ID 经 Console 绑定原子写入私有环境文件，运行时仍在模型和资源副作用前校验完整配置。
+
+独立示例见[微信实例](../../bots/lingye-copilot-weixin/README.md)，模板为 `bots/_template/bot.weixin.yaml.template`。
+示例复用原 QQ 实例的集中模型用途和 Agent 配置，但使用不同工作区、认证根与状态目录。
+安装器使用 `--with-weixin`；微信实例 bootstrap 自动选择该依赖组，Console 安装也包含它。
+未绑定时允许保存实例配置，正式启动要求完成绑定及 Owner 配置。
