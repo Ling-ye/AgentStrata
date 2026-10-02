@@ -75,7 +75,7 @@ from chatcopilot.core.model_credentials import (
     access_credential,
     validate_auth_root_path,
 )
-from chatcopilot.external_tools.codex_cli.app_server import run_app_server
+from chatcopilot.external_tools.codex_cli.app_server import CodexRpcError, run_app_server
 from chatcopilot.contracts.model_runtime import ModelSelection, ResolvedRuntimeRoute
 from chatcopilot.core.codex_extensions import extension_digest, managed_extension_config
 from chatcopilot.contracts.cancellation import CancellationToken, CombinedCancellation
@@ -590,6 +590,7 @@ class CodexRuntimeAdapter:
                 cwd=state.workdir,
                 prompt=prompt,
                 timeout_seconds=self._turn_timeout,
+                request_timeout_seconds=config.timeout,
                 max_record_bytes=self._max_protocol_record_bytes,
                 env=subprocess_env,
                 model=selection.model,
@@ -680,9 +681,12 @@ class CodexRuntimeAdapter:
                 detail = f"{detail}; relay audit failed: {audit_error}"
             if relay_reset_error:
                 detail = f"{detail}; relay reset failed: {relay_reset_error}"
-            message = self._safe_cli_failure(detail)
+            auth_failed = self._is_auth_failure(detail,
+                error_info=projector.failure_info if projector is not None else None,
+                rpc_error=exc if isinstance(exc, CodexRpcError) else None)
+            message = self._auth_remediation() if auth_failed else self._generic_cli_failure()
             error_code = (
-                "codex_auth_invalid" if self._is_auth_failure(detail) else "codex_runtime_failed"
+                "codex_auth_invalid" if auth_failed else "codex_runtime_failed"
             )
             on_event(TurnError(code=error_code, message=detail[-4000:]))
             on_event(FinalText(message))
@@ -713,11 +717,12 @@ class CodexRuntimeAdapter:
 
         final_text = projector.final_text
         codex_failed = completed.returncode != 0 or projector.provider_failed
+        failure = None
         if codex_failed:
             detail = (
                 projector.failure_detail or completed.stderr or final_text or "Codex App Server reported a failed turn"
             ).strip()[-4000:]
-            auth_failed = self._is_auth_failure(detail)
+            auth_failed = self._is_auth_failure(detail, error_info=projector.failure_info)
             on_event(
                 TurnError(
                     code="codex_auth_invalid" if auth_failed else "codex_cli_failed",
@@ -728,6 +733,8 @@ class CodexRuntimeAdapter:
                 final_text = self._auth_remediation()
             elif not final_text:
                 final_text = self._generic_cli_failure()
+            failure = (RuntimeFailure("codex_auth_invalid", "authentication", final_text, True, False)
+                       if auth_failed else RuntimeFailure("codex_turn_failed", "model", self._generic_cli_failure()))
         if not final_text:
             final_text = "Codex completed without a final message."
         integrity = ResponseIntegrityCheck().check(
@@ -744,7 +751,7 @@ class CodexRuntimeAdapter:
             stop_reason="llm_error" if codex_failed else "end_turn",
             message_count=len(state.messages),
             response_integrity=integrity,
-            failure=RuntimeFailure("codex_turn_failed", "model", self._generic_cli_failure()) if codex_failed else None,
+            failure=failure,
         )
 
     @staticmethod
@@ -1396,12 +1403,6 @@ class CodexRuntimeAdapter:
             message_count=len(state.messages),
         )
 
-    @classmethod
-    def _safe_cli_failure(cls, detail: str) -> str:
-        if cls._is_auth_failure(detail):
-            return cls._auth_remediation()
-        return cls._generic_cli_failure()
-
     @staticmethod
     def _generic_cli_failure() -> str:
         return (
@@ -1418,7 +1419,20 @@ class CodexRuntimeAdapter:
         )
 
     @staticmethod
-    def _is_auth_failure(detail: str) -> bool:
+    def _is_auth_failure(detail: str, *, error_info: Any = None,
+                         rpc_error: CodexRpcError | None = None) -> bool:
+        if rpc_error is not None:
+            if isinstance(rpc_error.data, dict) and rpc_error.data.get("codexErrorInfo") is not None:
+                error_info = rpc_error.data["codexErrorInfo"]
+            if error_info is None and rpc_error.code in (-32700, -32600, -32601, -32602):
+                return False
+        if error_info is not None:
+            if isinstance(error_info, str):
+                return error_info == "unauthorized"
+            if isinstance(error_info, dict):
+                return any(isinstance(value, dict) and value.get("httpStatusCode") == 401
+                           for value in error_info.values())
+            return False
         normalized = str(detail or "").lower()
         return any(
             marker in normalized

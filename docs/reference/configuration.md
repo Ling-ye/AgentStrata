@@ -184,7 +184,9 @@ llm:
 缺失用途和配置文件路径。即使 Console 健康检查通过，机器人更新失败仍需完成这些步骤后重试。
 
 主 Agent 仍由 `agents.runtime` 选择；Codex 整轮时限使用
-`agents.runtime_options.codex.turn_timeout_seconds`。原生扩展 TOML 与权限归属见[Agent](agent.md)。
+`agents.runtime_options.codex.turn_timeout_seconds`。主 Codex 的初始化、认证交接、thread 操作和
+turn 提交确认复用连接 `timeout`（默认 120 秒），同时受整轮剩余时间约束；提交确认后的执行
+继续使用整轮时限。原生扩展 TOML 与权限归属见[Agent](agent.md)。
 `agents.runtime_options.codex.max_protocol_record_bytes` 控制 App Server stdout 单条 JSON
 记录，默认 `33554432`（32 MiB），允许 `1024` 到 `134217728`（128 MiB）；实例装配将该值
 传到实际 stdio reader，超限显式失败，公开观测预览仍独立压缩。

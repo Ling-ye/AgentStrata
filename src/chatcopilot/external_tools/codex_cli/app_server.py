@@ -17,6 +17,16 @@ from typing import Any, Callable
 _MAX_PROTOCOL_RECORD_BYTES = 32 * 1024 * 1024
 
 
+class CodexRpcError(RuntimeError):
+    """RPC failure details for the adapter; data is never rendered into logs."""
+
+    def __init__(self, method: str, error: dict) -> None:
+        self.method = method
+        self.code = error.get("code")
+        self.data = error.get("data")
+        super().__init__(f"App Server {method} failed: {error.get('message') or ''}")
+
+
 class AppServerProcess:
     def __init__(self, command: list[str], *, cwd: Path, env: dict[str, str],
                  timeout_seconds: float | None, on_notification: Callable[[str, dict], None],
@@ -26,6 +36,7 @@ class AppServerProcess:
         self.max_record_bytes = max_record_bytes
         self.command, self.cwd, self.env = command, cwd, env
         self.deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+        self.request_timeout_seconds: float | None = None
         self.on_notification, self.on_poll = on_notification, on_poll
         self.inbox: queue.Queue[Any] = queue.Queue(maxsize=256)
         self.closed = threading.Event()
@@ -109,10 +120,14 @@ class AppServerProcess:
             self.process.stdin.flush()
 
     def request(self, method: str, params: dict) -> dict:
+        request_deadline = (time.monotonic() + self.request_timeout_seconds
+                            if self.request_timeout_seconds is not None else None)
         self.serial += 1
         request_id = self.serial
         self.send({"id": request_id, "method": method, "params": params})
         while True:
+            if request_deadline is not None and time.monotonic() >= request_deadline:
+                raise subprocess.TimeoutExpired(f"App Server {method}", self.request_timeout_seconds)
             value = self.pending.pop(request_id, None) or self.receive()
             if value is None:
                 continue
@@ -120,7 +135,9 @@ class AppServerProcess:
                 self.pending[value.get("id")] = value
                 continue
             if "error" in value:
-                raise RuntimeError(f"App Server {method} failed: {value['error']}")
+                if not isinstance(value["error"], dict):
+                    raise RuntimeError(f"App Server {method} returned an invalid error")
+                raise CodexRpcError(method, value["error"])
             result = value.get("result")
             if not isinstance(result, dict):
                 raise RuntimeError(f"App Server {method} returned an invalid result")
@@ -261,7 +278,8 @@ def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt
                    dynamic_tools: list[dict] | None = None,
                    authentication: dict | None = None,
                    approval_policy: str = "never",
-                   max_record_bytes: int = _MAX_PROTOCOL_RECORD_BYTES) -> subprocess.CompletedProcess:
+                   max_record_bytes: int = _MAX_PROTOCOL_RECORD_BYTES,
+                   request_timeout_seconds: float | None = None) -> subprocess.CompletedProcess:
     owned = connection is None
     if connection:
         process = connection[0]
@@ -274,6 +292,7 @@ def run_app_server(command: list[str], *, cwd: Path, env: dict[str, str], prompt
             connection.append(process)
     with process if owned else nullcontext(process) as rpc:
         rpc.deadline = time.monotonic() + timeout_seconds if timeout_seconds is not None else None
+        rpc.request_timeout_seconds = request_timeout_seconds
         rpc.on_notification, rpc.on_poll, rpc.on_request = on_notification, on_poll, on_request
         rpc.terminal, rpc.turn_id = False, ""
         rpc.initialize()

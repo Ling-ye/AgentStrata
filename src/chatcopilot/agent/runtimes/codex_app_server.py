@@ -45,6 +45,7 @@ class AppServerProjector(CodexJsonlProjector):
     _usage_total: dict[str, int] | None = None
     terminal_status: str = ""
     failure_detail: str = ""
+    failure_info: str | dict | None = None
     _plan: dict | None = None
 
     def bind_thread(self, native_id: str) -> None:
@@ -74,11 +75,16 @@ class AppServerProjector(CodexJsonlProjector):
                 self._usage_total = {key: total.get(key, 0) for key in _TOKEN_KEYS}
                 self.on_usage(self._usage_total)
             return
+        if method in {"error", "turn/completed"}:
+            error = params.get("error") if method == "error" else params["turn"].get("error")
+            if isinstance(error, dict):
+                self.failure_detail = str(error.get("message") or self.failure_detail)[:4000]
+                if error.get("codexErrorInfo") is not None:
+                    self.failure_info = error["codexErrorInfo"]
+            if method == "error":
+                return
         if method == "turn/completed":
             self.terminal_status = str(params["turn"].get("status", "failed"))
-            error = params["turn"].get("error")
-            if isinstance(error, dict):
-                self.failure_detail = str(error.get("message") or "")[:4000]
             self.flush(force=True)
             if self._plan is not None:
                 self.on_event(SpanFinished(name="Codex plan", kind="plan", ok=self.terminal_status == "completed",

@@ -13,7 +13,7 @@ from chatcopilot.agent.runtimes.codex_app_server import AppServerProjector
 from chatcopilot.contracts.agent import AgentContentDelta, AgentMessageObserved, LlmCallFinished, SpanFinished, SpanUpdated
 from chatcopilot.contracts.cancellation import CancellationRequested
 from chatcopilot.core.agent_process import AgentProcessAdapter
-from chatcopilot.external_tools.codex_cli.app_server import run_app_server
+from chatcopilot.external_tools.codex_cli.app_server import CodexRpcError, run_app_server
 
 
 def projector(events, *, initial_usage=None):
@@ -119,6 +119,18 @@ def test_plan_revisions_remain_visible_and_terminal_error_has_provider_detail():
     assert value.failure_detail == "fixture failure"
 
 
+def test_provider_error_info_survives_until_terminal_and_ignores_other_turns():
+    value = projector([])
+    emit(value, "error", error={"message": "Authentication request failed", "codexErrorInfo": "usageLimitExceeded"})
+    emit(value, "error", turnId="other", error={"message": "other", "codexErrorInfo": "unauthorized"})
+    emit(value, "turn/completed", turn={"id": "turn-fixture", "status": "failed",
+        "error": {"message": "final failure", "codexErrorInfo": None}})
+    assert value.failure_info == "usageLimitExceeded"
+    assert value.failure_detail == "final failure"
+    emit(value, "error", error={"message": "late error", "codexErrorInfo": "unauthorized"})
+    assert value.failure_info == "usageLimitExceeded"
+
+
 def test_cancel_flushes_bounded_observed_text_and_ignores_other_turns():
     events = []
     value = projector(events)
@@ -140,10 +152,18 @@ mode=sys.argv[1]
 def send(value): print(json.dumps(value), flush=True)
 for raw in sys.stdin:
  r=json.loads(raw);method=r.get('method');params=r.get('params',{})
+ if len(sys.argv)>2 and method:
+  with open(sys.argv[2],'a') as audit: audit.write(method+'\\n')
+ if mode=='no_ack:'+str(method): continue
  if method=='initialized': continue
  if method=='initialize':
   assert params['capabilities']['experimentalApi'] is True
+  if mode=='rpc_error':
+   send({'id':r['id'],'error':{'code':-32601,'message':'authentication method unavailable',
+     'data':{'codexErrorInfo':'badRequest','token':'fixture-private-data'}}})
+   continue
   send({'id':r['id'],'result':{}})
+ elif method=='account/login/start': send({'id':r['id'],'result':{}})
  elif method in ('thread/start','thread/resume'):
   if method=='thread/resume': assert params['excludeTurns'] is True
   send({'id':r['id'],'result':{'thread':{'id':params.get('threadId','thread-fixture')},'instructionSources':[]}})
@@ -157,7 +177,8 @@ for raw in sys.stdin:
    send({'method':'item/completed','params':{'threadId':'thread-fixture','turnId':'turn-fixture',
      'item':{'id':'cmd','type':'commandExecution','command':'cat log','aggregatedOutput':'x'*(2*1024*1024),'exitCode':0}}})
    send({'method':'turn/completed','params':{'threadId':'thread-fixture','turn':{'id':'turn-fixture','status':'completed'}}})
-  elif mode=='complete':
+  elif mode in ('complete','slow'):
+   if mode=='slow': time.sleep(.8)
    send({'method':'item/completed','params':{'threadId':'thread-fixture','turnId':'turn-fixture',
      'item':{'id':'answer','type':'agentMessage','phase':'final_answer','text':'done'}}})
    send({'method':'turn/completed','params':{'threadId':'thread-fixture','turn':{'id':'turn-fixture','status':'completed'}}})
@@ -167,13 +188,15 @@ for raw in sys.stdin:
 '''
 
 
-def run_fixture(tmp_path, mode, *, on_poll=lambda: None, thread_id="", timeout_seconds=2):
+def run_fixture(tmp_path, mode, *, on_poll=lambda: None, thread_id="", timeout_seconds=2,
+                request_timeout_seconds=None, authentication=None, connection=None):
     script = tmp_path / "server.py"
     script.write_text(_SERVER)
     events, threads = [], []
-    result = run_app_server([sys.executable, str(script), mode], cwd=tmp_path, env=dict(os.environ),
+    result = run_app_server([sys.executable, str(script), mode, str(tmp_path / "requests.txt")], cwd=tmp_path, env=dict(os.environ),
         prompt="fixture", model="model", effort="medium", thread_id=thread_id, image_paths=(), timeout_seconds=timeout_seconds,
-        on_notification=lambda method, params: events.append((method, params)), on_thread=threads.append, on_poll=on_poll)
+        on_notification=lambda method, params: events.append((method, params)), on_thread=threads.append, on_poll=on_poll,
+        request_timeout_seconds=request_timeout_seconds, authentication=authentication, connection=connection)
     return result, threads, events
 
 
@@ -221,10 +244,51 @@ def test_stdio_cancellation_and_timeout_are_bounded(tmp_path):
         if time.monotonic() - started > .25:
             raise CancellationRequested()
     with pytest.raises(CancellationRequested):
-        run_fixture(tmp_path, "wait", on_poll=cancel)
+        run_fixture(tmp_path, "wait", on_poll=cancel, request_timeout_seconds=.5)
     assert time.monotonic() - started < 4
     with pytest.raises(subprocess.TimeoutExpired):
         run_fixture(tmp_path, "wait")
+
+
+def test_rpc_error_retains_code_and_data_without_rendering_private_data(tmp_path):
+    with pytest.raises(CodexRpcError) as caught:
+        run_fixture(tmp_path, "rpc_error")
+    error = caught.value
+    assert error.method == "initialize" and error.code == -32601
+    assert error.data == {"codexErrorInfo": "badRequest", "token": "fixture-private-data"}
+    assert "fixture-private-data" not in str(error)
+
+
+@pytest.mark.parametrize("method", ["initialize", "account/login/start", "thread/start", "thread/resume", "turn/start"])
+def test_control_request_timeout_does_not_wait_for_turn_deadline_or_replay(tmp_path, method):
+    started = time.monotonic()
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        run_fixture(tmp_path, "no_ack:" + method, timeout_seconds=20, request_timeout_seconds=.5,
+            thread_id="thread-fixture" if method == "thread/resume" else "",
+            authentication={"type": "chatgptAuthTokens", "accessToken": "fixture", "chatgptAccountId": "account"})
+    assert caught.value.cmd == "App Server " + method
+    assert time.monotonic() - started < 3
+    assert (tmp_path / "requests.txt").read_text().splitlines().count(method) == 1
+
+
+def test_control_request_is_also_bounded_by_remaining_turn_time(tmp_path):
+    with pytest.raises(subprocess.TimeoutExpired) as caught:
+        run_fixture(tmp_path, "no_ack:initialize", timeout_seconds=.2, request_timeout_seconds=20)
+    assert isinstance(caught.value.cmd, list)  # The existing turn deadline fired first.
+
+
+def test_acknowledged_long_turn_and_reused_connection_outlive_request_timeout(tmp_path):
+    connection = []
+    try:
+        result, _, _ = run_fixture(tmp_path, "slow", request_timeout_seconds=.5, connection=connection)
+        assert result.returncode == 0
+        pid = connection[0].process.pid
+        result, _, _ = run_fixture(tmp_path, "slow", thread_id="thread-fixture",
+            request_timeout_seconds=.5, connection=connection)
+        assert result.returncode == 0 and connection[0].process.pid == pid
+    finally:
+        for process in connection:
+            process.__exit__(None, None, None)
 
 
 _DUPLEX_SERVER = '''

@@ -46,12 +46,14 @@ refuses staging cleanup, login returns `staging_cleanup_failed`, leaves the
 authoritative lane unchanged, and requires the operator to remove the remaining
 private temporary directory through host diagnostics.
 
- Each Codex invocation acquires a cross-process lease for exactly
-one lane, copies that lane's authoritative credential into its isolated runtime
-home, and in a `finally` path validates and atomically copies back a legitimate
-refresh made by Codex.  Main turns serialize on the main lease and
-the existing worker FIFO serializes worker execution; the two lane locks are
-independent, so a worker task does not block main chat.
+ Main authentication is refreshed by the host under the main lane's cross-process
+lock. The lock covers credential reads, refresh and atomic write-back, not the
+model turn. Only an access token is handed off to the actor's App Server;
+refresh tokens are not copied into actor homes. Each worker invocation instead
+holds its independent worker lease, copies that lane's credential into its
+isolated runtime home, and validates and atomically copies back a legitimate
+Codex refresh in a `finally` path. The worker FIFO serializes worker execution;
+the two lane locks remain independent, so a worker task does not block main chat.
 
  Every successful explicit login increments a lane credential
 generation.  A generation change invalidates native Codex resume
@@ -69,7 +71,9 @@ must not be applied to the main App Server. Execution details are maintained in
  Status reports only lane state (`missing`, `recognized`, `ready`,
 `invalid`, or `busy`), safe timestamps, and stable non-secret error codes; it
 must not print account identity, credential paths, token values, or raw Codex
-CLI output.  Authentication failures shown to chat users use a
+CLI output. `ready` means that local credential validation and installation
+metadata checks passed; it does not prove a successful model call.
+Authentication failures shown to chat users use a
 short actionable message, while raw stderr remains available only in private
 task diagnostics and never becomes `final_text`.
 
@@ -92,8 +96,10 @@ home; there is no `host` access-mode exception.
   nothing for that lane, and leaves only private host-diagnostic residue.
 -  Concurrent callers for one lane cannot race credential rotation,
   while main and worker invocations may proceed concurrently.
--  A valid refresh produced during success, failure, cancellation,
-  or timeout is copied back atomically; malformed, symlinked, or overly
+-  Main refreshes are written atomically by the host without holding the lane lock
+  for inference or giving actors refresh tokens. A valid worker refresh produced
+  during success, failure, cancellation, or timeout is copied back atomically;
+  malformed, symlinked, or overly
   permissive credentials never replace authoritative state.
 -  Explicit re-login invalidates the affected lane's old native
   resume identifiers without deleting worker worktrees or attempts.

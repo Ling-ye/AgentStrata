@@ -51,6 +51,7 @@ from chatcopilot.core.model_credentials import (
     CredentialError,
     install_login_credential,
 )
+from chatcopilot.external_tools.codex_cli.app_server import CodexRpcError
 from chatcopilot.middleware.acp.turn_pipeline import (
     CallbackTurnHandler,
     OrderedTurnPipeline,
@@ -1576,6 +1577,56 @@ class CodexBackendResumeTests(TestCase):
             self.assertEqual(state.credential_generation, 2)
             self.assertEqual(state.native_session_id, "new-account-thread")
             backend.close_session(RuntimeSessionRef("codex", "new-account-thread"))
+
+    def test_structured_failures_take_precedence_over_authentication_text(self):
+        cases = [
+            ("turn", {"message": "plain provider failure", "codexErrorInfo": "unauthorized"}, True),
+            ("turn", {"message": "Authentication quota exhausted", "codexErrorInfo": "usageLimitExceeded"}, False),
+            ("turn", {"message": "authentication network failure", "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 503}}}, False),
+            ("turn", {"message": "plain HTTP failure", "codexErrorInfo": {"httpConnectionFailed": {"httpStatusCode": 401}}}, True),
+            ("turn", {"message": "401 Unauthorized fixture", "codexErrorInfo": None}, True),
+            ("disconnect", {"message": "quota exhausted", "codexErrorInfo": "usageLimitExceeded"}, False),
+            ("rpc", {"code": -32601, "message": "authentication method unavailable"}, False),
+            ("rpc", {"code": -32000, "message": "plain RPC failure", "data": {"codexErrorInfo": "unauthorized", "token": "fixture-private-data"}}, True),
+            ("rpc", {"code": -32000, "message": "authentication request rejected", "data": {"codexErrorInfo": "badRequest", "token": "fixture-private-data"}}, False),
+        ]
+        for kind, error, auth_failed in cases:
+            with self.subTest(kind=kind, error=error), TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config = _runtime_config(SimpleNamespace(code_model="gpt-test", code_reasoning_effort="medium"))
+                config.llm.timeout = 37
+                backend = CodexRuntimeAdapter(tool_names=set(), runtime_config=config)
+                ref = backend.open_session(RuntimeOpenRequest(session_id="failure", prompt_plan=prompt_plan("system"),
+                    options={"workspace_root": root, "runtime_state_root": root / "state", "role_hint": "owner"}))
+                events = []
+
+                def run(command, **kwargs):
+                    self.assertEqual(kwargs["request_timeout_seconds"], 37)
+                    if kind == "rpc":
+                        raise CodexRpcError("account/login/start", error)
+                    kwargs["on_thread"]("failure-thread")
+                    kwargs["on_notification"]("turn/started", {"threadId": "failure-thread", "turn": {"id": "failure-turn"}})
+                    if kind == "disconnect":
+                        kwargs["on_notification"]("error", {"threadId": "failure-thread", "turnId": "failure-turn", "error": error})
+                        raise RuntimeError("authentication-looking transport failure")
+                    kwargs["on_notification"]("turn/completed", {"threadId": "failure-thread",
+                        "turn": {"id": "failure-turn", "status": "failed", "error": error}})
+                    return subprocess.CompletedProcess(command, 0, "", "")
+
+                try:
+                    with mock.patch("chatcopilot.external_tools.codex_cli.command._resolve_executable", return_value="/usr/bin/true"), \
+                         mock.patch("chatcopilot.agent.runtimes.codex.run_app_server", side_effect=run) as execute:
+                        result = backend.stream_turn(ref, AgentTask("request"), on_event=events.append)
+                    self.assertEqual(execute.call_count, 1)
+                    self.assertEqual(result.failure.stage, "authentication" if auth_failed else "model" if kind == "turn" else "protocol")
+                    self.assertEqual(result.failure.user_action_required, auth_failed)
+                    self.assertFalse(result.failure.resubmission_allowed)
+                    self.assertEqual("codex-auth login" in result.final_text, auth_failed)
+                    errors = [event for event in events if isinstance(event, TurnError)]
+                    self.assertEqual(errors[-1].code == "codex_auth_invalid", auth_failed)
+                    self.assertNotIn("fixture-private-data", repr(events))
+                finally:
+                    backend.close_session(ref)
 
     def test_subscription_tokens_are_handed_off_without_runtime_auth_file(self):
         with TemporaryDirectory() as tmp:
