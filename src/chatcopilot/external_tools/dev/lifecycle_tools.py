@@ -8,7 +8,7 @@ from chatcopilot.external_tools.dev.self_update_publisher import (
     build_publish_request_from_env,
     publish_self_update,
 )
-from chatcopilot.external_tools.shared.tool_spec import ToolResult
+from chatcopilot.contracts.tools import ToolResult
 
 
 def execute_finalize_self_update_from_workspace(

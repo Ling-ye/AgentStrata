@@ -84,6 +84,16 @@ Console 只读查询观测索引，不复制整份 Gateway 业务状态库，也
 
 ### Legacy 任务记录
 
+`TurnTaskRecorder` 与 `complete_delegated_task()` 负责回合推进和后台完成合并；
+`task_storage` 持有私有文件、完成锁、事件锁、序号恢复及历史读取；`task_projection`
+负责记录格式、脱敏后的有界投影与用量归一化，预测计算只接收历史数据。
+上下文快照与子代理 transcript 共用任务专属 artifact 写入，数据格式保持不变。
+主回合旧状态不能覆盖后台完成，主回合失败也不能被子任务成功覆盖。
+
+实现分别见[记录服务](../../src/chatcopilot/middleware/runtime/tasks.py)、
+[私有存储](../../src/chatcopilot/middleware/runtime/task_storage.py)和
+[纯投影](../../src/chatcopilot/middleware/runtime/task_projection.py)。
+
 Legacy `/tasks` 接口继续只服务 ACP/adapter artifact；Gateway 访问它时保持原有 unavailable 契约，前端使用上述原生接口，不回退旧 Relay/cc-connect/ACP 记录。以下任务列表、八层转换、上下文和删除说明仅适用于 legacy edge。
 
 Legacy 实例仍在“任务”中使用原有任务记录组件，不在前端扫描任务推导服务状态。可选择任务并

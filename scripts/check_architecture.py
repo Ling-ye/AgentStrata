@@ -334,10 +334,10 @@ REMOVED_IMPORTS = (
     "chatcopilot.gateway.interactions",
     "chatcopilot.gateway.runtime_cutover",
     "chatcopilot.runtime_cutover",
-)
-COMPATIBILITY_IMPORTS = (
     "chatcopilot.agent.research",
     "chatcopilot.external_tools.shared.tool_spec",
+    "chatcopilot.middleware.access_control",
+    "chatcopilot.agent.tools.workspace_context",
 )
 
 
@@ -605,18 +605,6 @@ def _graph_checks() -> dict[str, dict[str, list[str]]]:
     return violations
 
 
-def _compatibility_allowed(prefix: str, relative_path: str) -> bool:
-    if relative_path == "tests/unit/test_compatibility_exports.py":
-        return True
-    if prefix == "chatcopilot.external_tools.shared.tool_spec":
-        return relative_path.startswith("src/chatcopilot/external_tools/")
-    package_paths = {
-        "chatcopilot.agent.research": "src/chatcopilot/agent/research/",
-    }
-    allowed_root = package_paths.get(prefix)
-    return allowed_root is not None and relative_path.startswith(allowed_root)
-
-
 def _compatibility_import_checks() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, list[str]] = {}
     modules = _production_modules()
@@ -638,13 +626,6 @@ def _compatibility_import_checks() -> dict[str, dict[str, list[str]]]:
         relative_path = path.relative_to(ROOT).as_posix()
         for reference in _import_references(record, modules):
             if _matches(reference.imported, REMOVED_IMPORTS):
-                violations.setdefault(relative_path, []).append(reference.imported)
-                continue
-            for prefix in COMPATIBILITY_IMPORTS:
-                if not _matches(reference.imported, (prefix,)):
-                    continue
-                if _compatibility_allowed(prefix, relative_path):
-                    continue
                 violations.setdefault(relative_path, []).append(reference.imported)
     if not violations:
         return {}
@@ -793,6 +774,76 @@ def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
     return violations
 
 
+def _evaluation_worker_checks() -> dict[str, dict[str, list[str]]]:
+    """Enforce the migrated Evaluation service/worker boundary."""
+    modules = _production_modules()
+    prefix = "chatcopilot.evals.application."
+    types, service, implementation = (prefix + name for name in ("worker_types", "controller", "worker_runtime"))
+    violations: dict[str, list[str]] = {}
+    for name in {types, service} & modules.keys():
+        record = modules[name]
+        errors: list[str] = []
+        references = _import_references(record, modules)
+        for reference in references:
+            target = reference.target or reference.imported
+            if name == types and target.split(".")[0] not in {"__future__", "collections", "dataclasses", "pathlib", "types", "typing"}:
+                errors.append("Worker Types must be pure: " + target)
+            if name == service and (target == implementation or target.split(".")[0] in {"subprocess", "signal", "multiprocessing"}):
+                errors.append("Evaluation service requires a worker port: " + target)
+        if name == service:
+            pending = [r.target for r in references if r.target in modules]
+            visited: set[str] = set()
+            while pending:
+                dependency = pending.pop()
+                if dependency is None or dependency in visited:
+                    continue
+                visited.add(dependency)
+                if dependency == implementation:
+                    errors.append("Evaluation service reaches worker implementation through imports")
+                    continue
+                pending.extend(r.target for r in _import_references(modules[dependency], modules) if r.target in modules)
+            tree = ast.parse(record.path.read_text(encoding="utf-8-sig"))
+            if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "Thread" for node in ast.walk(tree)):
+                errors.append("Evaluation worker owns process monitor threads")
+        if errors:
+            violations[record.path.relative_to(ROOT).as_posix()] = sorted(set(errors))
+    return {"evaluation_worker_boundaries": violations} if violations else {}
+
+
+def _task_record_checks() -> dict[str, dict[str, list[str]]]:
+    """Check the migrated task record service, storage and pure calculations."""
+    modules = _production_modules()
+    prefix = "chatcopilot.middleware.runtime."
+    allowed = {
+        "task_projection": set(),
+        "task_forecast": {"task_projection"},
+        "task_storage": {"task_projection"},
+        "tasks": {"task_projection", "task_forecast", "task_storage"},
+    }
+    violations: dict[str, list[str]] = {}
+    for leaf, dependencies in allowed.items():
+        name = prefix + leaf
+        if name not in modules:
+            continue
+        record = modules[name]
+        errors: list[str] = []
+        for reference in _import_references(record, modules):
+            target = reference.target or reference.imported
+            if target.startswith(prefix) and target.removeprefix(prefix) in allowed and target.removeprefix(prefix) not in dependencies:
+                errors.append(leaf + " cannot depend on " + target)
+            if leaf != "task_storage" and target.split(".")[0] in {"os", "io", "subprocess", "shutil"}:
+                errors.append("Task storage owns filesystem mechanisms: " + target)
+        if leaf != "task_storage":
+            tree = ast.parse(record.path.read_text(encoding="utf-8-sig"))
+            if any(isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and
+                   node.func.attr in {"read_text", "read_bytes", "write_text", "write_bytes", "mkdir", "unlink", "lstat", "open"}
+                   for node in ast.walk(tree)):
+                errors.append("File operations belong to task_storage")
+        if errors:
+            violations[record.path.relative_to(ROOT).as_posix()] = sorted(set(errors))
+    return {"task_record_boundaries": violations} if violations else {}
+
+
 def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
     """Only the migrated control slice is covered, not all existing Harness code."""
     modules = _production_modules()
@@ -919,6 +970,8 @@ def check_architecture() -> dict[str, dict[str, list[str]]]:
     _merge(violations, _compatibility_import_checks())
     _merge(violations, _semantic_invariants())
     _merge(violations, _harness_control_checks())
+    _merge(violations, _evaluation_worker_checks())
+    _merge(violations, _task_record_checks())
     _merge(violations, _harness_layer_checks())
     return violations
 

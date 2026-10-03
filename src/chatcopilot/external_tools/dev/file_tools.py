@@ -20,7 +20,7 @@ from chatcopilot.external_tools.dev.path_guard import (
     ensure_readable,
     ensure_writable,
 )
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

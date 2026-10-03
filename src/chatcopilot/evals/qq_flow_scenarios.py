@@ -43,7 +43,7 @@ from chatcopilot.middleware.acp.transport_attestation import (
     validate_qq_group_transport_attestation,
 )
 from chatcopilot.middleware.acp.workspace_service import build_workspace_service
-from chatcopilot.middleware.runtime.tasks import (
+from chatcopilot.middleware.runtime.task_projection import (
     EVENTS_FILENAME,
     TASK_FILENAME,
     TURN_FILENAME,

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Dict
 
-from chatcopilot.agent.tools.workspace_context import (
+from chatcopilot.core.workspace_context import (
     list_workspace_inventories,
     resolve_workspace,
     resolve_workspace_root,

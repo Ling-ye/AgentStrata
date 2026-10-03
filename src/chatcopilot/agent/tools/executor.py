@@ -29,7 +29,7 @@ from chatcopilot.agent.tools.file_delivery import (
 )
 from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.agent.tools.result_reader import SessionResultStore
-from chatcopilot.agent.tools.workspace_context import WorkspaceService, bind_workspace_service
+from chatcopilot.core.workspace_context import WorkspaceService, bind_workspace_service
 from chatcopilot.contracts.execution_scope import bind_execution_scope
 from chatcopilot.core.caller_context import bind_caller_role
 from chatcopilot.contracts.tools import (

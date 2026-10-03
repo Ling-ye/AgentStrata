@@ -1,3 +1,5 @@
+from chatcopilot.middleware.runtime import task_storage
+from chatcopilot.middleware.runtime import task_projection
 import json
 import os
 import stat
@@ -12,12 +14,8 @@ from chatcopilot.core.observability_redaction import (
     omit_private_reasoning_messages,
     redact_observability_payload,
 )
-from chatcopilot.middleware.runtime import tasks as task_runtime
-from chatcopilot.middleware.runtime.tasks import (
-    MAX_CONTEXT_ARTIFACT_BYTES,
-    TurnTaskRecorder,
-    complete_delegated_task,
-)
+from chatcopilot.middleware.runtime.task_projection import MAX_CONTEXT_ARTIFACT_BYTES
+from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder, complete_delegated_task
 from chatcopilot.core.workspace_runtime import Workspace
 
 
@@ -278,14 +276,14 @@ def test_task_size_fallback_preserves_context_artifact_index(
     ]
     payload["hostile_metadata"] = {"blob": hostile}
 
-    task_runtime._write_private_task_json(
+    task_storage._write_private_task_json(
         recorder.path.parent,
-        task_runtime.TASK_FILENAME,
+        task_projection.TASK_FILENAME,
         payload,
     )
 
     persisted = json.loads(recorder.path.read_text(encoding="utf-8"))
-    assert recorder.path.stat().st_size <= task_runtime.MAX_TASK_SUMMARY_BYTES
+    assert recorder.path.stat().st_size <= task_projection.MAX_TASK_SUMMARY_BYTES
     assert persisted["summary_limits"]["payload_truncated"] is True
     assert persisted["summary_limits"]["context_snapshots_minimal"] is True
     assert persisted["summary_limits"]["context_snapshots_total"] == 1
@@ -336,7 +334,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
             "capture_status": "captured",
             "captured_at": float(index),
         }
-        for index in range(task_runtime.MAX_TASK_CONTEXT_SNAPSHOT_SUMMARIES)
+        for index in range(task_projection.MAX_TASK_CONTEXT_SNAPSHOT_SUMMARIES)
     ] + [latest_context]
     payload["llm_calls"] = [
         {
@@ -344,7 +342,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
             "context_snapshot_id": f"ctx_{index}",
             "recorded_at": float(index),
         }
-        for index in range(task_runtime.MAX_TASK_LLM_CALL_SUMMARIES + 1)
+        for index in range(task_projection.MAX_TASK_LLM_CALL_SUMMARIES + 1)
     ]
     payload["input_resources"] = [
         {
@@ -353,12 +351,12 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
             "recorded_at": float(index),
             "resources": [],
         }
-        for index in range(task_runtime.MAX_TASK_INPUT_RESOURCE_SUMMARIES + 1)
+        for index in range(task_projection.MAX_TASK_INPUT_RESOURCE_SUMMARIES + 1)
     ]
 
-    task_runtime._write_private_task_json(
+    task_storage._write_private_task_json(
         recorder.path.parent,
-        task_runtime.TASK_FILENAME,
+        task_projection.TASK_FILENAME,
         payload,
     )
 
@@ -474,14 +472,14 @@ def test_event_sequence_sidecar_avoids_rescanning_growing_jsonl(
     monkeypatch,
 ) -> None:
     scans = 0
-    original = task_runtime._last_event_sequence
+    original = task_storage._last_event_sequence
 
     def counted(path: Path, **kwargs) -> int:
         nonlocal scans
         scans += 1
         return original(path, **kwargs)
 
-    monkeypatch.setattr(task_runtime, "_last_event_sequence", counted)
+    monkeypatch.setattr(task_storage, "_last_event_sequence", counted)
     recorder = TurnTaskRecorder(
         workspace=_workspace(tmp_path / "ws"),
         session_id="sid-sequence",
@@ -492,7 +490,7 @@ def test_event_sequence_sidecar_avoids_rescanning_growing_jsonl(
         recorder.record_event("activity", {"index": index})
 
     assert scans <= 1
-    sequence_path = recorder.path.parent / task_runtime.EVENT_SEQUENCE_FILENAME
+    sequence_path = recorder.path.parent / task_projection.EVENT_SEQUENCE_FILENAME
     assert sequence_path.read_text(encoding="ascii") == "1001"
     events = [
         json.loads(line)
@@ -506,14 +504,14 @@ def test_event_sequence_sidecar_avoids_rescanning_growing_jsonl(
 def test_legacy_event_sequence_ignores_pathological_json(tmp_path: Path) -> None:
     task_dir = tmp_path / "workspace" / "tasks" / "task_pathological_legacy"
     task_dir.mkdir(parents=True)
-    event_path = task_dir / task_runtime.EVENTS_FILENAME
+    event_path = task_dir / task_projection.EVENTS_FILENAME
     event_path.write_text(
         '{"sequence":' + ("9" * 5000) + "}\n",
         encoding="utf-8",
     )
     event_path.chmod(0o600)
 
-    task_runtime._append_task_event(
+    task_storage._append_task_event(
         task_dir,
         "task_finished",
         {"ok": True},
@@ -533,9 +531,9 @@ def test_event_writer_rejects_hardlinks_without_mutating_victims(tmp_path: Path)
 
     sequence_victim = tmp_path / "sequence-victim"
     sequence_victim.write_text("KEEP-SEQUENCE", encoding="utf-8")
-    os.link(sequence_victim, task_dir / task_runtime.EVENT_SEQUENCE_FILENAME)
+    os.link(sequence_victim, task_dir / task_projection.EVENT_SEQUENCE_FILENAME)
     try:
-        task_runtime._append_task_event(
+        task_storage._append_task_event(
             task_dir,
             "activity",
             {"value": 1},
@@ -547,12 +545,12 @@ def test_event_writer_rejects_hardlinks_without_mutating_victims(tmp_path: Path)
         raise AssertionError("hard-linked sequence state must be rejected")
     assert sequence_victim.read_text(encoding="utf-8") == "KEEP-SEQUENCE"
 
-    (task_dir / task_runtime.EVENT_SEQUENCE_FILENAME).unlink()
+    (task_dir / task_projection.EVENT_SEQUENCE_FILENAME).unlink()
     event_victim = tmp_path / "event-victim"
     event_victim.write_text("KEEP-EVENT", encoding="utf-8")
-    os.link(event_victim, task_dir / task_runtime.EVENTS_FILENAME)
+    os.link(event_victim, task_dir / task_projection.EVENTS_FILENAME)
     try:
-        task_runtime._append_task_event(
+        task_storage._append_task_event(
             task_dir,
             "activity",
             {"value": 2},
@@ -578,7 +576,7 @@ def test_event_writer_rejects_symlinked_task_directory_without_touching_target(
     task_dir.symlink_to(external, target_is_directory=True)
 
     try:
-        task_runtime._append_task_event(
+        task_storage._append_task_event(
             task_dir,
             "activity",
             {"value": 1},
@@ -601,7 +599,7 @@ def test_task_recorder_rejects_symlinked_tasks_ancestor_before_any_write(
     external = tmp_path / "external-tasks"
     external.mkdir(mode=0o755)
     target_mode = stat.S_IMODE(external.stat().st_mode)
-    (workspace_root / task_runtime.TASKS_DIRNAME).symlink_to(
+    (workspace_root / task_projection.TASKS_DIRNAME).symlink_to(
         external,
         target_is_directory=True,
     )
@@ -634,17 +632,17 @@ def test_event_sequence_rejects_oversized_state_and_recovers_from_log(
 ) -> None:
     task_dir = tmp_path / "workspace" / "tasks" / "task_sequence_width"
     task_dir.mkdir(parents=True)
-    sequence_path = task_dir / task_runtime.EVENT_SEQUENCE_FILENAME
+    sequence_path = task_dir / task_projection.EVENT_SEQUENCE_FILENAME
     sequence_path.write_text("9" * 64, encoding="ascii")
     sequence_path.chmod(0o600)
 
-    task_runtime._append_task_event(
+    task_storage._append_task_event(
         task_dir,
         "first",
         {},
         workspace_root=tmp_path / "workspace",
     )
-    task_runtime._append_task_event(
+    task_storage._append_task_event(
         task_dir,
         "second",
         {},
@@ -653,7 +651,7 @@ def test_event_sequence_rejects_oversized_state_and_recovers_from_log(
 
     events = [
         json.loads(line)
-        for line in (task_dir / task_runtime.EVENTS_FILENAME).read_text(
+        for line in (task_dir / task_projection.EVENTS_FILENAME).read_text(
             encoding="utf-8"
         ).splitlines()
     ]
@@ -668,7 +666,7 @@ def test_event_encoding_failure_does_not_advance_sequence_sidecar(
     task_dir.mkdir(parents=True)
 
     try:
-        task_runtime._append_task_event(
+        task_storage._append_task_event(
             task_dir,
             "x" * (70 * 1024),
             {},
@@ -679,16 +677,16 @@ def test_event_encoding_failure_does_not_advance_sequence_sidecar(
     else:
         raise AssertionError("oversized event type must be rejected")
 
-    sequence_path = task_dir / task_runtime.EVENT_SEQUENCE_FILENAME
+    sequence_path = task_dir / task_projection.EVENT_SEQUENCE_FILENAME
     assert not sequence_path.exists()
-    task_runtime._append_task_event(
+    task_storage._append_task_event(
         task_dir,
         "valid",
         {},
         workspace_root=tmp_path / "workspace",
     )
     event = json.loads(
-        (task_dir / task_runtime.EVENTS_FILENAME).read_text(encoding="utf-8")
+        (task_dir / task_projection.EVENTS_FILENAME).read_text(encoding="utf-8")
     )
     assert event["sequence"] == 1
     assert sequence_path.read_text(encoding="ascii") == "1"
@@ -699,17 +697,17 @@ def test_event_sequence_reconciles_stale_sidecar_with_authoritative_log(
 ) -> None:
     task_dir = tmp_path / "workspace" / "tasks" / "task_stale_sequence"
     task_dir.mkdir(parents=True)
-    event_path = task_dir / task_runtime.EVENTS_FILENAME
+    event_path = task_dir / task_projection.EVENTS_FILENAME
     event_path.write_text(
         json.dumps({"sequence": 5, "event": "existing"}) + "\n",
         encoding="utf-8",
     )
     event_path.chmod(0o600)
-    sequence_path = task_dir / task_runtime.EVENT_SEQUENCE_FILENAME
+    sequence_path = task_dir / task_projection.EVENT_SEQUENCE_FILENAME
     sequence_path.write_text("4", encoding="ascii")
     sequence_path.chmod(0o600)
 
-    task_runtime._append_task_event(
+    task_storage._append_task_event(
         task_dir,
         "next",
         {},
@@ -726,7 +724,7 @@ def test_event_writer_tightens_legacy_event_log_permissions(tmp_path: Path) -> N
         return
     task_dir = tmp_path / "workspace" / "tasks" / "task_legacy_permissions"
     task_dir.mkdir(parents=True)
-    event_path = task_dir / task_runtime.EVENTS_FILENAME
+    event_path = task_dir / task_projection.EVENTS_FILENAME
     event_path.write_text(
         json.dumps(
             {
@@ -742,7 +740,7 @@ def test_event_writer_tightens_legacy_event_log_permissions(tmp_path: Path) -> N
     )
     event_path.chmod(0o644)
 
-    task_runtime._append_task_event(
+    task_storage._append_task_event(
         task_dir,
         "task_finished",
         {"ok": True},
@@ -763,7 +761,7 @@ def test_event_writer_rejects_group_writable_legacy_log(tmp_path: Path) -> None:
         return
     task_dir = tmp_path / "workspace" / "tasks" / "task_unsafe_permissions"
     task_dir.mkdir(parents=True)
-    event_path = task_dir / task_runtime.EVENTS_FILENAME
+    event_path = task_dir / task_projection.EVENTS_FILENAME
     original = json.dumps(
         {
             "event_id": "task_unsafe_permissions:1",
@@ -777,7 +775,7 @@ def test_event_writer_rejects_group_writable_legacy_log(tmp_path: Path) -> None:
     event_path.chmod(0o666)
 
     try:
-        task_runtime._append_task_event(
+        task_storage._append_task_event(
             task_dir,
             "task_finished",
             {"ok": True},
@@ -802,7 +800,7 @@ def test_large_event_payload_is_manifested_and_remains_tail_visible(tmp_path: Pa
     recorder.tool_started("large_tool", {"content": "x" * (600 * 1024)})
 
     event_lines = (recorder.path.parent / "events.jsonl").read_bytes().splitlines()
-    assert max(len(line) for line in event_lines) < task_runtime.MAX_TASK_EVENT_BYTES
+    assert max(len(line) for line in event_lines) < task_projection.MAX_TASK_EVENT_BYTES
     event = json.loads(event_lines[-1])
     assert event["event"] == "tool_started"
     assert event["data"]["name"] == "large_tool"
@@ -861,7 +859,7 @@ def test_provider_activity_summary_is_hard_capped_and_explicitly_truncated(
         message_id="msg-activity-cap",
         user_text="activity cap",
     )
-    for index in range(task_runtime.MAX_PROVIDER_ACTIVITY_SUMMARIES + 100):
+    for index in range(task_projection.MAX_PROVIDER_ACTIVITY_SUMMARIES + 100):
         span_id = f"command-cap-{index}"
         recorder.span_started(
             "command",
@@ -880,13 +878,13 @@ def test_provider_activity_summary_is_hard_capped_and_explicitly_truncated(
     payload = json.loads(recorder.path.read_text(encoding="utf-8"))
     activity = payload["activity_summary"]
     assert activity == {
-        "provider_total": task_runtime.MAX_PROVIDER_ACTIVITY_SUMMARIES + 100,
-        "provider_retained": task_runtime.MAX_PROVIDER_ACTIVITY_SUMMARIES,
+        "provider_total": task_projection.MAX_PROVIDER_ACTIVITY_SUMMARIES + 100,
+        "provider_retained": task_projection.MAX_PROVIDER_ACTIVITY_SUMMARIES,
         "provider_dropped": 100,
         "truncated": True,
     }
-    assert len(payload["steps"]) == task_runtime.MAX_PROVIDER_ACTIVITY_SUMMARIES
-    assert len(payload["tools"]) == task_runtime.MAX_PROVIDER_ACTIVITY_SUMMARIES
+    assert len(payload["steps"]) == task_projection.MAX_PROVIDER_ACTIVITY_SUMMARIES
+    assert len(payload["tools"]) == task_projection.MAX_PROVIDER_ACTIVITY_SUMMARIES
     events = [
         json.loads(line)
         for line in (recorder.path.parent / "events.jsonl").read_text(
@@ -902,7 +900,7 @@ def test_provider_activity_summary_is_hard_capped_and_explicitly_truncated(
     omission_events = [
         event for event in events if event["event"] == "provider_activity_omitted"
     ]
-    assert len(provider_events) == task_runtime.MAX_PROVIDER_ACTIVITY_RAW_EVENTS
+    assert len(provider_events) == task_projection.MAX_PROVIDER_ACTIVITY_RAW_EVENTS
     assert len(omission_events) == 1
 
 
@@ -1446,7 +1444,7 @@ def test_turn_task_persists_llm_backend_on_lifecycle_events_and_summary(
     assert persisted["llm_calls"][0]["runtime_id"] == "future-backend"
     events = [
         json.loads(line)
-        for line in (recorder.path.parent / task_runtime.EVENTS_FILENAME)
+        for line in (recorder.path.parent / task_projection.EVENTS_FILENAME)
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -1548,7 +1546,7 @@ def test_turn_task_usage_rejects_negative_and_unbounded_values(tmp_path: Path) -
         '{"schema_version":2,"updated_at":' + ("9" * 5000) + "}",
         encoding="utf-8",
     )
-    assert task_runtime.load_task_history(history_root) == []
+    assert task_storage.load_task_history(history_root) == []
 
 
 def test_delegated_task_follows_child_job_terminal_result(tmp_path: Path) -> None:
@@ -1625,7 +1623,7 @@ def test_delegated_task_bounds_large_child_result_and_accepts_later_completion(
         job_id=first_job,
         result={
             "ok": True,
-            "summary": "x" * (task_runtime.MAX_TASK_SUMMARY_BYTES + 1024),
+            "summary": "x" * (task_projection.MAX_TASK_SUMMARY_BYTES + 1024),
             "outputs": ["y" * 4096 for _ in range(50)],
             "finished_at": 123.0,
         },
@@ -1633,7 +1631,7 @@ def test_delegated_task_bounds_large_child_result_and_accepts_later_completion(
 
     assert first is not None
     assert first["status"] == "delegated"
-    assert recorder.path.stat().st_size <= task_runtime.MAX_TASK_SUMMARY_BYTES
+    assert recorder.path.stat().st_size <= task_projection.MAX_TASK_SUMMARY_BYTES
     persisted_first = json.loads(recorder.path.read_text(encoding="utf-8"))
     assert persisted_first["job_results"][0]["payload_truncated"] is True
 
@@ -1646,7 +1644,7 @@ def test_delegated_task_bounds_large_child_result_and_accepts_later_completion(
 
     assert second is not None
     assert second["status"] == "succeeded"
-    assert recorder.path.stat().st_size <= task_runtime.MAX_TASK_SUMMARY_BYTES
+    assert recorder.path.stat().st_size <= task_projection.MAX_TASK_SUMMARY_BYTES
     persisted_second = json.loads(recorder.path.read_text(encoding="utf-8"))
     assert len(persisted_second["job_results"]) == 2
 
@@ -1675,8 +1673,8 @@ def test_concurrent_delegated_completions_preserve_all_results(
         stop_reason="background",
     )
 
-    original_read = task_runtime._read_private_task_json
-    original_append = task_runtime._append_task_event
+    original_read = task_storage._read_private_task_json
+    original_append = task_storage._append_task_event
     read_guard = threading.Lock()
     second_task_read = threading.Event()
     task_read_count = 0
@@ -1687,7 +1685,7 @@ def test_concurrent_delegated_completions_preserve_all_results(
     def delayed_task_read(task_dir: Path, name: str):
         nonlocal task_read_count
         payload = original_read(task_dir, name)
-        if name != task_runtime.TASK_FILENAME:
+        if name != task_projection.TASK_FILENAME:
             return payload
         with read_guard:
             task_read_count += 1
@@ -1702,7 +1700,7 @@ def test_concurrent_delegated_completions_preserve_all_results(
             second_task_read.set()
         return payload
 
-    monkeypatch.setattr(task_runtime, "_read_private_task_json", delayed_task_read)
+    monkeypatch.setattr(task_storage, "_read_private_task_json", delayed_task_read)
 
     def delayed_event_append(
         task_dir: Path,
@@ -1729,7 +1727,7 @@ def test_concurrent_delegated_completions_preserve_all_results(
         if event_type == "task_finished":
             terminal_event_persisted.set()
 
-    monkeypatch.setattr(task_runtime, "_append_task_event", delayed_event_append)
+    monkeypatch.setattr(task_storage, "_append_task_event", delayed_event_append)
     start = threading.Barrier(3)
     results: list[dict] = []
     errors: list[BaseException] = []
@@ -1762,14 +1760,14 @@ def test_concurrent_delegated_completions_preserve_all_results(
     assert persisted_task["status"] == "succeeded"
     assert {item["job_id"] for item in persisted_task["job_results"]} == set(job_ids)
     persisted_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert persisted_turn["status"] == "succeeded"
     assert {item["job_id"] for item in persisted_turn["job_results"]} == set(job_ids)
 
     events = [
         json.loads(line)
-        for line in (recorder.path.parent / task_runtime.EVENTS_FILENAME)
+        for line in (recorder.path.parent / task_projection.EVENTS_FILENAME)
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -1779,7 +1777,7 @@ def test_concurrent_delegated_completions_preserve_all_results(
         if event["event"] in {"job_completed", "task_finished"}
     ]
     assert completion_events == ["job_completed", "job_completed", "task_finished"]
-    completion_lock = recorder.path.parent / task_runtime.COMPLETION_LOCK_FILENAME
+    completion_lock = recorder.path.parent / task_projection.COMPLETION_LOCK_FILENAME
     assert completion_lock.stat().st_nlink == 1
     if os.name == "posix":
         assert stat.S_IMODE(completion_lock.stat().st_mode) == 0o600
@@ -1822,7 +1820,7 @@ def test_fast_job_completion_survives_later_recorder_writes_and_finish(
 
     persisted_task = json.loads(recorder.path.read_text(encoding="utf-8"))
     persisted_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert persisted_task["status"] == "succeeded"
     assert persisted_task["job_ids"] == [job_id]
@@ -1831,7 +1829,7 @@ def test_fast_job_completion_survives_later_recorder_writes_and_finish(
     assert persisted_turn["job_results"][0]["job_id"] == job_id
     events = [
         json.loads(line)
-        for line in (recorder.path.parent / task_runtime.EVENTS_FILENAME)
+        for line in (recorder.path.parent / task_projection.EVENTS_FILENAME)
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -1897,7 +1895,7 @@ def test_first_fast_completion_cannot_terminalize_before_later_job_registration(
     assert completed["status"] == "succeeded"
 
     persisted_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert persisted_turn["status"] == "succeeded"
     assert {item["job_id"] for item in persisted_turn["job_results"]} == {
@@ -1906,7 +1904,7 @@ def test_first_fast_completion_cannot_terminalize_before_later_job_registration(
     }
     events = [
         json.loads(line)
-        for line in (recorder.path.parent / task_runtime.EVENTS_FILENAME)
+        for line in (recorder.path.parent / task_projection.EVENTS_FILENAME)
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -1944,7 +1942,7 @@ def test_main_failure_with_pending_child_stays_pollable_and_cannot_become_succes
 
     pending_task = json.loads(recorder.path.read_text(encoding="utf-8"))
     pending_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert pending_task["status"] == "delegated"
     assert pending_task["finished_at"] is None
@@ -1962,7 +1960,7 @@ def test_main_failure_with_pending_child_stays_pollable_and_cannot_become_succes
     assert completed is not None
     assert completed["status"] == "failed"
     persisted_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert persisted_turn["status"] == "failed"
     assert persisted_turn["main_status"] == "failed"
@@ -1971,7 +1969,7 @@ def test_main_failure_with_pending_child_stays_pollable_and_cannot_become_succes
 
     events = [
         json.loads(line)
-        for line in (recorder.path.parent / task_runtime.EVENTS_FILENAME)
+        for line in (recorder.path.parent / task_projection.EVENTS_FILENAME)
         .read_text(encoding="utf-8")
         .splitlines()
     ]
@@ -2006,7 +2004,7 @@ def test_delegated_completion_survives_event_append_failure(
     def fail_event_append(*_args, **_kwargs) -> None:
         raise OSError("simulated observability sink failure")
 
-    monkeypatch.setattr(task_runtime, "_append_task_event", fail_event_append)
+    monkeypatch.setattr(task_storage, "_append_task_event", fail_event_append)
     completed = complete_delegated_task(
         workspace,
         task_id=recorder.task_id,
@@ -2020,7 +2018,7 @@ def test_delegated_completion_survives_event_append_failure(
     assert persisted_task["status"] == "succeeded"
     assert persisted_task["job_results"][0]["job_id"] == job_id
     persisted_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert persisted_turn["status"] == "succeeded"
     assert persisted_turn["job_results"][0]["job_id"] == job_id
@@ -2046,7 +2044,7 @@ def test_retried_delegated_completion_repairs_partial_turn_write(
         stop_reason="background",
     )
 
-    original_write = task_runtime._write_private_task_json
+    original_write = task_storage._write_private_task_json
     fail_turn_once = True
 
     def fail_first_completion_turn(
@@ -2056,13 +2054,13 @@ def test_retried_delegated_completion_repairs_partial_turn_write(
         **kwargs,
     ) -> None:
         nonlocal fail_turn_once
-        if name == task_runtime.TURN_FILENAME and payload.get("job_results") and fail_turn_once:
+        if name == task_projection.TURN_FILENAME and payload.get("job_results") and fail_turn_once:
             fail_turn_once = False
             raise OSError("simulated turn write failure")
         original_write(task_dir, name, payload, **kwargs)
 
     monkeypatch.setattr(
-        task_runtime,
+        task_storage,
         "_write_private_task_json",
         fail_first_completion_turn,
     )
@@ -2075,7 +2073,7 @@ def test_retried_delegated_completion_repairs_partial_turn_write(
     assert first is None
     assert json.loads(recorder.path.read_text(encoding="utf-8"))["status"] == "succeeded"
     partial_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert partial_turn.get("status") != "succeeded"
 
@@ -2089,7 +2087,7 @@ def test_retried_delegated_completion_repairs_partial_turn_write(
     assert retried is not None
     assert retried["status"] == "succeeded"
     repaired_turn = json.loads(
-        (recorder.path.parent / task_runtime.TURN_FILENAME).read_text(encoding="utf-8")
+        (recorder.path.parent / task_projection.TURN_FILENAME).read_text(encoding="utf-8")
     )
     assert repaired_turn["status"] == "succeeded"
     assert repaired_turn["job_results"][0]["job_id"] == job_id

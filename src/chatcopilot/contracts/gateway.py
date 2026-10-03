@@ -177,6 +177,14 @@ class DeliveryReceipt:
     detail: Mapping[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class DeliveryBatchResult:
+    """Actual receipts against the host's planned provider request count."""
+
+    expected_count: int
+    receipts: tuple[DeliveryReceipt, ...]
+
+
 __all__ = [
     "CanonicalInboundEvent",
     "canonical_inbound_payload",
@@ -185,6 +193,7 @@ __all__ = [
     "ChannelInputSegment",
     "ConversationRef",
     "DeliveryReceipt",
+    "DeliveryBatchResult",
     "DeliveryStage",
     "MessageSegment",
     "MessageSegmentKind",

@@ -18,7 +18,7 @@ from typing import Any, Callable, Dict, Mapping, Optional
 
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.core.allowlists import AllowlistConfigError, parse_numeric_allowlist
-from chatcopilot.middleware.access_control import (
+from chatcopilot.core.access import (
     AssistantMode,
     Role,
     can_select_general_mode,

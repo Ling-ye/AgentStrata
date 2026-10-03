@@ -1,6 +1,6 @@
 """External tool contracts."""
 
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 __all__ = ["ToolDef"]
 

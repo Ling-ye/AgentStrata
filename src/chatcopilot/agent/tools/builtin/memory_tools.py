@@ -6,7 +6,7 @@ import re
 from typing import Any, Dict, List
 
 from chatcopilot.agent.trace import current_trace
-from chatcopilot.agent.tools.workspace_context import resolve_persistent_state
+from chatcopilot.core.workspace_context import resolve_persistent_state
 from chatcopilot.contracts.persistent_state import MEMORY_MAX_ITEM_CHARS, MEMORY_SECTIONS
 from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema

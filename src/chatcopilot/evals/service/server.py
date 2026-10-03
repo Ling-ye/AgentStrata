@@ -21,6 +21,7 @@ from chatcopilot.evals.application import (
     EvaluationBotResolver,
 )
 from chatcopilot.evals.application import catalog
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 from chatcopilot.evals.paths import managed_evaluation_root
 from chatcopilot.evals.service.protocol import (
     MAX_REQUEST_BYTES,
@@ -49,6 +50,7 @@ class EvaluationServiceRuntime:
         self.bot_resolver = bot_resolver or EvaluationBotResolver(self.repository_root)
         self.application = application or EvaluationApplication(
             artifact_root,
+            worker=LocalEvaluationWorker(),
             repository_root=self.repository_root,
             bot_resolver=self.bot_resolver,
         )

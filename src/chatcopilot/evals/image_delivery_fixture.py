@@ -15,6 +15,7 @@ from unittest.mock import patch
 from urllib.parse import urlsplit
 import uuid
 
+from chatcopilot.contracts.gateway import DeliveryBatchResult
 from chatcopilot.application.file_delivery import create_file_sender
 from chatcopilot.channels.qq_onebot import OneBotChannelConfig, OneBotForwardWebSocketDriver
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, OutboundEnvelope
@@ -99,7 +100,7 @@ class ImageDeliveryFixture:
             def dispatch(segments):
                 future = asyncio.run_coroutine_threadsafe(self._send(segments), self.loop)
                 try:
-                    return future.result(timeout=5)
+                    return DeliveryBatchResult(expected_count=1, receipts=(future.result(timeout=5),))
                 except BaseException:
                     future.cancel()
                     raise

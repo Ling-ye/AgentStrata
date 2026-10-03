@@ -6,7 +6,7 @@ from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from chatcopilot.agent.tools.file_delivery import FileDeliveryResult, FileSender
-from chatcopilot.contracts.gateway import DeliveryReceipt, MessageSegment
+from chatcopilot.contracts.gateway import DeliveryBatchResult, DeliveryReceipt, MessageSegment
 from chatcopilot.contracts.resources import OUTBOUND_FILE_MAX_BYTES, OUTBOUND_RESOURCE_SOURCE_CHARS
 from chatcopilot.contracts.workspace import WorkspaceView
 from chatcopilot.core.image_content import image_media_type_from_path, validate_image_bytes
@@ -14,7 +14,7 @@ from chatcopilot.core.scoped_files import read_bytes
 
 
 def create_file_sender(workspace: WorkspaceView,
-                       dispatch: Callable[[tuple[MessageSegment, ...]], DeliveryReceipt | tuple[DeliveryReceipt, ...]],
+                       dispatch: Callable[[tuple[MessageSegment, ...]], DeliveryBatchResult],
                        *, require_image_message_id: bool = True) -> FileSender:
     def send(files: Sequence[str], message: str) -> FileDeliveryResult:
         if not files:
@@ -43,10 +43,10 @@ def create_file_sender(workspace: WorkspaceView,
         if message:
             segments.append(MessageSegment(kind="text", text=message))
         result = dispatch(tuple(segments))
-        receipts = result if isinstance(result, tuple) else (result,)
-        if isinstance(result, tuple) and len(receipts) != len(segments):
+        receipts = result.receipts
+        if result.expected_count <= 0 or len(receipts) != result.expected_count:
             confirmed = sum(isinstance(receipt, DeliveryReceipt) and receipt.stage == "provider_acknowledged" for receipt in receipts)
-            raise RuntimeError(f"File delivery acknowledgement is incomplete: provider confirmed {confirmed}/{len(segments)} requests; do not resend confirmed or unknown requests")
+            raise RuntimeError(f"File delivery acknowledgement is incomplete: provider confirmed {confirmed}/{result.expected_count} requests; do not resend confirmed or unknown requests")
         if not receipts or any(not isinstance(receipt, DeliveryReceipt) or receipt.stage != "provider_acknowledged" for receipt in receipts):
             raise RuntimeError("File delivery acknowledgement is incomplete")
         if require_image_message_id and any(segment.kind == "image" for segment in segments) and not all(receipt.provider_message_id for receipt in receipts):

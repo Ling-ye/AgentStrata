@@ -85,9 +85,6 @@ from chatcopilot.contracts.code_tasks import (
 )
 from chatcopilot.contracts.skills import SkillIndexEntry, read_skill_body, render_skill_index_section
 from chatcopilot.contracts.subagents import (
-    BUILTIN_SUBAGENT_PRESET_NAMES,
-    BUILTIN_SUBAGENT_WORKFLOW_NAMES,
-    BUILTIN_SUBAGENT_WORKFLOWS,
     CachePolicySpec,
     ContextPolicySpec,
     CustomSubagentSpec,
@@ -160,9 +157,6 @@ __all__ = [
     "CancellationProbe",
     "CancellationRequested",
     "CancellationToken",
-    "BUILTIN_SUBAGENT_PRESET_NAMES",
-    "BUILTIN_SUBAGENT_WORKFLOW_NAMES",
-    "BUILTIN_SUBAGENT_WORKFLOWS",
     "BotRuntimePlan",
     "CODE_MODEL_LANE",
     "CODE_TASK_ACTIVE_STATUSES",

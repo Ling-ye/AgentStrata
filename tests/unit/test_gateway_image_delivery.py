@@ -13,6 +13,7 @@ from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
 from chatcopilot.gateway import runtime as runtime_module
+from chatcopilot.gateway import channel_assembly
 from test_application_actor_runtime import _runtime, _FakeAgentRuntime, _principal
 from test_gateway_runtime_host import _environment, _FakeServer
 from test_image_delivery_fixture import PNG
@@ -34,7 +35,7 @@ def test_production_factory_injects_a_causally_connected_sender(tmp_path, monkey
         return OneBotForwardWebSocketDriver(cfg, on_event, connection_factory=connect)
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *a, **kw: agent)
     monkeypatch.setattr(runtime_module, "load_config", lambda **kw: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
-    monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", driver)
+    monkeypatch.setattr(channel_assembly, "OneBotForwardWebSocketDriver", driver)
     monkeypatch.setattr(runtime_module, "GatewayWebSocketServer", _FakeServer)
     host = runtime_module.build_gateway_runtime_host(config, environ=_environment(tmp_path))
 

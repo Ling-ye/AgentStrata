@@ -976,8 +976,14 @@ def test_product_definition_snapshot_hashes_each_selected_execution_layer() -> N
     assert set(snapshot["case_plugin_bindings"]) == {"generic-agent"}
 
 
+@pytest.mark.parametrize("changed_module", [
+    "chatcopilot.middleware.acp.agent_bridge",
+    "chatcopilot.middleware.runtime.task_storage",
+    "chatcopilot.middleware.runtime.task_projection",
+])
 def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
     monkeypatch: pytest.MonkeyPatch,
+    changed_module: str,
 ) -> None:
     manifest = get_suite_manifest("agentstrata-qq-message-flow-v1")
     plugin = get_evaluation_plugin(manifest.plugin_id)
@@ -995,6 +1001,8 @@ def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
         "chatcopilot.middleware.acp.event_translator",
         "chatcopilot.middleware.acp.workspace_service",
         "chatcopilot.middleware.runtime.tasks",
+        "chatcopilot.middleware.runtime.task_projection",
+        "chatcopilot.middleware.runtime.task_storage",
         "chatcopilot.core.persona_control",
         "chatcopilot.core.persistent_state",
     }
@@ -1009,7 +1017,7 @@ def test_qq_flow_snapshot_hashes_real_acp_orchestration_and_attestation_modules(
         "trusted_runtime_module_sha256",
         lambda module_name: (
             "f" * 64
-            if module_name == "chatcopilot.middleware.acp.agent_bridge"
+            if module_name == changed_module
             else original(module_name)
         ),
     )

@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent, acp_runtime
 from chatcopilot.botspec.model import LLMSpec
 
 from chatcopilot.botspec.model import ContextSpec
@@ -26,6 +27,8 @@ from chatcopilot.core.workspace_runtime import Workspace
 
 def _runtime() -> SimpleNamespace:
     return SimpleNamespace(
+        platform_type="feishu",
+        tool_features=(),
         bot_id="lazy-bot",
         instance_id="lazy-bot",
         skills=(),
@@ -44,13 +47,12 @@ def _runtime() -> SimpleNamespace:
 def _control_agent(workspace: Workspace) -> AcpChatAgent:
     runtime = _runtime()
     runtime.platform_type = "qq"
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._runtime = runtime
     agent._chat_config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     agent._sessions = {}
     agent._session_locks = {}
     agent._group_actor_sessions = {}
-    agent._job_watch_tasks = {}
     agent._attachment_ack_tasks = {}
     agent._attachment_ack_resource_names = {}
     agent._resolve_conversation_workspace = lambda: workspace  # type: ignore[method-assign]
@@ -95,7 +97,7 @@ def test_acp_agent_preserves_injected_instance_control() -> None:
 def test_strict_turn_finisher_propagates_persistence_failure() -> None:
     recorder = mock.Mock()
     recorder.finish.side_effect = RuntimeError("persistence failed")
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
 
     with pytest.raises(RuntimeError, match="persistence failed"):
         agent._finish_turn_task_strict(recorder)
@@ -194,7 +196,7 @@ def test_missing_session_prompt_builds_only_a_control_shell(tmp_path: Path) -> N
                 new=stop_before_identity,
             ),
             mock.patch(
-                "chatcopilot.middleware.acp.server._latest_workspace_from_session_env",
+                "chatcopilot.middleware.acp.agent_bridge._latest_workspace_from_session_env",
                 return_value=None,
             ),
         ):
@@ -366,7 +368,7 @@ def test_lazy_private_task_storage_rejects_unsafe_roots(tmp_path: Path) -> None:
     if os.name == "posix":
         with (
             mock.patch(
-                "chatcopilot.middleware.runtime.tasks.os.geteuid",
+                "chatcopilot.middleware.runtime.task_storage.os.geteuid",
                 return_value=os.geteuid() + 1,
             ),
             pytest.raises(ValueError),
@@ -435,7 +437,7 @@ def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
         persist_transcript=lambda: None,
     )
     recorder = _Recorder()
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._conn = _Conn()
 
     asyncio.run(
@@ -537,9 +539,9 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
     config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     config.routing.code_model = "gpt-5.6-terra"
     config.routing.code_reasoning_effort = "medium"
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._conn = _Conn()
-    agent._runtime = SimpleNamespace(runtime_id="codex")
+    agent._runtime = acp_runtime(runtime_id="codex")
     agent._chat_config = config
 
     successful_backend = _BackendSession()
@@ -622,7 +624,7 @@ def test_rejected_explicit_memory_never_retries_or_false_reports(
 
     backend = _Backend()
     state = _State(backend)
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._conn = _Conn()
     asyncio.run(
         agent._run_agent_turn(

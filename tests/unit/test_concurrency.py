@@ -1,5 +1,6 @@
 """Regression tests for bot concurrency guards."""
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent
 
 import asyncio
 import multiprocessing
@@ -16,7 +17,6 @@ import pytest
 from chatcopilot.core.concurrency import FileTokenLimiter
 from chatcopilot.middleware.runtime.jobs import FileQueueSlot
 from chatcopilot.agent.tools.executor import ToolExecutor
-from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.contracts.tools import (
     EXECUTION_SYNC,
     EXECUTION_USER_SERIAL_BACKGROUND,
@@ -291,7 +291,7 @@ class SessionLockTests(unittest.TestCase):
         async def run_case() -> int:
             # 直接走 __new__ + 手动初始化 _session_locks，避免触发 LLM/runtime 装配，
             # 这测的仅是 asyncio 锁的串行语义本身。
-            agent = AcpChatAgent.__new__(AcpChatAgent)
+            agent = make_acp_agent()
             agent._session_locks = {}
             active = 0
             max_seen = 0

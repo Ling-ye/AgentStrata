@@ -1,3 +1,4 @@
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 from tests.evaluation_fixtures import result_payload
 import json
 import sqlite3
@@ -91,7 +92,7 @@ def seed(application, number=1, *, bot="bot-a"):
 
 
 def test_history_is_paginated_across_bots_without_reading_bodies(tmp_path):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     for i in range(1, 61):
         seed(application, i, bot="bot-a" if i % 2 else "bot-b")
     first = application.list(limit=50)
@@ -111,7 +112,7 @@ def test_history_is_paginated_across_bots_without_reading_bodies(tmp_path):
 
 
 def test_preview_and_precise_body_read_are_bound_to_trial(tmp_path):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     identifier = seed(application)
     value = application.get(identifier, include_bodies=False)
     assert value["result"]["trials"][0]["input_preview"] == "effective input a"
@@ -128,7 +129,7 @@ def test_preview_and_precise_body_read_are_bound_to_trial(tmp_path):
 
 
 def test_unfinished_execution_is_readable_without_entering_trial_counts(tmp_path):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     identifier = seed(application)
     path = application.root / identifier / "observation.json"
     payload = {
@@ -155,7 +156,7 @@ def test_unfinished_execution_is_readable_without_entering_trial_counts(tmp_path
 
 
 def test_case_instance_ids_are_unique_stable_and_do_not_rewrite_results(tmp_path):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     first, second = seed(application, 1), seed(application, 2)
     file = application.root / first / "result.json"
     raw = json.loads(file.read_text())
@@ -172,7 +173,7 @@ def test_case_instance_ids_are_unique_stable_and_do_not_rewrite_results(tmp_path
     assert len(set(ids)) == 4 and all(value.startswith("case-") and len(value) == 37 for value in ids)
     assert not set(ids) & {item["case_instance_id"] for item in application.get(second)["result"]["trials"]}
     assert [item["case_instance_id"] for item in application.get(first, include_bodies=False)["result"]["trials"]] == ids
-    application = EvaluationApplication(root=application.root, repository_root=tmp_path)
+    application = EvaluationApplication(root=application.root, repository_root=tmp_path, worker=LocalEvaluationWorker())
     instance = application.case_instance(ids[-1])
     assert instance["evaluation_id"] == first and instance["attempt"] == 2
     assert instance["trial"]["outcome"] == "failed"
@@ -185,7 +186,7 @@ def test_case_instance_ids_are_unique_stable_and_do_not_rewrite_results(tmp_path
 
 
 def test_case_instance_index_reopens_without_changing_results_or_rebuilding_schema(tmp_path):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     identifier = seed(application)
     original = json.loads((application.root / identifier / "result.json").read_text())
     request = json.loads((application.root / identifier / "request.json").read_text())
@@ -210,7 +211,7 @@ def test_case_instance_index_reopens_without_changing_results_or_rebuilding_sche
 
 
 def test_case_instance_lookup_revalidates_source_and_rejects_fabricated_ids(tmp_path):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     identifier = seed(application)
     instance_id = application.get(identifier)["result"]["trials"][0]["case_instance_id"]
     with pytest.raises(ValueError):
@@ -228,7 +229,7 @@ def test_case_instance_lookup_revalidates_source_and_rejects_fabricated_ids(tmp_
 
 
 def test_case_instance_index_outage_preserves_results_without_uncopyable_ids(tmp_path, monkeypatch):
-    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path)
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
     identifier = seed(application)
     def unavailable(*args):
         raise sqlite3.OperationalError("database is locked")

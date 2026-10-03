@@ -11,10 +11,8 @@ import json
 import logging
 import os
 import shutil
-import signal
 import sqlite3
 import stat
-import subprocess
 import sys
 import threading
 import time
@@ -23,7 +21,7 @@ from contextlib import contextmanager
 from datetime import datetime, timezone
 from hashlib import sha256
 from pathlib import Path
-from typing import Any, Callable, Iterator, Literal, Mapping, Sequence
+from typing import Any, Callable, Iterator, Mapping, Sequence
 
 from chatcopilot.evals.application.bots import (
     EvaluationBotRef,
@@ -41,6 +39,7 @@ from chatcopilot.evals.application.insights import (
     source_revision,
 )
 from chatcopilot.evals.application.result_store import EvaluationResultStore
+from chatcopilot.evals.application.worker_types import EvaluationWorkerPort, WorkerLaunchRequest, WorkerProcess
 from chatcopilot.evals.models import RESULT_SCHEMA_VERSION
 from chatcopilot.evals.result_codec import require_current_result, validate_result, ArchivedResultError
 from chatcopilot.evals.code_source import prepare_code_source, write_source_receipt
@@ -57,7 +56,6 @@ MAINTENANCE_FILENAME = ".maintenance.json"
 ValidationResult = Mapping[str, Any]
 Validator = Callable[[EvaluationBotRef, Mapping[str, Any]], ValidationResult]
 BotResolver = Callable[[str], EvaluationBotRef]
-WorkerPidStatus = Literal["matched", "unknown", "exited"]
 KEEPALIVE = "\x00"
 _ROOT_LOCKS_GUARD = threading.Lock()
 _ROOT_LOCKS: dict[str, threading.RLock] = {}
@@ -437,6 +435,7 @@ class EvaluationApplication:
         root: Path | None = None,
         *,
         repository_root: Path | None = None,
+        worker: EvaluationWorkerPort,
         validator: Validator | None = None,
         bot_resolver: BotResolver | None = None,
     ) -> None:
@@ -459,8 +458,9 @@ class EvaluationApplication:
         self._ensure_private_root()
         self._resolve_bot = bot_resolver or EvaluationBotResolver(self.repository_root)
         self._validator = validator
+        self._worker = worker
         self._lock = threading.RLock()
-        self._processes: dict[str, subprocess.Popen[Any]] = {}
+        self._processes: dict[str, WorkerProcess] = {}
         self._process_bot_ids: dict[str, str] = {}
         self._spawn_env_snapshots: dict[str, dict[str, str]] = {}
         self._cancelled: set[str] = set()
@@ -727,7 +727,7 @@ class EvaluationApplication:
                 process = self._processes.pop(evaluation_id, None)
                 self._process_bot_ids.pop(evaluation_id, None)
                 if process is not None:
-                    self._terminate_process(process)
+                    self._worker.abort(process)
                 self._release_claim(bot.instance_id, evaluation_id)
                 raise RuntimeError(safe_error) from exc
         return self.get(evaluation_id)
@@ -1171,7 +1171,7 @@ class EvaluationApplication:
             self._write_cancel_marker(evaluation_id)
             self._cancelled.add(evaluation_id)
         if worker_pid is not None:
-            self._request_pid_stop(worker_pid)
+            self._worker.request_stop(worker_pid)
         deadline = time.monotonic() + 5
         while time.monotonic() < deadline:
             with self._creation_guard(), self._lock:
@@ -1202,10 +1202,10 @@ class EvaluationApplication:
                     "forced termination refused"
                 )
         if worker_pid is not None:
-            self._kill_pid(worker_pid)
+            self._worker.force_stop(worker_pid)
             deadline = time.monotonic() + 5
             while time.monotonic() < deadline:
-                if not self._pid_exists(worker_pid):
+                if not self._worker.exists(worker_pid):
                     with self._creation_guard(), self._lock:
                         current_state = self._state(evaluation_id)
                         if current_state.get("status") in ACTIVE_STATUSES:
@@ -1445,8 +1445,6 @@ class EvaluationApplication:
     ) -> None:
         directory = self._evaluation_dir(evaluation_id)
         cancel_path = self._cancel_path(evaluation_id)
-        startup_reader, startup_writer = os.pipe()
-        os.set_inheritable(startup_reader, True)
         command = [
             sys.executable,
             "-m",
@@ -1459,8 +1457,6 @@ class EvaluationApplication:
             str(cancel_path),
             "--log-file",
             str(directory / "run.log"),
-            "--startup-fd",
-            str(startup_reader),
         ]
 
         snapshot = self._spawn_env_snapshots.get(evaluation_id)
@@ -1479,31 +1475,11 @@ class EvaluationApplication:
                 *[item for item in env.get("PYTHONPATH", "").split(os.pathsep) if item],
             ]
         )
-        flags = (
-            int(getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0))
-            if os.name == "nt"
-            else 0
-        )
-        popen_options: dict[str, Any]
-        if os.name == "nt":
-            popen_options = {"close_fds": False}
-        else:
-            popen_options = {"pass_fds": (startup_reader,)}
-        process: subprocess.Popen[Any]
+        prepared = self._worker.prepare(WorkerLaunchRequest(
+            command=tuple(command), cwd=execution_root, environment=env,
+        ))
+        process = prepared.process
         try:
-            process = subprocess.Popen(
-                command,
-                cwd=str(execution_root),
-                env=env,
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                text=False,
-                start_new_session=os.name != "nt",
-                creationflags=flags,
-                **popen_options,
-            )
-            os.close(startup_reader)
-            startup_reader = -1
             self._processes[evaluation_id] = process
             self._process_bot_ids[evaluation_id] = bot.instance_id
             state = self._state(evaluation_id)
@@ -1520,34 +1496,14 @@ class EvaluationApplication:
                 evaluation_id,
                 worker_pid=process.pid,
             )
-            if os.write(startup_writer, b"\x01") != 1:
-                raise RuntimeError("Evaluation worker startup handshake failed")
+            prepared.release()
         finally:
-            if startup_reader >= 0:
-                os.close(startup_reader)
-            os.close(startup_writer)
-        threading.Thread(
-            target=self._monitor,
-            args=(
-                evaluation_id,
-                process,
-                bot.instance_id,
+            prepared.close()
+        self._worker.watch(
+            process,
+            lambda exit_code: self._finalize_worker_exit(
+                evaluation_id, bot_id=bot.instance_id, exit_code=exit_code,
             ),
-            name=f"evaluation-{evaluation_id}",
-            daemon=True,
-        ).start()
-
-    def _monitor(
-        self,
-        evaluation_id: str,
-        process: subprocess.Popen[Any],
-        bot_id: str,
-    ) -> None:
-        exit_code = process.wait()
-        self._finalize_worker_exit(
-            evaluation_id,
-            bot_id=bot_id,
-            exit_code=exit_code,
         )
 
     def _finalize_worker_exit(
@@ -1684,27 +1640,13 @@ class EvaluationApplication:
                     self._release_claim(bot_id, path.name)
             self._remove_stale_orphan_claims()
         for evaluation_id, bot_id, worker_pid in inherited:
-            threading.Thread(
-                target=self._watch_inherited_worker,
-                args=(evaluation_id, bot_id, worker_pid),
-                name=f"evaluation-inherited-{evaluation_id}",
-                daemon=True,
-            ).start()
-
-    def _watch_inherited_worker(
-        self,
-        evaluation_id: str,
-        bot_id: str,
-        worker_pid: int,
-    ) -> None:
-        directory = self._evaluation_dir(evaluation_id)
-        while self._worker_pid_status(worker_pid, directory) != "exited":
-            time.sleep(0.1)
-        self._finalize_worker_exit(
-            evaluation_id,
-            bot_id=bot_id,
-            exit_code=None,
-        )
+            self._worker.watch_inherited(
+                worker_pid,
+                self._evaluation_dir(evaluation_id),
+                lambda exit_code, evaluation_id=evaluation_id, bot_id=bot_id: self._finalize_worker_exit(
+                    evaluation_id, bot_id=bot_id, exit_code=exit_code,
+                ),
+            )
 
     def _reconcile_stopped_evaluation(
         self,
@@ -1959,44 +1901,18 @@ class EvaluationApplication:
         directory = self._evaluation_dir(evaluation_id)
         identity_unknown = False
         for pid in candidates:
-            status = self._worker_pid_status(pid, directory)
+            status = self._worker.observe(pid, directory)
             if status == "matched":
                 return pid, False
             if status == "unknown":
                 identity_unknown = True
-        discovered = self._discover_worker_pids(directory)
+        discovered = self._worker.discover(directory)
         if len(discovered) == 1:
             return discovered[0], False
         if len(discovered) > 1:
             identity_unknown = True
         return None, identity_unknown
 
-    @classmethod
-    def _discover_worker_pids(cls, directory: Path) -> Sequence[int]:
-        """Find same-user managed workers when startup PID persistence was interrupted."""
-
-        if os.name == "nt":
-            return []
-        proc = Path("/proc")
-        try:
-            entries = tuple(proc.iterdir())
-        except OSError:
-            return []
-        matches: list[int] = []
-        for entry in entries:
-            if not entry.name.isdigit():
-                continue
-            pid = int(entry.name)
-            if pid <= 0 or pid == os.getpid():
-                continue
-            try:
-                if entry.stat().st_uid != os.getuid():
-                    continue
-            except OSError:
-                continue
-            if cls._pid_matches_evaluation(pid, directory):
-                matches.append(pid)
-        return sorted(matches)
 
     def _cancel_path(self, evaluation_id: str) -> Path:
         return self._evaluation_dir(evaluation_id) / ".cancel-requested.json"
@@ -2164,9 +2080,9 @@ class EvaluationApplication:
     ) -> bool:
         worker_pid = claim.get("worker_pid")
         if isinstance(worker_pid, int):
-            return self._worker_pid_status(worker_pid, directory) != "exited"
+            return self._worker.observe(worker_pid, directory) != "exited"
         owner_pid = claim.get("owner_pid")
-        return isinstance(owner_pid, int) and self._pid_exists(owner_pid)
+        return isinstance(owner_pid, int) and self._worker.exists(owner_pid)
 
     def _remove_stale_orphan_claims(self) -> None:
         self._verify_private_root()
@@ -2374,262 +2290,6 @@ class EvaluationApplication:
             "dry_run": bool(stored.get("dry_run", False)),
             "llm_judge": bool(stored.get("llm_judge", False)),
         }
-
-    @staticmethod
-    def _pid_matches_evaluation(pid: int, directory: Path) -> bool:
-        if pid <= 0:
-            return False
-        argv: Sequence[str]
-        if os.name == "nt":
-            try:
-                completed = subprocess.run(
-                    [
-                        "powershell",
-                        "-NoProfile",
-                        "-Command",
-                        (
-                            f"(Get-CimInstance Win32_Process -Filter "
-                            f'"ProcessId = {pid}").CommandLine'
-                        ),
-                    ],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-            except (OSError, subprocess.SubprocessError):
-                return False
-            argv = EvaluationApplication._split_windows_command_line(completed.stdout.strip())
-        else:
-            try:
-                raw_argv = Path(f"/proc/{pid}/cmdline").read_bytes()
-            except OSError:
-                return False
-            argv = [
-                value.decode("utf-8", errors="replace") for value in raw_argv.split(b"\0") if value
-            ]
-        return EvaluationApplication._argv_matches_evaluation(argv, directory)
-
-    @staticmethod
-    def _argv_matches_evaluation(
-        argv: Sequence[str],
-        directory: Path,
-    ) -> bool:
-        normalized_tokens = [str(value).casefold() for value in argv]
-        managed_entries = [
-            index
-            for index, value in enumerate(normalized_tokens)
-            if value == "chatcopilot.evals.managed_worker"
-            and index > 0
-            and normalized_tokens[index - 1] == "-m"
-        ]
-        if len(managed_entries) != 1:
-            return False
-        output_values: list[str] = []
-        index = 0
-        while index < len(argv):
-            value = str(argv[index])
-            if value == "--output":
-                if index + 1 >= len(argv):
-                    return False
-                output_values.append(str(argv[index + 1]))
-                index += 2
-                continue
-            if value.startswith("--output="):
-                output_values.append(value.partition("=")[2])
-            index += 1
-        if len(output_values) != 1:
-            return False
-        output = Path(output_values[0])
-        if not output.is_absolute():
-            return False
-        try:
-            actual = os.path.normcase(str(output.resolve(strict=False)))
-            expected = os.path.normcase(str(directory.resolve(strict=False)))
-        except OSError:
-            return False
-        return actual == expected
-
-    @staticmethod
-    def _split_windows_command_line(command_line: str) -> Sequence[str]:
-        argv: list[str] = []
-        length = len(command_line)
-        index = 0
-        while index < length:
-            while index < length and command_line[index] in " \t":
-                index += 1
-            if index >= length:
-                break
-            value: list[str] = []
-            quoted = False
-            while index < length:
-                char = command_line[index]
-                if char in " \t" and not quoted:
-                    break
-                if char == "\\":
-                    start = index
-                    while index < length and command_line[index] == "\\":
-                        index += 1
-                    slash_count = index - start
-                    if index < length and command_line[index] == '"':
-                        value.extend("\\" * (slash_count // 2))
-                        if slash_count % 2:
-                            value.append('"')
-                            index += 1
-                        elif quoted and index + 1 < length and command_line[index + 1] == '"':
-                            value.append('"')
-                            index += 2
-                        else:
-                            quoted = not quoted
-                            index += 1
-                        continue
-                    value.extend("\\" * slash_count)
-                    continue
-                if char == '"':
-                    if quoted and index + 1 < length and command_line[index + 1] == '"':
-                        value.append('"')
-                        index += 2
-                    else:
-                        quoted = not quoted
-                        index += 1
-                    continue
-                value.append(char)
-                index += 1
-            argv.append("".join(value))
-            while index < length and command_line[index] in " \t":
-                index += 1
-        return argv
-
-    @classmethod
-    def _worker_pid_status(
-        cls,
-        pid: int,
-        directory: Path,
-    ) -> WorkerPidStatus:
-        if cls._pid_matches_evaluation(pid, directory):
-            return "matched"
-        if cls._pid_is_zombie(pid):
-            return "exited"
-        if cls._pid_exists(pid):
-            return "unknown"
-        return "exited"
-
-    @staticmethod
-    def _pid_is_zombie(pid: int) -> bool:
-        if os.name == "nt" or pid <= 0:
-            return False
-        try:
-            value = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
-        except OSError:
-            return False
-        close = value.rfind(")")
-        return close >= 0 and value[close + 2 : close + 3] == "Z"
-
-    @staticmethod
-    def _pid_exists(pid: int) -> bool:
-        if pid <= 0:
-            return False
-        if os.name == "nt":
-            try:
-                completed = subprocess.run(
-                    [
-                        "powershell",
-                        "-NoProfile",
-                        "-Command",
-                        (
-                            f"$p = Get-Process -Id {pid} "
-                            "-ErrorAction SilentlyContinue; "
-                            "if ($null -eq $p) { 'missing' } "
-                            "else { 'present' }"
-                        ),
-                    ],
-                    check=False,
-                    capture_output=True,
-                    text=True,
-                    timeout=10,
-                )
-            except (OSError, subprocess.SubprocessError):
-                return True
-            observation = completed.stdout.strip().lower()
-            if observation == "missing":
-                return False
-            return True
-        try:
-            os.kill(pid, 0)
-        except ProcessLookupError:
-            return False
-        except PermissionError:
-            return True
-        except OSError:
-            return True
-        return True
-
-    @staticmethod
-    def _request_pid_stop(pid: int) -> None:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T"],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            return
-        try:
-            # Cooperative cancellation targets only the managed Core.  It owns
-            # the active Trial supervisor and must let that subreaper prove all
-            # descendants are gone.  Signalling the worker's whole session can
-            # kill a just-spawned supervisor before its cleanup-ready handshake.
-            os.kill(pid, signal.SIGTERM)
-        except (ProcessLookupError, OSError):
-            return
-
-    @staticmethod
-    def _kill_pid(pid: int) -> None:
-        if os.name == "nt":
-            subprocess.run(
-                ["taskkill", "/PID", str(pid), "/T", "/F"],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            return
-        try:
-            os.killpg(pid, signal.SIGKILL)
-        except (ProcessLookupError, OSError):
-            return
-
-    @staticmethod
-    def _terminate_process(process: subprocess.Popen[str]) -> None:
-        if process.poll() is not None:
-            return
-        if os.name == "nt":
-            completed = subprocess.run(
-                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
-                check=False,
-                capture_output=True,
-                text=True,
-            )
-            if completed.returncode != 0 and process.poll() is None:
-                process.terminate()
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError("evaluation process did not stop after termination") from exc
-            return
-        try:
-            os.killpg(process.pid, signal.SIGTERM)
-            process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            os.killpg(process.pid, signal.SIGKILL)
-            try:
-                process.wait(timeout=5)
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError("evaluation process did not stop after termination") from exc
-        except ProcessLookupError:
-            try:
-                process.wait(timeout=1)
-            except subprocess.TimeoutExpired as exc:
-                raise RuntimeError("evaluation process identity could not be confirmed") from exc
 
 
 __all__ = [

@@ -199,9 +199,6 @@ class SearchPlan:
         }
 
 
-ResearchRequest = SearchRequest
-ResearchStep = SearchAction
-ResearchPlan = SearchPlan
 
 __all__ = [
     "DEFAULT_SEARCH_BUDGET",
@@ -211,9 +208,6 @@ __all__ = [
     "LOGICAL_SOURCES",
     "OPERATIONS",
     "READ_STRATEGIES",
-    "ResearchPlan",
-    "ResearchRequest",
-    "ResearchStep",
     "SearchAction",
     "SearchBudget",
     "SearchPlan",

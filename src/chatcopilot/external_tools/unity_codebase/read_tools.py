@@ -17,7 +17,7 @@ from chatcopilot.external_tools.shared.spec_helpers import (
     schema_property,
     validate_non_negative,
 )
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

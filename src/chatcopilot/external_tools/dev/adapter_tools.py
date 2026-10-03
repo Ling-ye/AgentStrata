@@ -14,7 +14,7 @@ from chatcopilot.core.adapter_approval import (
     resolve_adapter_bot_spec,
 )
 from chatcopilot.external_tools.shared.spec_helpers import schema_property
-from chatcopilot.external_tools.shared.tool_spec import ToolDef
+from chatcopilot.contracts.tools import ToolDef
 
 _OWNER = "dev.adapter_approval"
 

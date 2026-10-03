@@ -23,8 +23,8 @@ from chatcopilot.core.workspace_runtime import (
     normalize_chat_kind as normalize_workspace_chat_kind,
     resolve_workspace,
 )
-from chatcopilot.middleware.access_control import AssistantMode, Role, default_debug_mode
-from chatcopilot.middleware.access_control import (
+from chatcopilot.core.access import AssistantMode, Role, default_debug_mode
+from chatcopilot.core.access import (
     can_select_general_mode,
     can_toggle_debug,
     default_assistant_mode,

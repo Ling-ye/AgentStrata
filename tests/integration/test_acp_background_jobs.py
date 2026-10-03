@@ -1,5 +1,7 @@
 """Regression tests for Feishu ACP background job notifications."""
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent
+from chatcopilot.platforms.feishu import sender as feishu_sender
 
 import asyncio
 import json
@@ -11,10 +13,9 @@ from typing import Any
 from unittest.mock import AsyncMock
 
 from chatcopilot.platforms.feishu import notifier as feishu_notifier
-from chatcopilot.middleware.access_control import AssistantMode
+from chatcopilot.core.access import AssistantMode
 from chatcopilot.core.workspace_runtime import Workspace
 from chatcopilot.middleware.acp import server as acp_server
-from chatcopilot.middleware.acp.server import AcpChatAgent
 
 
 class _FakeConn:
@@ -104,7 +105,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     ).ensure()
                     _seed_finished_job(ws)
                     session = _FakeSession(ws)
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     ensure_agent_session = AsyncMock(
@@ -134,7 +135,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
     def test_unnotified_finished_job_is_delivered_by_feishu_openapi(self) -> None:
         async def run_case() -> tuple[list[tuple[str, Any]], dict[str, Any], list[tuple[str, str]]]:
             calls: list[tuple[str, str]] = []
-            original_send = acp_server.feishu_notifier.send_text_to_workspace
+            original_send = feishu_notifier.send_text_to_workspace
 
             def fake_send(ws: Workspace, text: str) -> Any:
                 calls.append((ws.user_id or "", text))
@@ -144,7 +145,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     message_id="om_delivered",
                 )
 
-            acp_server.feishu_notifier.send_text_to_workspace = fake_send
+            feishu_notifier.send_text_to_workspace = fake_send
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     ws = Workspace(
@@ -155,7 +156,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     ).ensure()
                     job_dir = _seed_finished_job(ws)
                     session = _FakeSession(ws)
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._conn = _FakeConn()
 
                     await agent._send_unnotified_completed_jobs("sid", session)  # type: ignore[arg-type]
@@ -163,7 +164,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     notification = json.loads((job_dir / "notification.json").read_text(encoding="utf-8"))
                     return agent._conn.updates, notification, calls
             finally:
-                acp_server.feishu_notifier.send_text_to_workspace = original_send
+                feishu_notifier.send_text_to_workspace = original_send
 
         updates, notification, calls = asyncio.run(run_case())
         self.assertEqual(len(updates), 0)
@@ -182,8 +183,8 @@ class BackgroundJobNotificationTests(unittest.TestCase):
         async def run_case() -> tuple[list[tuple[str, str]], list[list[str]], dict[str, Any]]:
             text_calls: list[tuple[str, str]] = []
             file_calls: list[list[str]] = []
-            original_text_send = acp_server.feishu_notifier.send_text_to_workspace
-            original_file_send = acp_server.feishu_sender.send_via_cc_connect
+            original_text_send = feishu_notifier.send_text_to_workspace
+            original_file_send = feishu_sender.send_via_cc_connect
 
             def fake_text_send(ws: Workspace, text: str) -> Any:
                 text_calls.append((ws.user_id or "", text))
@@ -197,8 +198,8 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                 file_calls.append([str(path) for path in files])
                 return "sent"
 
-            acp_server.feishu_notifier.send_text_to_workspace = fake_text_send
-            acp_server.feishu_sender.send_via_cc_connect = fake_file_send
+            feishu_notifier.send_text_to_workspace = fake_text_send
+            feishu_sender.send_via_cc_connect = fake_file_send
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     ws = Workspace(
@@ -216,7 +217,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     result_path.write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
 
                     session = _FakeSession(ws)
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._conn = _FakeConn()
 
                     await agent._send_unnotified_completed_jobs("sid", session)  # type: ignore[arg-type]
@@ -224,8 +225,8 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     notification = json.loads((job_dir / "notification.json").read_text(encoding="utf-8"))
                     return text_calls, file_calls, notification
             finally:
-                acp_server.feishu_notifier.send_text_to_workspace = original_text_send
-                acp_server.feishu_sender.send_via_cc_connect = original_file_send
+                feishu_notifier.send_text_to_workspace = original_text_send
+                feishu_sender.send_via_cc_connect = original_file_send
 
         text_calls, file_calls, notification = asyncio.run(run_case())
         self.assertEqual(len(text_calls), 1)
@@ -237,7 +238,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
     def test_failed_notification_is_retried_until_delivered(self) -> None:
         async def run_case() -> tuple[dict[str, Any], dict[str, Any]]:
             calls = {"count": 0}
-            original_send = acp_server.feishu_notifier.send_text_to_workspace
+            original_send = feishu_notifier.send_text_to_workspace
 
             def flaky_send(ws: Workspace, text: str) -> Any:
                 calls["count"] += 1
@@ -249,7 +250,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     message_id="om_retry",
                 )
 
-            acp_server.feishu_notifier.send_text_to_workspace = flaky_send
+            feishu_notifier.send_text_to_workspace = flaky_send
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     ws = Workspace(
@@ -260,7 +261,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     ).ensure()
                     job_dir = _seed_finished_job(ws)
                     session = _FakeSession(ws)
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._conn = _FakeConn()
 
                     with self.assertLogs("chatcopilot.middleware.acp.job_dispatch", level="ERROR"):
@@ -270,7 +271,7 @@ class BackgroundJobNotificationTests(unittest.TestCase):
                     second = json.loads((job_dir / "notification.json").read_text(encoding="utf-8"))
                     return first, second
             finally:
-                acp_server.feishu_notifier.send_text_to_workspace = original_send
+                feishu_notifier.send_text_to_workspace = original_send
 
         first, second = asyncio.run(run_case())
         self.assertEqual(first["delivery"], "failed")

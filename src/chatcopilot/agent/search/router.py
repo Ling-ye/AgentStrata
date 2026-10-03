@@ -389,6 +389,4 @@ def _extract_json_object(text: str) -> str:
     return content[start : end + 1]
 
 
-ResearchRouter = SearchRouter
-
-__all__ = ["SearchRouter", "ResearchRouter"]
+__all__ = ["SearchRouter"]

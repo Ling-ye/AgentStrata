@@ -13,7 +13,7 @@ from chatcopilot.external_tools.dev.command_policy import command_argv
 from chatcopilot.contracts.development import current_development_task_scope
 from chatcopilot.external_tools.dev.config import get_dev_config, DevConfig
 from chatcopilot.external_tools.dev.path_guard import DevPathAccessError
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

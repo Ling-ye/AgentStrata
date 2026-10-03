@@ -95,7 +95,7 @@ class ImageUrlDeliveryToolTests(unittest.TestCase):
             return real_getaddrinfo(host, port, *args, **kwargs)
 
         return mock.patch(
-            "chatcopilot.agent.tools.builtin.workspace_tools.socket.getaddrinfo",
+            "chatcopilot.agent.tools.builtin.workspace.images.socket.getaddrinfo",
             side_effect=resolve,
         )
 

@@ -671,10 +671,10 @@ def test_persisted_maintenance_lease_blocks_creation_across_application_restart(
         assert "maintenance is active" in blocked.value.message
         assert not list(service.artifact_root.glob("eval-*"))
 
-        restarted_application = service.runtime.application.__class__(
-            service.artifact_root,
+        restarted_application = EvaluationServiceRuntime(
+            artifact_root=service.artifact_root,
             repository_root=REPOSITORY_ROOT,
-        )
+        ).application
         with pytest.raises(RuntimeError, match="maintenance is active"):
             restarted_application.start(
                 bot_id="lingye-copilot-qq",

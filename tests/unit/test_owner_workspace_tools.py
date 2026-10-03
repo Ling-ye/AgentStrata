@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from unittest import mock
 
-from chatcopilot.middleware.access_control import Role
+from chatcopilot.core.access import Role
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.core.workspace_runtime import Workspace, list_workspace_inventories, persist_workspace_identity
 from chatcopilot.core.workspace_runtime.service import MiddlewareWorkspaceService

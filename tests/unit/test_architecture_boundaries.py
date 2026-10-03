@@ -235,7 +235,14 @@ def test_retired_imports_are_rejected_even_from_compatibility_tests(checker, tmp
     tests = tmp_path / "tests/unit"
     tests.mkdir(parents=True)
     (tests / "test_compatibility_exports.py").write_text(
-        "from chatcopilot.agent.protocol import AgentTask\n", encoding="utf-8",
+        "from chatcopilot.agent.protocol import AgentTask\n"
+        "from chatcopilot.agent.research.models import ResearchRequest\n",
+        encoding="utf-8",
+    )
+    (source_root / "external_tools").mkdir()
+    (source_root / "external_tools/current.py").write_text(
+        "from chatcopilot.external_tools.shared.tool_spec import ToolDef\n",
+        encoding="utf-8",
     )
     monkeypatch.setattr(checker, "ROOT", tmp_path)
     monkeypatch.setattr(checker, "SRC", source_root)
@@ -244,6 +251,8 @@ def test_retired_imports_are_rejected_even_from_compatibility_tests(checker, tmp
 
     assert failures["src/chatcopilot/agent/current.py"] == ["chatcopilot.agent.config"]
     assert any(name.startswith("chatcopilot.agent.protocol") for name in failures["tests/unit/test_compatibility_exports.py"])
+    assert any(name.startswith("chatcopilot.agent.research") for name in failures["tests/unit/test_compatibility_exports.py"])
+    assert any(name.startswith("chatcopilot.external_tools.shared.tool_spec") for name in failures["src/chatcopilot/external_tools/current.py"])
 
 
 def test_empty_retired_modules_and_replacement_packages_are_rejected(checker, tmp_path, monkeypatch) -> None:
@@ -369,3 +378,67 @@ def test_isolated_agent_evaluation_does_not_require_channel_or_gateway_sources(
     assert checker._graph_checks() == {}
     assert not (checker.SRC / "channels").exists()
     assert not (checker.SRC / "gateway").exists()
+
+
+@pytest.mark.parametrize("module,source", [
+    ("worker_types", "from .controller import EvaluationApplication\n"),
+    ("worker_types", "import os\n"),
+    ("controller", "from .worker_runtime import LocalEvaluationWorker\n"),
+    ("controller", "def spawn():\n    import subprocess\n"),
+    ("controller", "import threading\nthreading.Thread(target=lambda: None)\n"),
+    ("controller", "from .hidden import LocalEvaluationWorker\n"),
+])
+def test_evaluation_worker_gate_rejects_concrete_process_dependencies(checker, tmp_path, monkeypatch, module, source):
+    folder = tmp_path / "src/chatcopilot/evals/application"
+    folder.mkdir(parents=True)
+    for name in ("worker_types", "controller", "worker_runtime"):
+        (folder / f"{name}.py").write_text("")
+    (folder / "hidden.py").write_text("from .worker_runtime import LocalEvaluationWorker\n")
+    (folder / f"{module}.py").write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._evaluation_worker_checks()["evaluation_worker_boundaries"]
+
+
+def test_evaluation_worker_gate_allows_explicit_port_and_service_locks(checker, tmp_path, monkeypatch):
+    folder = tmp_path / "src/chatcopilot/evals/application"
+    folder.mkdir(parents=True)
+    (folder / "worker_types.py").write_text("from typing import Protocol\nclass EvaluationWorkerPort(Protocol): pass\n")
+    (folder / "controller.py").write_text("from .worker_types import EvaluationWorkerPort\nimport threading\nlock = threading.RLock()\n")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._evaluation_worker_checks() == {}
+
+
+@pytest.mark.parametrize("module,source", [
+    ("task_projection", "from .task_storage import write_task_artifact\n"),
+    ("task_projection", "import os\n"),
+    ("task_forecast", "from .task_storage import load_task_history\n"),
+    ("task_storage", "from .tasks import TurnTaskRecorder\n"),
+    ("tasks", "import os\n"),
+    ("tasks", "from pathlib import Path\nPath('record').write_text('data')\n"),
+])
+def test_task_record_gate_rejects_reverse_dependencies_and_misplaced_io(checker, tmp_path, monkeypatch, module, source):
+    folder = tmp_path / "src/chatcopilot/middleware/runtime"
+    folder.mkdir(parents=True)
+    for name in ("task_projection", "task_storage", "task_forecast", "tasks"):
+        (folder / f"{name}.py").write_text("")
+    (folder / f"{module}.py").write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._task_record_checks()["task_record_boundaries"]
+
+
+def test_task_record_gate_allows_pure_projection_and_storage_dependencies(checker, tmp_path, monkeypatch):
+    folder = tmp_path / "src/chatcopilot/middleware/runtime"
+    folder.mkdir(parents=True)
+    for module, source in {
+        "task_projection": "import json\n",
+        "task_forecast": "from .task_projection import normalize_usage\n",
+        "task_storage": "import os\nfrom . import task_projection\n",
+        "tasks": "from . import task_storage, task_projection, task_forecast\n",
+    }.items():
+        (folder / f"{module}.py").write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._task_record_checks() == {}

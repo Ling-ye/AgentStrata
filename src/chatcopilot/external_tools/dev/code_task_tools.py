@@ -28,7 +28,7 @@ from chatcopilot.external_tools.dev.code_task_delivery import (
     delivery_retry_pending,
 )
 from chatcopilot.external_tools.shared.spec_helpers import schema_property
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     EXECUTION_GLOBAL_SERIAL_BACKGROUND,
     ToolContext,
     ToolDef,

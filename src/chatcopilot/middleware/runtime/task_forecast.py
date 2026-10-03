@@ -1,63 +1,14 @@
 """History-backed token forecasts for schema-v2 task records."""
 from __future__ import annotations
 
-import json
-import math
-from pathlib import Path
 from statistics import median
 from typing import Any, Iterable, Mapping
+
+from .task_projection import _USAGE_KEYS, normalize_usage
 
 FORECAST_MIN_SAMPLES = 20
 FORECAST_MAX_SAMPLES = 200
 FORECAST_VERSION = "task-median-v1"
-_MAX_USAGE_TOKEN_COUNT = (1 << 63) - 1
-_MAX_HISTORY_TASK_BYTES = 8 * 1024 * 1024
-
-_USAGE_KEYS = (
-    "prompt_tokens",
-    "completion_tokens",
-    "total_tokens",
-    "reasoning_tokens",
-    "cached_tokens",
-    "cache_read_tokens",
-    "cache_write_tokens",
-)
-
-
-def _nonnegative_usage_int(value: Any) -> int:
-    if isinstance(value, bool):
-        return 0
-    if isinstance(value, int):
-        normalized = value
-    else:
-        try:
-            numeric = float(value)
-        except (TypeError, ValueError, OverflowError):
-            return 0
-        if not math.isfinite(numeric):
-            return 0
-        normalized = int(numeric)
-    if normalized < 0 or normalized > _MAX_USAGE_TOKEN_COUNT:
-        return 0
-    return normalized
-
-
-def normalize_usage(usage: Mapping[str, Any] | None) -> dict[str, int]:
-    source = usage or {}
-    normalized: dict[str, int] = {}
-    for key in _USAGE_KEYS:
-        normalized[key] = _nonnegative_usage_int(source.get(key, 0))
-    prompt = normalized["prompt_tokens"]
-    cached = min(
-        prompt,
-        max(normalized["cached_tokens"], normalized["cache_read_tokens"]),
-    )
-    normalized["cached_tokens"] = cached
-    normalized["cache_read_tokens"] = min(prompt, normalized["cache_read_tokens"])
-    normalized["non_cached_input_tokens"] = max(0, prompt - cached)
-    normalized["input_tokens"] = prompt
-    normalized["output_tokens"] = normalized["completion_tokens"]
-    return normalized
 
 
 def median_usage(samples: Iterable[Mapping[str, Any]]) -> dict[str, int]:
@@ -68,37 +19,6 @@ def median_usage(samples: Iterable[Mapping[str, Any]]) -> dict[str, int]:
         key: int(median([sample[key] for sample in normalized]))
         for key in (*_USAGE_KEYS, "input_tokens", "non_cached_input_tokens", "output_tokens")
     }
-
-
-def load_task_history(root: Path | None) -> list[dict[str, Any]]:
-    if root is None or not root.is_dir():
-        return []
-    records: list[dict[str, Any]] = []
-    for path in root.glob("**/tasks/*/task.json"):
-        try:
-            if path.stat().st_size > _MAX_HISTORY_TASK_BYTES:
-                continue
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, RecursionError):
-            continue
-        if not isinstance(payload, dict) or payload.get("schema_version") != 2:
-            continue
-        records.append(payload)
-    records.sort(
-        key=lambda item: _safe_history_timestamp(
-            item.get("finished_at") or item.get("updated_at") or 0
-        ),
-        reverse=True,
-    )
-    return records
-
-
-def _safe_history_timestamp(value: Any) -> float:
-    try:
-        timestamp = float(value)
-    except (TypeError, ValueError, OverflowError):
-        return 0.0
-    return timestamp if math.isfinite(timestamp) and timestamp >= 0 else 0.0
 
 
 def forecast_llm_usage(
@@ -222,7 +142,6 @@ __all__ = [
     "FORECAST_VERSION",
     "forecast_llm_usage",
     "forecast_task_usage",
-    "load_task_history",
     "median_usage",
     "normalize_usage",
 ]

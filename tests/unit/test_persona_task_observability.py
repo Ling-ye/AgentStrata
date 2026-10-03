@@ -3,7 +3,8 @@ from __future__ import annotations
 import json
 
 from chatcopilot.core.workspace_runtime import Workspace
-from chatcopilot.middleware.runtime.tasks import EVENTS_FILENAME, TurnTaskRecorder
+from chatcopilot.middleware.runtime.task_projection import EVENTS_FILENAME
+from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
 
 
 def test_persona_manage_uses_generic_structured_tool_observability(tmp_path) -> None:

@@ -461,6 +461,10 @@ class OneBotForwardWebSocketDriver:
                         )
                 finally:
                     queue.task_done()
+                # An already-buffered frame and a durable-intake callback can both
+                # complete without suspending. Let scheduled turns and outbound
+                # acknowledgements run before consuming the next queued event.
+                await asyncio.sleep(0)
         except asyncio.CancelledError:
             return
         except Exception as exc:

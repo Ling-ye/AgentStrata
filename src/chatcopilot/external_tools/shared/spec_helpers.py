@@ -10,7 +10,7 @@ import argparse
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Sequence
 
-from chatcopilot.external_tools.shared.tool_spec import properties_from_argparse
+from chatcopilot.contracts.tools import properties_from_argparse
 
 
 def require_arg(args: Dict[str, Any], key: str) -> str:

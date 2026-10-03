@@ -6,6 +6,11 @@
 
 Channel 转换平台帧并负责实际传输；Gateway 采信身份、调用准入策略并协调 session/run 与交付；Application 准备 actor、工作区、上下文并提交交换；Agent 执行模型和工具。
 
+实例宿主通过渠道装配函数绑定 driver、资源获取器、准入输入与出站策略，Channel 不读取
+BotSpec 或授予权限。QQ 文件投递沿用组合请求，微信逐段投递；Application 只消费
+`DeliveryBatchResult` 中的预期请求数与实际回执，不再按返回对象类型推断渠道行为。
+每次请求独立落库，部分确认、失败或未知结果不构成完整交付，也不自动重发。
+
 交接采用现有事件、PreparedTurn/TurnOutcome 与 AgentTask/AgentEvent/AgentResult。准入可提前终止，ACP 可直连 Gateway，隔离测评可调用 Agent。资源下载经受控端口请求，不改变依赖和授权顺序。
 
 ## 源码入口
@@ -25,6 +30,9 @@ ingress 表调度长回合，不让 OneBot 接收 worker 等待整个 Agent。�
 1,024 条待执行/执行中消息，均由 [gateway 配置](configuration.md#gateway) 调整；容量耗尽
 明确拒绝新消息，不逐出已接受消息。每个精确 conversation key 按持久化插入顺序执行，
 不同会话不再因哈希锁碰撞串行。空闲与取消等待者退出后释放 Channel 会话锁。
+
+QQ 传输 worker 每次交接完成后让出事件循环，避免积压消息的同步持久化连续占用调度，
+延迟已经接受的回合和出站确认；这不改变准入及持久化顺序。
 
 同步 `handle_inbound()` 等待本条执行结果；取消会终止该条执行。停止 runtime 时取消活动
 回合，尚未开始的 accepted ingress 保留，重启用保存的 Principal 恢复；已开始且无法确定

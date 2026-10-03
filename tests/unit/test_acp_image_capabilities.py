@@ -1,9 +1,8 @@
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent, acp_runtime
 
 import unittest
-from types import SimpleNamespace
 
-from chatcopilot.middleware.acp.server import AcpChatAgent
 
 
 class AcpImageCapabilitiesTests(unittest.IsolatedAsyncioTestCase):
@@ -15,8 +14,8 @@ class AcpImageCapabilitiesTests(unittest.IsolatedAsyncioTestCase):
             ((), False),
         ):
             with self.subTest(features=features):
-                agent = AcpChatAgent.__new__(AcpChatAgent)
-                agent._runtime = SimpleNamespace(tool_features=features)
+                agent = make_acp_agent()
+                agent._runtime = acp_runtime(tool_features=features)
 
                 response = await agent.initialize(protocol_version=1)
 

@@ -341,11 +341,6 @@ def has_text_attachment_reference(text: str) -> bool:
     return False
 
 
-def looks_like_attachment_upload_text(text: str) -> bool:
-    """Backward-compatible wrapper for textified attachment detection."""
-    return has_text_attachment_reference(text)
-
-
 def extract_attachment_names_from_text(text: str) -> list[str]:
     """Extract filenames from cc-connect textified attachment prompts."""
     normalized = _without_web_urls(text)
@@ -689,7 +684,6 @@ __all__ = [
     "is_feishu_file_size_limit_error",
     "is_plausible_file_basename",
     "is_textified_attachment_upload_only",
-    "looks_like_attachment_upload_text",
     "normalize_cc_connect_wrapper",
     "resource_basename",
     "should_short_circuit_attachment_only",

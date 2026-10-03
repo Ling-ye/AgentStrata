@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 
 from tests.evaluation_fixtures import result_payload, trial_payload
 
@@ -187,7 +188,7 @@ def test_persisted_insights_are_read_only_after_application_restart(tmp_path):
         path.chmod(0o600)
     before = {path.name: path.read_bytes() for path in directory.iterdir()}
     with patch("chatcopilot.evals.application.controller.capture_source_revision", side_effect=AssertionError("read must not capture current Git")):
-        manager = EvaluationApplication(tmp_path)
+        manager = EvaluationApplication(tmp_path, worker=LocalEvaluationWorker())
         record = manager.list()[0]
     assert record["source_revision"]["commit"] == "a" * 40
     assert record["insights"]["trend_eligible"] is True

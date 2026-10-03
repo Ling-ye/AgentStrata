@@ -17,7 +17,7 @@ from typing import Any, Dict, List
 from urllib.parse import urlparse
 
 from chatcopilot.contracts.tool_packs import static_tool_provider
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

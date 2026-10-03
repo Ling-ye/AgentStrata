@@ -1,102 +1,39 @@
 """Workspace tool facade and ToolDef declarations.
 
 Handlers live under ``chatcopilot.agent.tools.builtin.workspace`` by
-responsibility; this module keeps the historical ``workspace_tools`` import
-surface and the stable ToolDef names.
+responsibility; this module declares the stable ToolDef names and binds handlers directly.
 """
 from __future__ import annotations
 
-import socket
-import urllib.request
 from typing import List
 
 from chatcopilot.contracts.tool_packs import static_tool_provider
-from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
-from chatcopilot.agent.tools.workspace_context import (
-    cleanup_workspace,
-    describe_workspace,
-    list_workspace_inventories,
-    resolve_workspace,
-    resolve_workspace_root,
+from chatcopilot.contracts.tools import ToolDef, object_schema
+from chatcopilot.agent.tools.builtin.workspace.diagnostics import (
+    _handler_get_job_status as _handler_get_job_status,
+    _handler_get_task_status as _handler_get_task_status,
 )
-from chatcopilot.agent.tools.builtin.workspace import diagnostics as _diagnostics
-from chatcopilot.agent.tools.builtin.workspace import files as _files
-from chatcopilot.agent.tools.builtin.workspace import images as _images
-from chatcopilot.agent.tools.builtin.workspace import listing as _listing
-from chatcopilot.agent.tools.builtin.workspace import owner as _owner
+from chatcopilot.agent.tools.builtin.workspace.files import (
+    _handler_read_text_head as _handler_read_text_head,
+    _handler_unzip_attachment as _handler_unzip_attachment,
+    _handler_write_workspace_file as _handler_write_workspace_file,
+)
+from chatcopilot.agent.tools.builtin.workspace.listing import (
+    _handler_list_workspace as _handler_list_workspace,
+)
+from chatcopilot.agent.tools.builtin.workspace.owner import (
+    _handler_owner_list_workspaces as _handler_owner_list_workspaces,
+    _handler_owner_read_workspace_file as _handler_owner_read_workspace_file,
+)
 from chatcopilot.agent.tools.builtin.workspace.delivery import (
-    _handler_send_files_to_user as _workspace_send_files_to_user,
+    _handler_send_files_to_user as _handler_send_files_to_user,
 )
 from chatcopilot.agent.tools.builtin.workspace.images import (
+    _handler_download_image_urls as _handler_download_image_urls,
+    _handler_send_image_urls_to_user as _handler_send_image_urls_to_user,
     _IMAGE_DEFAULT_LIMIT,
     _IMAGE_DEFAULT_MAX_BYTES,
 )
-
-
-def _sync_workspace_handler_context() -> None:
-    # Compatibility: older tests monkey-patch workspace_tools.resolve_workspace
-    # and related helpers directly. Keep those patches visible to split modules.
-    for module in (_diagnostics, _files, _listing):
-        module.resolve_workspace = resolve_workspace
-    _listing.describe_workspace = describe_workspace
-    _listing._silent_cleanup.__globals__["cleanup_workspace"] = cleanup_workspace
-    _diagnostics.resolve_workspace = resolve_workspace
-    _diagnostics._silent_cleanup.__globals__["cleanup_workspace"] = cleanup_workspace
-    _images.resolve_workspace = resolve_workspace
-    _images.socket = socket
-    _images.urllib = urllib
-    _owner.resolve_workspace = resolve_workspace
-    _owner.resolve_workspace_root = resolve_workspace_root
-    _owner.list_workspace_inventories = list_workspace_inventories
-
-
-def _handler_list_workspace(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _listing._handler_list_workspace(args, ctx)
-
-
-def _handler_get_job_status(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _diagnostics._handler_get_job_status(args, ctx)
-
-
-def _handler_get_task_status(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _diagnostics._handler_get_task_status(args, ctx)
-
-
-def _handler_read_text_head(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _files._handler_read_text_head(args, ctx)
-
-
-def _handler_unzip_attachment(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _files._handler_unzip_attachment(args, ctx)
-
-
-def _handler_send_files_to_user(args: dict, ctx: ToolContext) -> ToolResult:
-    return _workspace_send_files_to_user(args, ctx)
-
-
-def _handler_download_image_urls(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _images._handler_download_image_urls(args, ctx)
-
-
-def _handler_send_image_urls_to_user(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _images._handler_send_image_urls_to_user(args, ctx)
-
-
-def _handler_owner_list_workspaces(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _owner._handler_owner_list_workspaces(args, ctx)
-
-
-def _handler_owner_read_workspace_file(args: dict, ctx: ToolContext) -> ToolResult:
-    _sync_workspace_handler_context()
-    return _owner._handler_owner_read_workspace_file(args, ctx)
 
 
 _LIST_RESULT_SCHEMA = object_schema(
@@ -207,7 +144,7 @@ TOOLS: List[ToolDef] = [
             },
             required=("path", "operation", "committed"),
         ),
-        handler=_files._handler_write_workspace_file,
+        handler=_handler_write_workspace_file,
         category="agent.workspace",
         owner="agent",
         module=__name__,

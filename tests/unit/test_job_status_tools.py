@@ -16,6 +16,7 @@
 """
 
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent
 
 import json
 import tempfile
@@ -32,7 +33,6 @@ from chatcopilot.agent.tools.builtin.workspace_tools import (
 from chatcopilot.contracts.tools import ToolContext
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.core.workspace_context import bind_workspace_service
-from chatcopilot.middleware.acp import server as acp_server
 from chatcopilot.middleware.acp.job_dispatch import extract_job_status_query
 from chatcopilot.middleware.acp.task_dispatch import extract_task_status_query
 from chatcopilot.core.workspace_runtime import Workspace
@@ -239,14 +239,9 @@ class ReadTextHeadRejectsDirectoryTests(unittest.TestCase):
                 stdout_lines=["[1/3] OK"],
             )
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 with self.assertRaises(IsADirectoryError) as ctx:
                     _handler_read_text_head({"path": str(job_dir)}, ToolContext())
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         message = str(ctx.exception)
         self.assertIn("目录而非文件", message)
@@ -272,15 +267,10 @@ class GetJobStatusToolTests(unittest.TestCase):
                 ],
             )
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_job_status(
                     {"job_id": VALID_JOB_ID, "tail_lines": 20}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertTrue(result.ok)
         self.assertIn(VALID_JOB_ID, result.summary)
@@ -296,15 +286,10 @@ class GetJobStatusToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp))
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_job_status(
                     {"job_id": VALID_JOB_ID}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertFalse(result.ok)
         self.assertIn("找不到", result.error or "")
@@ -315,15 +300,10 @@ class GetJobStatusToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp))
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_job_status(
                     {"job_id": "not_a_valid_id"}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertFalse(result.ok)
         self.assertIn("找不到", result.error or "")
@@ -333,15 +313,10 @@ class GetJobStatusToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp))
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_job_status(
                     {"job_id": VALID_TASK_ID}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertFalse(result.ok)
         self.assertIn("单轮对话任务 ID", result.error or "")
@@ -356,15 +331,10 @@ class GetTaskStatusToolTests(unittest.TestCase):
             ws = _make_workspace(Path(tmp))
             _seed_task_dir(ws)
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_task_status(
                     {"task_id": VALID_TASK_ID}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertTrue(result.ok)
         self.assertIn(VALID_TASK_ID, result.summary)
@@ -380,15 +350,10 @@ class GetTaskStatusToolTests(unittest.TestCase):
             ws = _make_workspace(Path(tmp))
             _seed_task_dir(ws, status="failed", stop_reason="error", final_text="执行失败")
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_task_status(
                     {"task_id": VALID_TASK_ID}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertTrue(result.ok)
         self.assertIn("状态: failed", result.summary)
@@ -399,15 +364,10 @@ class GetTaskStatusToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp))
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_task_status(
                     {"task_id": VALID_TASK_ID}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertFalse(result.ok)
         self.assertIn("找不到单轮任务", result.error or "")
@@ -418,15 +378,10 @@ class GetTaskStatusToolTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp))
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_task_status(
                     {"task_id": "job_20260528_120125_10a50d0c"}, ToolContext()
                 )
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertFalse(result.ok)
         self.assertIn("不是有效的单轮任务 ID", result.error or "")
@@ -452,13 +407,8 @@ class GetTaskStatusToolTests(unittest.TestCase):
                 json.dumps({"final_text": "forged answer"}), encoding="utf-8",
             )
 
-            from chatcopilot.agent.tools.builtin import workspace_tools as _wt
-            saved_resolver = _wt.resolve_workspace
-            _wt.resolve_workspace = lambda create=False: ws
-            try:
+            with bind_workspace_service(_StubWorkspaceService(ws)):
                 result = _handler_get_task_status({"task_id": VALID_TASK_ID}, ToolContext())
-            finally:
-                _wt.resolve_workspace = saved_resolver
 
         self.assertFalse(result.ok)
         self.assertEqual(result.error_code, "group_task_status_private")
@@ -479,7 +429,7 @@ class AcpTaskStatusShortcutTests(unittest.IsolatedAsyncioTestCase):
         with tempfile.TemporaryDirectory() as tmp:
             ws = _make_workspace(Path(tmp))
             _seed_task_dir(ws)
-            agent = acp_server.AcpChatAgent.__new__(acp_server.AcpChatAgent)
+            agent = make_acp_agent()
             agent._conn = _Conn()
             session = type("Session", (), {"workspace": ws})()
 

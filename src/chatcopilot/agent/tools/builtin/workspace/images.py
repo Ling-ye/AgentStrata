@@ -17,7 +17,7 @@ from chatcopilot.agent.tools.file_delivery import (
     FileDeliveryResult,
     get_current_file_sender,
 )
-from chatcopilot.agent.tools.workspace_context import resolve_workspace
+from chatcopilot.core.workspace_context import resolve_workspace
 from chatcopilot.contracts.tools import ToolContext, ToolResult
 from chatcopilot.contracts.resources import (
     DOWNLOAD_BATCH_TIMEOUT_SECONDS, DOWNLOAD_IO_TIMEOUT_SECONDS,

@@ -106,6 +106,8 @@ _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
         "chatcopilot.middleware.acp.turn_orchestrator",
         "chatcopilot.middleware.acp.workspace_service",
         "chatcopilot.middleware.runtime.tasks",
+        "chatcopilot.middleware.runtime.task_projection",
+        "chatcopilot.middleware.runtime.task_storage",
     ),
     ("swe-bench", "agent_configured"): (
         "chatcopilot.evals.benchmark_data",

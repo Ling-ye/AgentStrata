@@ -24,6 +24,11 @@
 
 Agent Profile 对比和 BFCL / GAIA / IFEval Suite 只使用 `Evaluation`，以 `kind: comparison | suite` 区分；`chatcopilot.evals.application` 与本机 `chatcopilot.evals.service` 是活动 claim、受管 worker、lifecycle state 和更新 maintenance lease 的唯一 owner。
 
+`EvaluationApplication` 显式接收 `EvaluationWorkerPort`，由服务 runtime 注入本地进程实现。
+进程创建、启动门、身份观测、等待与终止属于 worker 实现；请求冻结、claim、维护租约、
+取消决定和结果收尾仍属于应用服务。启动门只有在 state 与 claim 发布成功后才放行，
+发布失败会关闭管道，不能先运行 Core 再补写身份。
+
 Console 只是通过同 UID Unix socket 调用服务的 UI/BFF，禁止在 `console.*` 中恢复 Evaluation manager、worker supervision、进程内 fallback 或旧 import facade。
 
 Console 启停和重启不得发送 worker 信号或改写 Evaluation 终态；运行代码更新必须在与创建相同的跨进程锁内原子证明 idle 并持久化 maintenance marker，整个构建、Evaluation 重启、UDS health 和 Console 重启窗口都拒绝新 Evaluation，结束后才释放；服务不可达、状态不明或已安装 unit 未运行时 fail closed。

@@ -27,6 +27,7 @@ from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
 from chatcopilot.gateway import runtime as runtime_module
+from chatcopilot.gateway import channel_assembly
 from chatcopilot.gateway.state_store import (
     MAX_OUTBOUND_ENVELOPE_JSON_BYTES,
     GatewayStateError,
@@ -69,7 +70,7 @@ def _production_host(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *args, **kwargs: agent)
     monkeypatch.setattr(runtime_module, "load_config", lambda **kwargs: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
-    monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", driver)
+    monkeypatch.setattr(channel_assembly, "OneBotForwardWebSocketDriver", driver)
     monkeypatch.setattr(runtime_module, "GatewayWebSocketServer", _FakeServer)
     return runtime_module.build_gateway_runtime_host(config, environ=_environment(tmp_path)), agent, connection
 

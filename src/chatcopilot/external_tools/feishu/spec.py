@@ -13,7 +13,7 @@ import json
 from typing import Any, Dict, List
 
 from chatcopilot.external_tools.shared.spec_helpers import require_arg, schema_property
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

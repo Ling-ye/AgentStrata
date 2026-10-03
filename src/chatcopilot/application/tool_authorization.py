@@ -63,7 +63,7 @@ def build_tool_permission_filter(
             tool=tool,
         )
         if research_only and decision.allowed and tool_name not in {
-            "search_information", "research_information", "web_fetch_page", "read_tool_result",
+            "search_information", "web_fetch_page", "read_tool_result",
             "tool_search", "tool_describe", "tool_call",
         }:
             decision = make_authorization_decision(request, allowed=False,

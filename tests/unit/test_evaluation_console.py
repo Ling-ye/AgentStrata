@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 
 import json
 import multiprocessing
@@ -339,7 +340,7 @@ def _competing_start_process(
     manager = EvaluationApplication(
         Path(root),
         validator=_ready_validator(),
-    )
+    worker=LocalEvaluationWorker())
     # This test mocks spawning (there is no live worker PID). Finish recovery in
     # both applications before racing admission, otherwise the later constructor
     # correctly recovers the first application's PID-less synthetic task as dead.
@@ -367,7 +368,7 @@ def test_quick_create_uses_server_defaults_without_client_overrides(
     manager = EvaluationApplication(
         tmp_path / "evaluations",
         validator=_ready_validator(captured),
-    )
+    worker=LocalEvaluationWorker())
     with (
         patch.object(manager, "_spawn") as spawn,
         _use_manager(manager),
@@ -427,7 +428,7 @@ def test_create_contract_rejects_preset_overrides_and_cross_kind_fields(
     manager = EvaluationApplication(
         tmp_path / "evaluations",
         validator=_ready_validator(),
-    )
+    worker=LocalEvaluationWorker())
     with _use_manager(manager):
         response = TestClient(app, raise_server_exceptions=False).post(
             "/api/evals/evaluations",
@@ -461,7 +462,7 @@ def test_blocking_validation_has_no_record_or_process_side_effect(
     manager = EvaluationApplication(
         tmp_path / "evaluations",
         validator=blocked,
-    )
+    worker=LocalEvaluationWorker())
     with (
         patch.object(manager, "_spawn") as spawn,
         _use_manager(manager),
@@ -508,7 +509,7 @@ def test_application_rejects_non_boolean_external_write_confirmation_before_crea
     tmp_path: Path,
     raw_confirmation: object,
 ) -> None:
-    manager = EvaluationApplication(tmp_path / "evaluations")
+    manager = EvaluationApplication(tmp_path / "evaluations", worker=LocalEvaluationWorker())
 
     with patch.object(manager, "_spawn") as spawn, pytest.raises(EvaluationBlocked) as caught:
         manager.start(
@@ -570,7 +571,7 @@ def test_named_suite_preset_keeps_resolved_cases_out_of_core_request(
             "targets": [],
         }
 
-    manager = EvaluationApplication(root, validator=validator)
+    manager = EvaluationApplication(root, validator=validator, worker=LocalEvaluationWorker())
     with patch.object(manager, "_spawn"):
         created = manager.start(
             bot_id=_instance().instance_id,
@@ -595,7 +596,7 @@ def test_startup_failure_is_sanitized_before_any_error_is_persisted(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     secret = "startup-secret-value"
     absolute_path = repo_root() / "private" / "credentials.json"
     raw_error = f"token {secret} failed at {absolute_path}"
@@ -650,7 +651,7 @@ def test_start_reuses_one_machine_first_env_snapshot_for_preflight_and_spawn(
         observed.append(os.environ[key])
         return _ready_validator()(_bot, _request)
 
-    manager = EvaluationApplication(tmp_path / "evaluations", validator=validator)
+    manager = EvaluationApplication(tmp_path / "evaluations", validator=validator, worker=LocalEvaluationWorker())
 
     def capture_spawn(evaluation_id: str, _bot: BotInstance) -> None:
         observed.append(manager._spawn_env_snapshots[evaluation_id][key])
@@ -683,7 +684,7 @@ def test_same_bot_allows_only_one_active_evaluation(
     manager = EvaluationApplication(
         tmp_path / "evaluations",
         validator=_ready_validator(),
-    )
+    worker=LocalEvaluationWorker())
     body = {
         "kind": "comparison",
         "bot_id": "lingye-copilot-qq",
@@ -708,8 +709,8 @@ def test_separate_managers_atomically_claim_one_bot(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    first = EvaluationApplication(root, validator=_ready_validator())
-    second = EvaluationApplication(root, validator=_ready_validator())
+    first = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
+    second = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     def start(manager: EvaluationApplication) -> str:
         with patch.object(manager, "_spawn"):
@@ -781,7 +782,7 @@ def test_lifecycle_status_and_failed_outcome_are_independent(
         ],
     )
 
-    detail = EvaluationApplication(root).get("eval-completed-failed")
+    detail = EvaluationApplication(root, worker=LocalEvaluationWorker()).get("eval-completed-failed")
 
     assert detail["status"] == "completed"
     assert detail["result"]["trials"][0]["outcome"] == "failed"
@@ -823,7 +824,7 @@ def test_coverage_is_partitioned_by_target_fingerprint(
         ],
     )
 
-    coverage = EvaluationApplication(root).coverage(bot_id="lingye-copilot-qq")
+    coverage = EvaluationApplication(root, worker=LocalEvaluationWorker()).coverage(bot_id="lingye-copilot-qq")
 
     assert coverage["summary"] == {
         "case_count": 1,
@@ -855,7 +856,7 @@ def test_unified_api_lists_records_and_old_resources_are_gone(
         lifecycle_status="completed",
         summary=summary,
     )
-    manager = EvaluationApplication(root)
+    manager = EvaluationApplication(root, worker=LocalEvaluationWorker())
     with _use_manager(manager):
         client = TestClient(app)
         profiles = client.get("/api/evals/profiles")
@@ -900,7 +901,7 @@ def test_case_detail_routes_preserve_slashes_in_external_case_ids(
             }
         ],
     )
-    manager = EvaluationApplication(root)
+    manager = EvaluationApplication(root, worker=LocalEvaluationWorker())
     encoded_case_id = quote(case_id, safe="")
     encoded_case_ref = quote(case_ref, safe="")
 
@@ -930,7 +931,7 @@ def test_evaluation_ids_reject_path_traversal(
     manager = EvaluationApplication(
         tmp_path / "evaluations",
         validator=_ready_validator(),
-    )
+    worker=LocalEvaluationWorker())
 
     for invalid_id in ("../escape", "bad.id", "a" * 129):
         with pytest.raises(ValueError, match="invalid evaluation_id"):
@@ -958,7 +959,7 @@ def test_evaluation_directory_symlink_alias_is_never_followed_or_deleted(
     )
     alias = root / alias_id
     alias.symlink_to(root / target_id, target_is_directory=True)
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     actions = (
         lambda: manager.get(alias_id),
@@ -994,7 +995,7 @@ def test_delete_rejects_record_id_mismatch(
     payload = json.loads(path.read_text(encoding="utf-8"))
     payload["evaluation_id"] = "eval-different-record"
     _write_json(path, payload)
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     actions = (
         lambda: manager.get(evaluation_id),
@@ -1024,7 +1025,7 @@ def test_identity_artifact_symlink_is_rejected(
         evaluation_id=evaluation_id,
         lifecycle_status="completed",
     )
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     artifact = root / evaluation_id / artifact_name
     external = tmp_path / f"external-{artifact_name}"
     external.write_bytes(artifact.read_bytes())
@@ -1056,7 +1057,7 @@ def test_result_artifact_symlink_is_rejected_before_read_or_export(
             }
         ],
     )
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     result_path = root / evaluation_id / "result.json"
     external = tmp_path / "external-result.json"
     external.write_bytes(result_path.read_bytes())
@@ -1096,7 +1097,7 @@ def test_summary_and_progress_artifact_symlinks_are_rejected(
     external_progress = tmp_path / "external-progress.jsonl"
     external_progress.write_text('{"event":"outside"}\n', encoding="utf-8")
     (directory / "progress.jsonl").symlink_to(external_progress)
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     with pytest.raises(ValueError, match="artifact cannot be a symlink"):
         manager.report_path(evaluation_id, "markdown")
@@ -1118,7 +1119,7 @@ def test_result_id_mismatch_is_rejected_before_read_export_or_stream(
     result = json.loads(result_path.read_text(encoding="utf-8"))
     result["evaluation_id"] = "eval-other-result"
     _write_json(result_path, result)
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     actions = (
         lambda: manager.get(evaluation_id),
@@ -1135,7 +1136,7 @@ def test_activity_claim_symlink_is_rejected_fail_closed(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     bot_id = _instance().instance_id
     external = tmp_path / "external-claim.json"
     external.write_text(
@@ -1173,7 +1174,7 @@ def test_evaluation_root_rejects_symlink_ancestor(tmp_path: Path) -> None:
     linked_parent.symlink_to(external, target_is_directory=True)
 
     with pytest.raises(ValueError, match="cannot contain a symlink"):
-        EvaluationApplication(linked_parent / "evaluations")
+        EvaluationApplication(linked_parent / "evaluations", worker=LocalEvaluationWorker())
 
     assert not (external / "evaluations").exists()
 
@@ -1190,14 +1191,14 @@ def test_existing_evaluation_directory_and_artifacts_require_private_modes(
     result_path = directory / "result.json"
 
     result_path.chmod(0o644)
-    application = EvaluationApplication(root)
+    application = EvaluationApplication(root, worker=LocalEvaluationWorker())
     with pytest.raises(PermissionError, match="mode 0600"):
         application.get(evaluation_id)
 
     result_path.chmod(0o600)
     directory.chmod(0o755)
     with pytest.raises(PermissionError, match="mode 0700"):
-        EvaluationApplication(root)
+        EvaluationApplication(root, worker=LocalEvaluationWorker())
 
 
 def test_existing_evaluation_artifact_hardlink_is_rejected(tmp_path: Path) -> None:
@@ -1210,7 +1211,7 @@ def test_existing_evaluation_artifact_hardlink_is_rejected(tmp_path: Path) -> No
     alias = tmp_path / "result-alias.json"
     os.link(result_path, alias)
 
-    application = EvaluationApplication(root)
+    application = EvaluationApplication(root, worker=LocalEvaluationWorker())
     with pytest.raises(ValueError, match="exactly one hard link"):
         application.get(evaluation_id)
 
@@ -1221,7 +1222,7 @@ def test_existing_activity_claim_requires_private_mode(tmp_path: Path) -> None:
     application = EvaluationApplication(
         tmp_path / "evaluations",
         validator=_ready_validator(),
-    )
+    worker=LocalEvaluationWorker())
     bot_id = _instance().instance_id
     application._create_claim(bot_id, "eval-private-claim")
     claim_path = application._claim_path(bot_id)
@@ -1244,14 +1245,14 @@ def test_worker_identity_requires_exact_output_argument(
         str(expected),
     ]
 
-    assert EvaluationApplication._argv_matches_evaluation(command, expected)
-    assert not EvaluationApplication._argv_matches_evaluation(command, adjacent)
+    assert LocalEvaluationWorker._argv_matches_evaluation(command, expected)
+    assert not LocalEvaluationWorker._argv_matches_evaluation(command, adjacent)
     command[-1] = str(adjacent)
-    assert not EvaluationApplication._argv_matches_evaluation(command, expected)
+    assert not LocalEvaluationWorker._argv_matches_evaluation(command, expected)
     command[-2:] = [f"--output={expected}"]
-    assert EvaluationApplication._argv_matches_evaluation(command, expected)
+    assert LocalEvaluationWorker._argv_matches_evaluation(command, expected)
     command.extend(["--output", str(adjacent)])
-    assert not EvaluationApplication._argv_matches_evaluation(command, expected)
+    assert not LocalEvaluationWorker._argv_matches_evaluation(command, expected)
     public_cli = [
         "python",
         "-m",
@@ -1261,7 +1262,7 @@ def test_worker_identity_requires_exact_output_argument(
         "--output",
         str(expected),
     ]
-    assert not EvaluationApplication._argv_matches_evaluation(public_cli, expected)
+    assert not LocalEvaluationWorker._argv_matches_evaluation(public_cli, expected)
 
 
 def test_windows_command_line_parser_preserves_quoted_output_token() -> None:
@@ -1277,7 +1278,7 @@ def test_windows_command_line_parser_preserves_quoted_output_token() -> None:
 
     command_line = subprocess.list2cmdline(argv)
 
-    assert EvaluationApplication._split_windows_command_line(command_line) == argv
+    assert LocalEvaluationWorker._split_windows_command_line(command_line) == argv
 
 
 def test_application_recovers_checkpoint_without_rewriting_core_result(
@@ -1303,7 +1304,7 @@ def test_application_recovers_checkpoint_without_rewriting_core_result(
     result_path = root / "eval-active-checkpoint" / "result.json"
     original_result = result_path.read_bytes()
 
-    detail = EvaluationApplication(root).get("eval-active-checkpoint")
+    detail = EvaluationApplication(root, worker=LocalEvaluationWorker()).get("eval-active-checkpoint")
 
     assert detail["status"] == "partial"
     assert detail["result"]["status"] == "running"
@@ -1327,19 +1328,19 @@ def test_manager_recovers_empty_active_evaluation_as_interrupted(
 
     with (
         patch.object(
-            EvaluationApplication,
+            LocalEvaluationWorker,
             "_pid_matches_evaluation",
             return_value=False,
         ),
         patch.object(
-            EvaluationApplication,
-            "_pid_exists",
+            LocalEvaluationWorker,
+            "exists",
             return_value=False,
         ),
-        patch.object(EvaluationApplication, "_request_pid_stop") as request_stop,
-        patch.object(EvaluationApplication, "_kill_pid") as kill,
+        patch.object(LocalEvaluationWorker, "request_stop") as request_stop,
+        patch.object(LocalEvaluationWorker, "force_stop") as kill,
     ):
-        detail = EvaluationApplication(root).get("eval-active-empty")
+        detail = EvaluationApplication(root, worker=LocalEvaluationWorker()).get("eval-active-empty")
 
     request_stop.assert_not_called()
     kill.assert_not_called()
@@ -1362,11 +1363,11 @@ def test_manager_preserves_active_record_with_live_worker_pid(
     _write_json(state_path, state)
 
     with patch.object(
-        EvaluationApplication,
+        LocalEvaluationWorker,
         "_pid_matches_evaluation",
         return_value=True,
     ):
-        detail = EvaluationApplication(root).get("eval-live-worker")
+        detail = EvaluationApplication(root, worker=LocalEvaluationWorker()).get("eval-live-worker")
 
     assert detail["status"] == "running"
 
@@ -1384,18 +1385,18 @@ def test_recovery_adopts_worker_discovered_after_pid_persistence_gap(
 
     with (
         patch.object(
-            EvaluationApplication,
-            "_discover_worker_pids",
+            LocalEvaluationWorker,
+            "discover",
             return_value=[4321],
         ),
         patch.object(
-            EvaluationApplication,
-            "_worker_pid_status",
+            LocalEvaluationWorker,
+            "observe",
             return_value="matched",
         ),
-        patch("chatcopilot.evals.application.controller.threading.Thread.start") as start_watch,
+        patch("chatcopilot.evals.application.worker_runtime.threading.Thread.start") as start_watch,
     ):
-        EvaluationApplication(root, validator=_ready_validator())
+        EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     state = json.loads((root / evaluation_id / "state.json").read_text(encoding="utf-8"))
     claims = list(root.glob(".active-*.json"))
@@ -1414,21 +1415,22 @@ def test_inherited_worker_watch_retries_transient_unknown_identity(
     application = EvaluationApplication(
         tmp_path / "evaluations",
         validator=_ready_validator(),
-    )
+    worker=LocalEvaluationWorker())
 
     with (
         patch.object(
-            application,
-            "_worker_pid_status",
+            application._worker,
+            "observe",
             side_effect=("matched", "unknown", "unknown", "matched", "exited"),
         ),
-        patch("chatcopilot.evals.application.controller.time.sleep") as sleep,
+        patch("chatcopilot.evals.application.worker_runtime.time.sleep") as sleep,
         patch.object(application, "_finalize_worker_exit") as finalize,
     ):
-        application._watch_inherited_worker(
-            "eval-transient-identity",
-            _instance().instance_id,
-            4321,
+        application._worker._wait_inherited(
+            4321, application.root / "eval-transient-identity",
+            lambda exit_code: application._finalize_worker_exit(
+                "eval-transient-identity", bot_id=_instance().instance_id, exit_code=exit_code,
+            ),
         )
 
     assert sleep.call_count == 4
@@ -1445,7 +1447,7 @@ def test_recovery_does_not_rewrite_an_already_matching_live_claim(
     root = tmp_path / "evaluations"
     evaluation_id = "eval-matching-live-claim"
     bot_id = _instance().instance_id
-    bootstrap = EvaluationApplication(root, validator=_ready_validator())
+    bootstrap = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -1463,10 +1465,10 @@ def test_recovery_does_not_rewrite_an_already_matching_live_claim(
     before_bytes = claim_path.read_bytes()
 
     with (
-        patch.object(EvaluationApplication, "_worker_pid_status", return_value="matched"),
-        patch("chatcopilot.evals.application.controller.threading.Thread.start"),
+        patch.object(LocalEvaluationWorker, "observe", return_value="matched"),
+        patch("chatcopilot.evals.application.worker_runtime.threading.Thread.start"),
     ):
-        EvaluationApplication(root, validator=_ready_validator())
+        EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     after = claim_path.lstat()
     assert claim_path.read_bytes() == before_bytes
@@ -1497,7 +1499,7 @@ def test_managed_worker_requires_current_pid_in_state_and_claim(
     state_overrides: dict[str, Any],
 ) -> None:
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=_ready_validator())
+    application = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     evaluation_id = "eval-managed-startup-identity"
     bot_id = _instance().instance_id
     output = root / evaluation_id
@@ -1537,7 +1539,7 @@ def test_managed_worker_accepts_matching_current_pid_state_and_claim(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=_ready_validator())
+    application = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     evaluation_id = "eval-managed-startup-identity"
     bot_id = _instance().instance_id
     output = root / evaluation_id
@@ -1576,7 +1578,7 @@ def test_spawn_publish_failure_closes_gate_before_core_artifact_writes(
     if os.name == "nt":
         pytest.skip("POSIX inherited startup gate")
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=_ready_validator())
+    application = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     with (
         patch.object(
@@ -1612,7 +1614,7 @@ def test_stopped_worker_restores_terminal_result_without_overwriting_it(
 ) -> None:
     root = tmp_path / "evaluations"
     evaluation_id = "eval-restart-completed"
-    bootstrap = EvaluationApplication(root, validator=_ready_validator())
+    bootstrap = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -1646,17 +1648,17 @@ def test_stopped_worker_restores_terminal_result_without_overwriting_it(
 
     with (
         patch.object(
-            EvaluationApplication,
+            LocalEvaluationWorker,
             "_pid_matches_evaluation",
             side_effect=matches_worker,
         ),
         patch.object(
-            EvaluationApplication,
-            "_pid_exists",
+            LocalEvaluationWorker,
+            "exists",
             side_effect=lambda _pid: worker_alive,
         ),
     ):
-        observer = EvaluationApplication(root, validator=_ready_validator())
+        observer = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
         assert observer.get(evaluation_id)["status"] == "running"
         worker_alive = False
         assert observer.active_for_bot(_instance().instance_id) is None
@@ -1673,7 +1675,7 @@ def test_new_manager_cancels_only_verified_inherited_worker(
 ) -> None:
     root = tmp_path / "evaluations"
     evaluation_id = "eval-inherited-cancel"
-    bootstrap = EvaluationApplication(root, validator=_ready_validator())
+    bootstrap = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -1703,23 +1705,23 @@ def test_new_manager_cancels_only_verified_inherited_worker(
 
     with (
         patch.object(
-            EvaluationApplication,
+            LocalEvaluationWorker,
             "_pid_matches_evaluation",
             side_effect=matches_worker,
         ),
         patch.object(
-            EvaluationApplication,
-            "_pid_exists",
+            LocalEvaluationWorker,
+            "exists",
             side_effect=lambda _pid: worker_alive,
         ),
         patch.object(
-            EvaluationApplication,
-            "_request_pid_stop",
+            LocalEvaluationWorker,
+            "request_stop",
             side_effect=terminate_worker,
         ) as request_stop,
-        patch.object(EvaluationApplication, "_kill_pid") as kill,
+        patch.object(LocalEvaluationWorker, "force_stop") as kill,
     ):
-        observer = EvaluationApplication(root, validator=_ready_validator())
+        observer = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
         cancelled = observer.cancel(evaluation_id)
 
     request_stop.assert_called_once_with(4321)
@@ -1731,10 +1733,10 @@ def test_new_manager_cancels_only_verified_inherited_worker(
 @pytest.mark.skipif(os.name == "nt", reason="POSIX cooperative signal boundary")
 def test_cooperative_cancel_signals_only_the_managed_worker_pid() -> None:
     with (
-        patch("chatcopilot.evals.application.controller.os.kill") as kill,
-        patch("chatcopilot.evals.application.controller.os.killpg") as kill_group,
+        patch("chatcopilot.evals.application.worker_runtime.os.kill") as kill,
+        patch("chatcopilot.evals.application.worker_runtime.os.killpg") as kill_group,
     ):
-        EvaluationApplication._request_pid_stop(4321)
+        LocalEvaluationWorker.request_stop(4321)
 
     kill.assert_called_once_with(4321, signal.SIGTERM)
     kill_group.assert_not_called()
@@ -1747,7 +1749,7 @@ def test_cancel_fails_closed_for_unverified_live_inherited_pid(
 ) -> None:
     root = tmp_path / "evaluations"
     evaluation_id = "eval-unverified-cancel"
-    bootstrap = EvaluationApplication(root, validator=_ready_validator())
+    bootstrap = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -1767,24 +1769,24 @@ def test_cancel_fails_closed_for_unverified_live_inherited_pid(
             )
 
     with patch.object(
-        EvaluationApplication,
+        LocalEvaluationWorker,
         "_pid_matches_evaluation",
         return_value=True,
     ):
-        observer = EvaluationApplication(root, validator=_ready_validator())
+        observer = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     with (
         patch.object(
-            EvaluationApplication,
+            LocalEvaluationWorker,
             "_pid_matches_evaluation",
             return_value=False,
         ),
         patch.object(
-            EvaluationApplication,
-            "_pid_exists",
+            LocalEvaluationWorker,
+            "exists",
             return_value=True,
         ),
-        patch.object(EvaluationApplication, "_request_pid_stop") as request_stop,
-        patch.object(EvaluationApplication, "_kill_pid") as kill,
+        patch.object(LocalEvaluationWorker, "request_stop") as request_stop,
+        patch.object(LocalEvaluationWorker, "force_stop") as kill,
     ):
         with pytest.raises(RuntimeError, match="identity cannot be verified"):
             observer.cancel(evaluation_id)
@@ -1811,7 +1813,7 @@ def test_cancel_releases_stale_pid_only_after_nonexistence_is_proven(
 ) -> None:
     root = tmp_path / "evaluations"
     evaluation_id = "eval-exited-cancel"
-    EvaluationApplication(root, validator=_ready_validator())
+    EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -1823,24 +1825,24 @@ def test_cancel_releases_stale_pid_only_after_nonexistence_is_proven(
     _write_json(state_path, state)
 
     with patch.object(
-        EvaluationApplication,
+        LocalEvaluationWorker,
         "_pid_matches_evaluation",
         return_value=True,
     ):
-        observer = EvaluationApplication(root, validator=_ready_validator())
+        observer = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     with (
         patch.object(
-            EvaluationApplication,
+            LocalEvaluationWorker,
             "_pid_matches_evaluation",
             return_value=False,
         ),
         patch.object(
-            EvaluationApplication,
-            "_pid_exists",
+            LocalEvaluationWorker,
+            "exists",
             return_value=False,
         ),
-        patch.object(EvaluationApplication, "_request_pid_stop") as request_stop,
-        patch.object(EvaluationApplication, "_kill_pid") as kill,
+        patch.object(LocalEvaluationWorker, "request_stop") as request_stop,
+        patch.object(LocalEvaluationWorker, "force_stop") as kill,
     ):
         cancelled = observer.cancel(evaluation_id)
 
@@ -1862,7 +1864,7 @@ def test_rerun_quick_revalidates_without_resolved_overrides(
     manager = EvaluationApplication(
         root,
         validator=_ready_validator(captured),
-    )
+    worker=LocalEvaluationWorker())
     with (
         patch.object(manager, "_spawn"),
         _use_manager(manager),
@@ -1905,7 +1907,7 @@ def test_terminal_state_with_live_claim_blocks_delete_rerun_and_new_start(
         evaluation_id=evaluation_id,
         lifecycle_status="completed",
     )
-    owner = EvaluationApplication(root, validator=_ready_validator())
+    owner = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     with owner._creation_guard(), owner._lock:
         owner._create_claim(_instance().instance_id, evaluation_id)
         owner._update_claim(
@@ -1915,11 +1917,11 @@ def test_terminal_state_with_live_claim_blocks_delete_rerun_and_new_start(
         )
 
     with patch.object(
-        EvaluationApplication,
+        LocalEvaluationWorker,
         "_pid_matches_evaluation",
         return_value=True,
     ):
-        observer = EvaluationApplication(root, validator=_ready_validator())
+        observer = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
         with pytest.raises(RuntimeError, match="cannot be deleted"):
             observer.delete(evaluation_id)
         with pytest.raises(RuntimeError, match="active evaluation"):
@@ -1946,7 +1948,7 @@ def test_update_readiness_fails_closed_for_invalid_lifecycle_state(
     state_variant: str,
 ) -> None:
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=_ready_validator())
+    application = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     evaluation_id = "eval-update-state"
     _persist_evaluation(
         root,
@@ -1977,7 +1979,7 @@ def test_update_readiness_rejects_terminal_record_with_verified_live_worker(
     pid_source: str,
 ) -> None:
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=_ready_validator())
+    application = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     evaluation_id = "eval-update-live-terminal"
     bot_id = _instance().instance_id
     _persist_evaluation(
@@ -2000,7 +2002,7 @@ def test_update_readiness_rejects_terminal_record_with_verified_live_worker(
             )
 
     with patch.object(
-        EvaluationApplication,
+        LocalEvaluationWorker,
         "_pid_matches_evaluation",
         return_value=True,
     ) as matches_worker:
@@ -2018,7 +2020,7 @@ def test_update_readiness_distinguishes_active_count_from_uncertainty(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=_ready_validator())
+    application = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id="eval-update-active",
@@ -2051,7 +2053,7 @@ def test_maintenance_enter_wins_race_with_start_validation(
         return _ready_validator()(bot, request)
 
     root = tmp_path / "evaluations"
-    application = EvaluationApplication(root, validator=delayed_validator)
+    application = EvaluationApplication(root, validator=delayed_validator, worker=LocalEvaluationWorker())
     request = {
         "kind": "comparison",
         "profile_id": "agent-comparison-mvp",
@@ -2090,7 +2092,7 @@ def test_delete_waits_for_managed_process_and_monitor_tolerates_removal(
         evaluation_id=evaluation_id,
         lifecycle_status="completed",
     )
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     process = Mock()
     process.pid = 4321
     process.stdout = iter(())
@@ -2111,7 +2113,9 @@ def test_delete_waits_for_managed_process_and_monitor_tolerates_removal(
 
     process.poll.return_value = 0
     manager.delete(evaluation_id)
-    manager._monitor(evaluation_id, process, bot_id)
+    manager._worker._wait_owned(process, lambda exit_code: manager._finalize_worker_exit(
+        evaluation_id, bot_id=bot_id, exit_code=exit_code,
+    ))
 
     assert not (root / evaluation_id).exists()
     assert evaluation_id not in manager._processes
@@ -2128,7 +2132,7 @@ def test_application_monitor_does_not_write_worker_log_or_progress(
         evaluation_id=evaluation_id,
         lifecycle_status="completed",
     )
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     process = Mock()
     process.wait.return_value = 0
     manager._processes[evaluation_id] = process
@@ -2141,7 +2145,9 @@ def test_application_monitor_does_not_write_worker_log_or_progress(
         encoding="utf-8",
     )
 
-    manager._monitor(evaluation_id, process, bot_id)
+    manager._worker._wait_owned(process, lambda exit_code: manager._finalize_worker_exit(
+        evaluation_id, bot_id=bot_id, exit_code=exit_code,
+    ))
 
     assert (directory / "run.log").read_text(encoding="utf-8") == "worker-owned\n"
     assert (directory / "progress.jsonl").read_text(encoding="utf-8") == (
@@ -2161,7 +2167,7 @@ def test_worker_finalizer_keeps_claim_when_artifact_integrity_is_unknown(
     root = tmp_path / "evaluations"
     evaluation_id = "eval-finalizer-integrity"
     bot_id = _instance().instance_id
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -2213,7 +2219,7 @@ def test_worker_finalizer_releases_claim_only_after_terminal_state_persists(
     root = tmp_path / "evaluations"
     evaluation_id = "eval-finalizer-write"
     bot_id = _instance().instance_id
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -2266,7 +2272,7 @@ def test_worker_finalizer_does_not_delete_replaced_cancel_marker_inode(
     root = tmp_path / "evaluations"
     evaluation_id = "eval-finalizer-marker-race"
     bot_id = _instance().instance_id
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -2330,7 +2336,7 @@ def test_cancel_marker_writer_uses_canonical_json_for_trial_guard(
 ) -> None:
     root = tmp_path / "evaluations"
     evaluation_id = "eval-canonical-cancel-marker"
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     directory = root / evaluation_id
     directory.mkdir(mode=0o700)
 
@@ -2360,7 +2366,7 @@ def test_get_does_not_expose_terminal_state_before_claim_release(
     root = tmp_path / "evaluations"
     evaluation_id = "eval-terminal-claim-boundary"
     bot_id = _instance().instance_id
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
     _persist_evaluation(
         root,
         evaluation_id=evaluation_id,
@@ -2409,7 +2415,7 @@ def test_application_exposes_no_console_shutdown_hook(
     tmp_path: Path,
 ) -> None:
     root = tmp_path / "evaluations"
-    manager = EvaluationApplication(root, validator=_ready_validator())
+    manager = EvaluationApplication(root, validator=_ready_validator(), worker=LocalEvaluationWorker())
 
     assert not hasattr(manager, "close")
 
@@ -2455,7 +2461,7 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
         summary_path.chmod(0o600)
         progress_path.chmod(0o600)
 
-    manager = EvaluationApplication(root)
+    manager = EvaluationApplication(root, worker=LocalEvaluationWorker())
     with _use_manager(manager):
         client = TestClient(app)
         case = client.get(f"/api/evals/evaluations/{evaluation_id}/cases/ifeval:ifeval-fixed-1075")
@@ -2475,7 +2481,7 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
 
 
 def test_creation_captures_version_once_and_rerun_captures_new_version(tmp_path: Path) -> None:
-    manager = EvaluationApplication(tmp_path / "evaluations", validator=_ready_validator())
+    manager = EvaluationApplication(tmp_path / "evaluations", validator=_ready_validator(), worker=LocalEvaluationWorker())
     first_revision = {"status": "recorded", "commit": "a" * 40, "dirty": True, "captured_at": "2026-09-01T00:00:00Z"}
     second_revision = {**first_revision, "commit": "b" * 40, "captured_at": "2026-09-02T00:00:00Z"}
     request = {"kind": "comparison", "profile_id": "agent-comparison-mvp", "preset": "quick"}

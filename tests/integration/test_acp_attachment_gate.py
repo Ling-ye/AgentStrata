@@ -1,13 +1,14 @@
 """Regression tests for Feishu ACP attachment-only handling."""
 
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent, acp_runtime
+from chatcopilot.middleware.acp import agent_bridge
 
 import asyncio
 import os
 import tempfile
 import unittest
 from pathlib import Path
-from types import SimpleNamespace
 from typing import Any
 from unittest import mock
 
@@ -42,8 +43,8 @@ from chatcopilot.middleware.acp.attachment_pipeline import (
     normalize_cc_connect_wrapper,
     should_short_circuit_attachment_only,
 )
-from chatcopilot.middleware.acp.server import AcpChatAgent, _refresh_session_prompt_plan
-from chatcopilot.middleware.acp.server import _fallback_p2p_workspace_from_sender
+from chatcopilot.middleware.acp.agent_bridge import _refresh_session_prompt_plan
+from chatcopilot.middleware.acp.agent_bridge import _fallback_p2p_workspace_from_sender
 
 
 def render_test_prompt(workspace: Workspace, **kwargs) -> str:
@@ -56,19 +57,6 @@ class _FakeConn:
 
     async def session_update(self, *, session_id: str, update: Any) -> None:
         self.messages.append((session_id, update))
-
-
-def _runtime_context(
-    *,
-    platform_type: str = "qq",
-    tool_features: tuple[str, ...] = (),
-) -> SimpleNamespace:
-    return SimpleNamespace(
-        platform_type=platform_type,
-        tool_features=tool_features,
-        access=None,
-        spec=None,
-    )
 
 
 class AttachmentGateTests(unittest.TestCase):
@@ -285,7 +273,7 @@ class AttachmentGateTests(unittest.TestCase):
                         raise AssertionError(f"run_task should not be called: {task}")
 
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -342,7 +330,7 @@ class AttachmentGateTests(unittest.TestCase):
                         raise AssertionError(f"run_task should not be called: {task}")
 
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {"sid": asyncio.create_task(asyncio.sleep(60))}
@@ -678,9 +666,9 @@ class AttachmentGateTests(unittest.TestCase):
 
         async def run_case() -> None:
             original_update = acp_server.update_agent_message_text
-            original_refresh = acp_server._refresh_session_prompt_plan
+            original_refresh = agent_bridge._refresh_session_prompt_plan
             acp_server.update_agent_message_text = lambda text: text
-            acp_server._refresh_session_prompt_plan = lambda _session, *, memory_query="": None
+            agent_bridge._refresh_session_prompt_plan = lambda _session, *, memory_query="": None
             try:
                 with tempfile.TemporaryDirectory() as tmp:
                     user_ws = Workspace(
@@ -704,7 +692,7 @@ class AttachmentGateTests(unittest.TestCase):
                             stop_reason="end_turn", user_message_id=None
                         )
 
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -733,7 +721,7 @@ class AttachmentGateTests(unittest.TestCase):
                     self.assertEqual(agent._conn.messages, [])
             finally:
                 acp_server.update_agent_message_text = original_update
-                acp_server._refresh_session_prompt_plan = original_refresh
+                agent_bridge._refresh_session_prompt_plan = original_refresh
 
         asyncio.run(run_case())
 
@@ -945,7 +933,7 @@ class AttachmentGateTests(unittest.TestCase):
         async def run_case() -> None:
             original_delay = acp_server._ATTACHMENT_ACK_DEBOUNCE_SEC
             original_update = acp_server.update_agent_message_text
-            original_build_session = acp_server._build_session_for_workspace
+            original_build_session = agent_bridge._build_session_for_workspace
             acp_server._ATTACHMENT_ACK_DEBOUNCE_SEC = 0.02
             acp_server.update_agent_message_text = lambda text: text
             try:
@@ -983,14 +971,14 @@ class AttachmentGateTests(unittest.TestCase):
                         rebuilt.session.run_task = fail_run_task  # type: ignore[method-assign]
                         return rebuilt
 
-                    acp_server._build_session_for_workspace = fake_build_session  # type: ignore[assignment]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent_bridge._build_session_for_workspace = fake_build_session  # type: ignore[assignment]
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
                     agent._agent_runtime = None
-                    agent._runtime = None
+
 
                     with mock.patch.dict(
                         os.environ,
@@ -1025,7 +1013,7 @@ class AttachmentGateTests(unittest.TestCase):
             finally:
                 acp_server._ATTACHMENT_ACK_DEBOUNCE_SEC = original_delay
                 acp_server.update_agent_message_text = original_update
-                acp_server._build_session_for_workspace = original_build_session
+                agent_bridge._build_session_for_workspace = original_build_session
 
         asyncio.run(run_case())
 
@@ -1062,7 +1050,7 @@ class AttachmentGateTests(unittest.TestCase):
                         raise AssertionError(f"run_task should not be called: {task}")
 
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1135,7 +1123,7 @@ class AttachmentGateTests(unittest.TestCase):
                         raise AssertionError(f"run_task should not be called: {task}")
 
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1196,12 +1184,12 @@ class AttachmentGateTests(unittest.TestCase):
                         raise AssertionError(f"run_task should not be called: {task}")
 
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
-                    agent._runtime = _runtime_context(
+                    agent._runtime = acp_runtime(
                         platform_type="feishu",
                         tool_features=("chat.file_uploads", "chat.private_workspace"),
                     )
@@ -1263,12 +1251,12 @@ class AttachmentGateTests(unittest.TestCase):
                         return _AgentResult(final_text="进入普通对话流程", stop_reason="end_turn")
 
                     session.session.run_task = fake_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
-                    agent._runtime = _runtime_context(
+                    agent._runtime = acp_runtime(
                         platform_type="feishu",
                         tool_features=(),
                     )
@@ -1337,7 +1325,7 @@ class AttachmentGateTests(unittest.TestCase):
                         return _AgentResult(final_text="已进入工具流程", stop_reason="end_turn")
 
                     session.session.run_task = fake_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1423,7 +1411,7 @@ class AttachmentGateTests(unittest.TestCase):
                         return _AgentResult(final_text="已进入工具流程", stop_reason="end_turn")
 
                     session.session.run_task = fake_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1494,7 +1482,7 @@ class AttachmentGateTests(unittest.TestCase):
                         raise AssertionError(f"run_task should not be called: {task}")
 
                     session.session.run_task = fail_run_task  # type: ignore[method-assign]
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1559,7 +1547,7 @@ class AttachmentGateTests(unittest.TestCase):
                     ).ensure()
                     filename = "MemoryReport_late.csv"
 
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1665,7 +1653,7 @@ class AttachmentGateTests(unittest.TestCase):
                         workspace=ws,
                         identity=render_test_prompt(ws),
                     )
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
@@ -1706,7 +1694,7 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
@@ -1759,7 +1747,7 @@ class AttachmentGateTests(unittest.TestCase):
                         user_id="ou_test",
                         user_name="tester",
                     ).ensure()
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}
                     agent._attachment_ack_resource_names = {}
@@ -1811,7 +1799,7 @@ class AttachmentGateTests(unittest.TestCase):
                         workspace=user_ws,
                         identity=render_test_prompt(user_ws),
                     )
-                    agent = AcpChatAgent.__new__(AcpChatAgent)
+                    agent = make_acp_agent()
                     agent._sessions = {"sid": session}
                     agent._conn = _FakeConn()
                     agent._attachment_ack_tasks = {}

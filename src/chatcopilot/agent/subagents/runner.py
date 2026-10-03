@@ -44,7 +44,7 @@ from chatcopilot.agent.subagents.task_pack import TaskPack
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter, ToolExecutor
 from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.registry import ToolRegistry
-from chatcopilot.agent.tools.workspace_context import WorkspaceService
+from chatcopilot.core.workspace_context import WorkspaceService
 from chatcopilot.agent.trace import current_trace, new_span_id, new_trace_id
 from chatcopilot.contracts.tool_packs import ToolProvider
 from chatcopilot.contracts.tools import ToolDef

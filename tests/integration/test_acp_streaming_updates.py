@@ -1,5 +1,7 @@
 """Regression tests for ACP streaming updates in the Feishu bridge."""
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent
+from chatcopilot.middleware.acp import agent_bridge
 
 import asyncio
 import unittest
@@ -15,10 +17,9 @@ from chatcopilot.contracts.agent import (
     ToolFinished,
     ToolStarted,
 )
-from chatcopilot.middleware.access_control import AssistantMode
+from chatcopilot.core.access import AssistantMode
 from chatcopilot.middleware.acp import server as acp_server
 from chatcopilot.middleware.acp.lifecycle_barrier import LifecycleExecutionResult
-from chatcopilot.middleware.acp.server import AcpChatAgent
 
 
 class _FakeConn:
@@ -130,13 +131,13 @@ class StreamingUpdateTests(unittest.TestCase):
     ) -> list[Any]:
         async def run_case() -> list[Any]:
             original_update = acp_server.update_agent_message_text
-            original_refresh = acp_server._refresh_session_prompt_plan
-            original_latest_workspace = acp_server._latest_workspace_from_session_env
+            original_refresh = agent_bridge._refresh_session_prompt_plan
+            original_latest_workspace = agent_bridge._latest_workspace_from_session_env
             acp_server.update_agent_message_text = lambda text: text
-            acp_server._refresh_session_prompt_plan = lambda _session, *, memory_query="": None
-            acp_server._latest_workspace_from_session_env = lambda _workspace, *, platform_type: None
+            agent_bridge._refresh_session_prompt_plan = lambda _session, *, memory_query="": None
+            agent_bridge._latest_workspace_from_session_env = lambda _workspace, *, platform_type: None
             try:
-                agent = AcpChatAgent.__new__(AcpChatAgent)
+                agent = make_acp_agent()
                 agent._sessions = {"sid": session}
                 agent._conn = _FakeConn()
                 agent._start_turn_task = (
@@ -162,8 +163,8 @@ class StreamingUpdateTests(unittest.TestCase):
                 return agent._conn.updates
             finally:
                 acp_server.update_agent_message_text = original_update
-                acp_server._refresh_session_prompt_plan = original_refresh
-                acp_server._latest_workspace_from_session_env = original_latest_workspace
+                agent_bridge._refresh_session_prompt_plan = original_refresh
+                agent_bridge._latest_workspace_from_session_env = original_latest_workspace
 
         return asyncio.run(run_case())
 

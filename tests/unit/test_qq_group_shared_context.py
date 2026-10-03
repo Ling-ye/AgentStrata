@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent, acp_runtime
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 
 from tests.prompt_plan_fixture import prompt_input, runtime_route
@@ -23,7 +24,7 @@ import pytest
 from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.tools.builtin import workspace_tools
-from chatcopilot.agent.tools.workspace_context import bind_workspace_service
+from chatcopilot.core.workspace_context import bind_workspace_service
 from chatcopilot.contracts import AssistantMode, Role
 from chatcopilot.contracts.runtime_adapter import (
     RuntimeCapabilities,
@@ -66,7 +67,6 @@ from chatcopilot.middleware.acp.group_conversation import (
     SenderEnvelopeError,
     parse_sender_envelope,
 )
-from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.middleware.acp.turn_orchestrator import AcpTurnOrchestrator
 from chatcopilot.middleware.acp.turn_pipeline import TurnContext
@@ -218,10 +218,10 @@ def test_group_sender_requires_matching_one_shot_transport_attestation(
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
     attestation = _write_group_transport_attestation(
         monkeypatch,
         tmp_path,
@@ -267,10 +267,10 @@ def test_cc_connect_image_suffix_is_normalized_before_group_attestation(
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
     attestation = _write_group_transport_attestation(
         monkeypatch,
         tmp_path,
@@ -324,10 +324,10 @@ def test_user_authored_cc_connect_suffix_cannot_pass_content_attestation(
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
     fake_suffix = "(Image files saved locally: /tmp/.cc-connect/attachments/fake.png)"
     original_body = f"用户原文\n\n{fake_suffix}"
     attestation = _write_group_transport_attestation(
@@ -369,10 +369,10 @@ def test_forged_group_sender_or_user_authored_header_fails_attestation(
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
 
     actor_mismatch = _write_group_transport_attestation(
         monkeypatch,
@@ -422,10 +422,10 @@ def test_qq_private_turn_strips_project_sender_envelope(tmp_path: Path) -> None:
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
 
     same_state, clean_text, identity = agent._prepare_turn_identity(
         session=state,
@@ -459,10 +459,10 @@ def test_qq_private_turn_requires_sender_envelope(tmp_path: Path) -> None:
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
 
     with pytest.raises(SenderEnvelopeError) as raised:
         agent._prepare_turn_identity(
@@ -487,7 +487,7 @@ def test_qq_private_identity_rejection_persists_only_redacted_task(
         user_id=_MEMBER_ID,
         scope="actor",
     ).ensure()
-    runtime = SimpleNamespace(platform_type="qq")
+    runtime = acp_runtime(platform_type="qq")
     state = SessionState(
         session_id=f"qq:{_MEMBER_ID}",
         workspace=workspace,
@@ -495,7 +495,7 @@ def test_qq_private_identity_rejection_persists_only_redacted_task(
         assistant_mode=AssistantMode.PERFORMANCE,
         runtime=runtime,
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._runtime = runtime
     updates: list[dict[str, object]] = []
 
@@ -560,10 +560,10 @@ def test_qq_private_turn_rejects_mismatched_sender_envelope(tmp_path: Path) -> N
         workspace=workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
 
     with pytest.raises(SenderEnvelopeError) as raised:
         agent._prepare_turn_identity(
@@ -712,7 +712,7 @@ def test_group_actor_cache_keeps_role_and_execution_session_actor_scoped(
 ) -> None:
     monkeypatch.setenv("CHATCOPILOT_ADD_OWNER_IDS", _OWNER_ID)
     monkeypatch.delenv("CHATCOPILOT_ADD_ADMIN_IDS", raising=False)
-    runtime = SimpleNamespace(platform_type="qq")
+    runtime = acp_runtime(platform_type="qq")
     shared_workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",
         chat_kind="group",
@@ -727,7 +727,7 @@ def test_group_actor_cache_keeps_role_and_execution_session_actor_scoped(
         runtime=runtime,
     )
     conversation_state.pending_image_names = ("previous-actor.png",)
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._runtime = runtime
     agent._sessions = {}
     agent._group_actor_sessions = {}
@@ -916,7 +916,7 @@ def test_group_actor_cache_is_bounded_and_closes_evicted_backend() -> None:
     for index in range(acp_server._MAX_GROUP_ACTORS_PER_SESSION + 1):
         key = ("sid", str(index))
         cache[key] = SimpleNamespace(session=_BackendSession(str(index)))
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
 
     agent._evict_group_actor_sessions(cache, session_id="sid")
 
@@ -974,7 +974,7 @@ def test_shared_transcript_uses_protected_pseudonymous_storage_identity(
 def test_identity_rejected_group_message_creates_redacted_intake_task(
     tmp_path: Path,
 ) -> None:
-    runtime = SimpleNamespace(platform_type="qq")
+    runtime = acp_runtime(platform_type="qq")
     shared_workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",
         chat_kind="group",
@@ -990,7 +990,7 @@ def test_identity_rejected_group_message_creates_redacted_intake_task(
         assistant_mode=AssistantMode.PERFORMANCE,
         runtime=runtime,
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._runtime = runtime
     agent._sessions = {"qq-rejected-session": conversation_state}
     agent._group_actor_sessions = {}
@@ -1082,7 +1082,7 @@ def test_delayed_attachment_ack_stays_bound_to_original_actor(
 
     owner_session = _ActorSession(_OWNER_ID)
     member_session = _ActorSession(_MEMBER_ID)
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     agent._conn = _Connection()
     agent._sessions = {"qq-group-session": member_session}
     owner_ack_key = agent._attachment_ack_key(
@@ -1353,10 +1353,10 @@ def test_group_turn_tasks_and_owner_jobs_use_protected_actor_storage(
         workspace=member_workspace,
         role=Role.USER,
         assistant_mode=AssistantMode.PERFORMANCE,
-        runtime=SimpleNamespace(platform_type="qq"),
+        runtime=acp_runtime(platform_type="qq"),
         execution_session_id="group-session.actor.member",
     )
-    agent = AcpChatAgent.__new__(AcpChatAgent)
+    agent = make_acp_agent()
     recorder = agent._start_turn_task(
         session=member_state,
         session_id="group-session",

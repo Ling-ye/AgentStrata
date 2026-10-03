@@ -69,9 +69,17 @@ Application 只通过 `AgentRuntime.open_session()` 取得显式的公开 sessio
 
 `agent/mcp/client.py`、`agent/tools/builtin/workspace_tools.py`、`agent/subagents/registry.py`、`agent/search/coordinator.py` 是稳定入口；新增职责放到同层子模块，不把 runner/stateless/serialization/workspace handler/subagent definition/delegate/workflow/search factory/circuit/result helper 逻辑塞回 facade。
 
+工作区工具入口直接绑定职责模块的 handler，不在执行时同步或回写其他模块的全局变量。
+ACP 的平台与能力来自完整装配的 runtime；测试通过显式 runtime 和依赖构造对象，
+不要求生产代码为跳过初始化的对象补默认能力。
+
 ## 当前导出与 Legacy 退出
 
 内部代码使用 canonical imports：`core.config` / `core.llm_client` / `core.concurrency`、`core.mcp_catalog`、`core.workspace_runtime`、`component_catalog`、`contracts.agent` 和 `agent.search`。旧主 Codex TCP/MCP session relay 已由 dynamicTools 替代，不能恢复旧模块、空存根或动态回退。worker 协议仍独立维护。
+
+访问策略、工作区上下文和工具契约分别使用 `core.access`、`core.workspace_context` 和
+`contracts.tools`。旧 research 包及名称别名、转发导入和 Contracts 中的组件名称快照
+已退出；组件目录查询统一使用 `component_catalog`。
 
 ## Subagent 是 Agent 层基础能力
 
@@ -111,7 +119,7 @@ Native/LangGraph 复用 `agent/turn.py` 的 `TurnOps`；主 Codex 将 App Server
 
 ## Task pack
 
-新委托使用 `objective/user_intent/deliverable/constraints/inputs/resources/acceptance_criteria/evidence_required/write_scope/excluded_context/cache_key_hint`；旧 `task` 只作为兼容别名。
+新委托使用 `objective/user_intent/deliverable/constraints/inputs/resources/acceptance_criteria/evidence_required/write_scope/excluded_context/cache_key_hint`；仅接受现行结构化字段，旧 `task` 字段不再接受。
 
 ## Codex mutation 与 PR 交付
 

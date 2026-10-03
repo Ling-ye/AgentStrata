@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict
 
-from chatcopilot.agent.tools.workspace_context import cleanup_workspace
+from chatcopilot.core.workspace_context import cleanup_workspace
 
 def _require(args: Dict[str, Any], key: str) -> str:
     value = args.get(key)

@@ -99,3 +99,38 @@ def test_file_sender_checks_aggregate_budget_before_dispatch(tmp_path, monkeypat
     with pytest.raises(ValueError, match="combined byte budget"):
         sender([str(p) for p in paths], "")
     dispatch.assert_not_called()
+
+
+@pytest.mark.parametrize("planned,stages,accepted", [
+    (1, ("provider_acknowledged",), True),
+    (3, ("provider_acknowledged",) * 3, True),
+    (3, ("provider_acknowledged",), False),
+    (2, ("provider_acknowledged", "delivery_unknown"), False),
+    (1, ("provider_acknowledged",) * 2, False),
+    (0, (), False),
+])
+def test_file_delivery_checks_planned_requests_not_segment_count(tmp_path, planned, stages, accepted):
+    from chatcopilot.application.file_delivery import create_file_sender
+    from chatcopilot.contracts.gateway import DeliveryBatchResult, DeliveryReceipt
+
+    workspace = Workspace(root=tmp_path, chat_kind="p2p", chat_id=None, user_id="owner")
+    for name in ("one.txt", "two.txt"):
+        (tmp_path / name).write_text(name)
+    calls = []
+
+    def dispatch(segments):
+        calls.append(segments)
+        assert len(segments) == 3
+        return DeliveryBatchResult(planned, tuple(
+            DeliveryReceipt(f"receipt-{index}", f"outbound-{index}", stage, 1.0)
+            for index, stage in enumerate(stages)
+        ))
+
+    sender = create_file_sender(workspace, dispatch)
+    if accepted:
+        result = sender(["one.txt", "two.txt"], "documents")
+        assert result.sent_names == ("one.txt", "two.txt")
+    else:
+        with pytest.raises(RuntimeError, match="acknowledgement is incomplete"):
+            sender(["one.txt", "two.txt"], "documents")
+    assert len(calls) == 1

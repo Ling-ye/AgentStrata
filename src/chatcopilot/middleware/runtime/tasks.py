@@ -1,31 +1,21 @@
-"""Per-turn task progress records for the console UI."""
-
+"""Turn progress and completion service; storage and projections have separate owners."""
 from __future__ import annotations
-
 import contextvars
 import hashlib
-import json
 import logging
 import math
-import os
-import re
-import stat
 import threading
 import time
 import uuid
-from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional
-
+from typing import Any, Dict, List, Optional
 from chatcopilot.contracts.identity import stable_actor_ref
 from chatcopilot.contracts.persona_control import PersonaDraftResult
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
-from chatcopilot.core.jobs import read_json_file, write_json_atomic
 from chatcopilot.core.observability_redaction import (
     collect_observability_secrets,
     default_observability_roots,
-    load_bounded_observability_json,
     omit_local_resource_paths,
     omit_private_reasoning_messages,
     redact_observability_payload,
@@ -34,607 +24,29 @@ from chatcopilot.middleware.runtime.task_forecast import (
     FORECAST_VERSION,
     forecast_llm_usage,
     forecast_task_usage,
-    load_task_history,
-    normalize_usage,
 )
 from chatcopilot.core.workspace_runtime import Workspace
-
-TASK_SCHEMA_VERSION = 2
-TASKS_DIRNAME = "tasks"
-TASK_FILENAME = "task.json"
-EVENTS_FILENAME = "events.jsonl"
-EVENT_SEQUENCE_FILENAME = ".events.sequence"
-COMPLETION_LOCK_FILENAME = ".completion.lock"
-TURN_FILENAME = "turn.json"
-CONTEXTS_DIRNAME = "contexts"
-GROUP_TASK_ACTORS_DIRNAME = "task-actors"
-GROUP_TASK_INTAKE_DIRNAME = "task-intake"
-MAX_CONTEXT_ARTIFACT_BYTES = 8 * 1024 * 1024
-ACTIVITY_SUMMARY_WRITE_INTERVAL_SECONDS = 0.25
-MAX_PROVIDER_ACTIVITY_SUMMARIES = 500
-MAX_PROVIDER_ACTIVITY_RAW_EVENTS = MAX_PROVIDER_ACTIVITY_SUMMARIES * 2
-MAX_TASK_TOOL_SUMMARIES = 1000
-MAX_TASK_STEP_SUMMARIES = 1000
-MAX_TASK_LLM_CALL_SUMMARIES = 1000
-MAX_TASK_CONTEXT_SNAPSHOT_SUMMARIES = 5000
-MAX_TASK_INPUT_RESOURCE_SUMMARIES = 500
-MAX_INPUT_RESOURCES_PER_SUMMARY = 20
-MAX_TASK_EVENT_BYTES = 64 * 1024
-MAX_EVENT_SEQUENCE = (1 << 63) - 1
-MAX_USAGE_TOTAL = (1 << 63) - 1
-MAX_TASK_SUMMARY_BYTES = 8 * 1024 * 1024
-MAX_JOB_RESULT_SUMMARIES = 1000
-MAX_JOB_RESULT_OUTPUTS = 8
-MAX_JOB_RESULT_TEXT_CHARS = 1024
-MAX_JOB_RESULT_OUTPUT_CHARS = 512
-_MAX_EVENT_SEQUENCE_STATE_BYTES = len(str(MAX_EVENT_SEQUENCE))
-_EVENT_LOCK_TIMEOUT_SECONDS = 0.25
-_COMPLETION_LOCK_TIMEOUT_SECONDS = 5.0
-_LOGGER = logging.getLogger(__name__)
-_PROVIDER_ACTIVITY_KINDS = frozenset(
-    {
-        "command",
-        "reasoning",
-        "mcp_tool",
-        "web_search",
-        "file_change",
-        "plan",
-        "provider_event",
-    }
+from . import task_projection as _projection
+from . import task_storage as _storage
+from .task_projection import (
+    MAX_PROVIDER_ACTIVITY_RAW_EVENTS as MAX_PROVIDER_ACTIVITY_RAW_EVENTS,
+    TASKS_DIRNAME as TASKS_DIRNAME,
+    TASK_FILENAME as TASK_FILENAME,
+    TASK_SCHEMA_VERSION as TASK_SCHEMA_VERSION,
+    describe_user_text as describe_user_text,
 )
-_PROVIDER_OMISSION_KIND = "provider_omission"
-_JOB_ID_RE = re.compile(r"\bjob_\d{8}_\d{6}_[0-9a-fA-F]{8}\b")
-_TASK_ID_RE = re.compile(r"^task_[A-Za-z0-9_.-]{1,159}$")
-_CONTEXT_ID_RE = re.compile(r"^ctx_[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
-_ARTIFACT_SEGMENT_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,119}$")
-_TRUNCATED_ORIGINAL_CHARS_RE = re.compile(r"\[ORIGINAL_CHARS=(\d+)\]")
+from .task_storage import (
+    group_task_actor_root as group_task_actor_root,
+    group_task_intake_root as group_task_intake_root,
+)
+
+
+_LOGGER = logging.getLogger(__name__)
 
 
 def make_task_id(now: Optional[float] = None) -> str:
     ts = time.localtime(time.time() if now is None else now)
     return f"task_{time.strftime('%Y%m%d_%H%M%S', ts)}_{uuid.uuid4().hex[:8]}"
-
-
-def describe_user_text(text: str, *, limit: int = 120) -> str:
-    first_line = next((line.strip() for line in (text or "").splitlines() if line.strip()), "")
-    if not first_line:
-        return "（空消息）"
-    return first_line if len(first_line) <= limit else first_line[: limit - 1] + "…"
-
-
-def group_task_actor_root(workspace: Workspace, *, create: bool = False) -> Path:
-    """Return the protected per-actor observability root for a shared group.
-
-    The shared workspace is intentionally member-writable.  Turn diagnostics
-    can contain tool summaries, model metadata and host-path receipts, so they
-    must live in the protected conversation sibling and remain partitioned by
-    the authenticated transport actor.  The raw actor ID never becomes a path
-    segment.
-    """
-
-    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-        return workspace.root
-    if workspace.root.name != "shared" or not workspace.chat_id or not workspace.user_id:
-        raise ValueError("shared-group task storage requires stable chat and actor identities")
-    actor_digest = hashlib.sha256(
-        (f"{workspace.chat_kind or 'group'}\0{workspace.chat_id}\0{workspace.user_id}").encode(
-            "utf-8"
-        )
-    ).hexdigest()
-    state_root = workspace.root.parent / ".conversation-state"
-    actors_root = state_root / GROUP_TASK_ACTORS_DIRNAME
-    actor_root = actors_root / actor_digest
-    if create:
-        for path in (state_root, actors_root, actor_root):
-            if path.is_symlink():
-                raise RuntimeError("protected group task directory must not be a symlink")
-            path.mkdir(mode=0o700, parents=True, exist_ok=True)
-            if not path.is_dir() or path.is_symlink():
-                raise RuntimeError("protected group task path must be a real directory")
-            path.chmod(0o700)
-            info = path.stat()
-            if os.name == "posix" and (
-                info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
-            ):
-                raise RuntimeError("protected group task directory must be owner-only")
-    return actor_root
-
-
-def group_task_intake_root(workspace: Workspace, *, create: bool = False) -> Path:
-    """Return protected storage for a shared-group message without trusted actor ID.
-
-    Identity-rejected inbound messages still need an auditable Console task, but
-    their untrusted sender envelope must never choose an actor partition.  This
-    group-level intake root stores only a generic, redacted rejection record.
-    """
-
-    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-        return workspace.root
-    if workspace.root.name != "shared" or not workspace.chat_id:
-        raise ValueError("shared-group intake storage requires a stable chat identity")
-    state_root = workspace.root.parent / ".conversation-state"
-    intake_root = state_root / GROUP_TASK_INTAKE_DIRNAME
-    if create:
-        for path in (state_root, intake_root):
-            if path.is_symlink():
-                raise RuntimeError("protected group intake directory must not be a symlink")
-            path.mkdir(mode=0o700, parents=True, exist_ok=True)
-            if not path.is_dir() or path.is_symlink():
-                raise RuntimeError("protected group intake path must be a real directory")
-            path.chmod(0o700)
-            info = path.stat()
-            if os.name == "posix" and (
-                info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o700
-            ):
-                raise RuntimeError("protected group intake directory must be owner-only")
-    return intake_root
-
-
-def _workspace_payload(
-    workspace: Workspace,
-    *,
-    redact_identity: bool = False,
-    unauthenticated_intake: bool = False,
-) -> Dict[str, Any]:
-    shared_group = workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
-    actor_ref = (
-        stable_actor_ref(
-            "qq",
-            workspace.user_id or "",
-            conversation_id=f"{workspace.chat_kind or ''}:{workspace.chat_id or ''}",
-        )
-        if workspace.user_id
-        and not (unauthenticated_intake and shared_group)
-        and (shared_group or redact_identity)
-        else None
-    )
-    return {
-        "root": str(workspace.root),
-        "chat_kind": workspace.chat_kind,
-        "chat_id": None if shared_group or redact_identity else workspace.chat_id,
-        "user_id": None if shared_group or redact_identity else workspace.user_id,
-        "user_name": None if shared_group or redact_identity else workspace.user_name,
-        "actor_ref": actor_ref,
-    }
-
-
-def _resolve_task_observability_root(
-    workspace: Workspace,
-    history_root: Path | None,
-) -> Path:
-    configured_workspace = workspace.root.expanduser()
-    try:
-        workspace_info = configured_workspace.lstat()
-    except FileNotFoundError:
-        workspace_info = None
-    if workspace_info is not None and (
-        stat.S_ISLNK(workspace_info.st_mode)
-        or not stat.S_ISDIR(workspace_info.st_mode)
-        or (os.name == "posix" and workspace_info.st_uid != os.geteuid())
-    ):
-        raise ValueError("task workspace root must be a real directory owned by the current user")
-    workspace_root = configured_workspace.resolve()
-    if history_root is None:
-        return workspace_root
-    configured_root = history_root.expanduser()
-    try:
-        configured_info = configured_root.lstat()
-    except FileNotFoundError:
-        configured_info = None
-    if configured_info is not None and (
-        stat.S_ISLNK(configured_info.st_mode)
-        or not stat.S_ISDIR(configured_info.st_mode)
-        or (os.name == "posix" and configured_info.st_uid != os.geteuid())
-    ):
-        raise ValueError("task history root must be a real directory owned by the current user")
-    trusted_root = configured_root.resolve()
-    try:
-        workspace_root.relative_to(trusted_root)
-    except ValueError as exc:
-        raise ValueError("task workspace must be contained by its history root") from exc
-    return trusted_root
-
-
-def _materialize_private_task_workspace(
-    workspace: Workspace,
-    *,
-    history_root: Path | None,
-    observability_root: Path,
-) -> None:
-    """Create only a private p2p task root when the admitted workspace is still lazy."""
-
-    configured_workspace = workspace.root.expanduser()
-    try:
-        workspace_info = configured_workspace.lstat()
-    except FileNotFoundError:
-        workspace_info = None
-    if workspace_info is not None:
-        if (
-            stat.S_ISLNK(workspace_info.st_mode)
-            or not stat.S_ISDIR(workspace_info.st_mode)
-            or (os.name == "posix" and workspace_info.st_uid != os.geteuid())
-        ):
-            raise OSError("task workspace root is unsafe")
-        return
-    workspace_root = configured_workspace.resolve()
-    if history_root is None:
-        raise OSError("missing task history root for an unmaterialized workspace")
-
-    observability_root.mkdir(mode=0o700, parents=True, exist_ok=True)
-    root_info = observability_root.lstat()
-    if (
-        stat.S_ISLNK(root_info.st_mode)
-        or not stat.S_ISDIR(root_info.st_mode)
-        or (os.name == "posix" and root_info.st_uid != os.geteuid())
-    ):
-        raise OSError("task history root is unsafe")
-
-    relative = workspace_root.relative_to(observability_root)
-    if os.name != "posix":  # pragma: no cover - native Windows validation required
-        current = observability_root
-        for part in relative.parts:
-            current = current / part
-            try:
-                current_info = current.lstat()
-            except FileNotFoundError:
-                current.mkdir(mode=0o700)
-                current_info = current.lstat()
-            if stat.S_ISLNK(current_info.st_mode) or not stat.S_ISDIR(current_info.st_mode):
-                raise OSError("task workspace path is unsafe")
-            _chmod_private(current, 0o700)
-        return
-
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    directory_fd = os.open(observability_root, flags)
-    try:
-        current = os.fstat(directory_fd)
-        if (
-            not stat.S_ISDIR(current.st_mode)
-            or current.st_uid != os.geteuid()
-            or (current.st_dev, current.st_ino) != (root_info.st_dev, root_info.st_ino)
-        ):
-            raise OSError("task history root identity is unsafe")
-        for part in relative.parts:
-            child_fd = _open_private_child_dir_at(directory_fd, part, create=True)
-            os.close(directory_fd)
-            directory_fd = child_fd
-    finally:
-        os.close(directory_fd)
-
-
-def _replace_identity_literals(value: Any, literals: tuple[str, ...]) -> Any:
-    if isinstance(value, str):
-        safe = value
-        for literal in sorted(set(literals), key=len, reverse=True):
-            safe = safe.replace(literal, "[REDACTED_IDENTITY]")
-        return safe
-    if isinstance(value, list):
-        return [_replace_identity_literals(item, literals) for item in value]
-    if isinstance(value, dict):
-        return {
-            _replace_identity_literals(key, literals): _replace_identity_literals(
-                item,
-                literals,
-            )
-            for key, item in value.items()
-        }
-    return value
-
-
-def _redact_workspace_identity(
-    payload: Any,
-    workspace: Workspace,
-    *,
-    force: bool = False,
-) -> Any:
-    if not force and workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-        return payload
-    literals = tuple(
-        value
-        for value in (
-            workspace.chat_id,
-            workspace.user_id,
-            workspace.user_name,
-        )
-        if value
-    )
-    return _replace_identity_literals(payload, literals)
-
-
-def _redact_group_turn_content(
-    payload: Any,
-    workspace: Workspace,
-    *,
-    user_text: str,
-    message_id: str | None,
-) -> Any:
-    if workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-        return payload
-
-    def redact(value: Any) -> Any:
-        if isinstance(value, str):
-            safe = value
-            if message_id:
-                safe = safe.replace(message_id, "[REDACTED_MESSAGE]")
-            if user_text:
-                safe = safe.replace(user_text, "[REDACTED_GROUP_TURN_TEXT]")
-            return safe
-        if isinstance(value, list):
-            return [redact(item) for item in value]
-        if isinstance(value, dict):
-            return {key: redact(item) for key, item in value.items()}
-        return value
-
-    return redact(payload)
-
-
-def _extract_job_ids(*parts: object) -> List[str]:
-    found: List[str] = []
-    seen: set[str] = set()
-    for part in parts:
-        text = part if isinstance(part, str) else json.dumps(part, ensure_ascii=False, default=str)
-        for job_id in _JOB_ID_RE.findall(text):
-            if job_id not in seen:
-                found.append(job_id)
-                seen.add(job_id)
-    return found
-
-
-def _empty_usage_totals() -> Dict[str, Any]:
-    return {
-        "prompt_tokens": 0,
-        "completion_tokens": 0,
-        "total_tokens": 0,
-        "reasoning_tokens": 0,
-        "cached_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "llm_calls": 0,
-        "cache_hit_calls": 0,
-        "cache_hit_rate": 0.0,
-        "cache_hit_call_rate": 0.0,
-    }
-
-
-def _saturating_nonnegative_add(left: Any, right: Any) -> int:
-    def bounded(value: Any) -> int:
-        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-            return 0
-        return min(value, MAX_USAGE_TOTAL)
-
-    return min(MAX_USAGE_TOTAL, bounded(left) + bounded(right))
-
-
-def _open_private_child_dir_at(
-    parent_fd: int,
-    name: str,
-    *,
-    create: bool,
-) -> int:
-    if not name or Path(name).name != name or name in {".", ".."}:
-        raise OSError("private directory name is invalid")
-    if create:
-        try:
-            os.mkdir(name, 0o700, dir_fd=parent_fd)
-        except FileExistsError:
-            pass
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(name, flags, dir_fd=parent_fd)
-    try:
-        current = os.fstat(fd)
-        if not stat.S_ISDIR(current.st_mode):
-            raise OSError("private observability directory is not a directory")
-        if os.name == "posix" and current.st_uid != os.geteuid():
-            raise OSError("private observability directory has an unexpected owner")
-        if stat.S_IMODE(current.st_mode) != 0o700:
-            os.fchmod(fd, 0o700)
-            current = os.fstat(fd)
-        if (
-            not stat.S_ISDIR(current.st_mode)
-            or (os.name == "posix" and current.st_uid != os.geteuid())
-            or stat.S_IMODE(current.st_mode) != 0o700
-        ):
-            raise OSError("private observability directory could not be secured")
-        return fd
-    except Exception:
-        os.close(fd)
-        raise
-
-
-def _open_private_task_dir(task_dir: Path, *, create: bool) -> int | None:
-    task_id = task_dir.name
-    tasks_dir = task_dir.parent
-    workspace_root = tasks_dir.parent
-    if tasks_dir.name != TASKS_DIRNAME or not _TASK_ID_RE.fullmatch(task_id):
-        raise OSError("task observability path is invalid")
-
-    if os.name != "posix":  # pragma: no cover - native Windows validation required
-        workspace_stat = workspace_root.lstat()
-        if stat.S_ISLNK(workspace_stat.st_mode) or not stat.S_ISDIR(workspace_stat.st_mode):
-            raise OSError("workspace root must be a real directory")
-        for directory in (tasks_dir, task_dir):
-            try:
-                current = directory.lstat()
-            except FileNotFoundError:
-                if not create:
-                    raise
-                directory.mkdir(mode=0o700)
-                current = directory.lstat()
-            if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
-                raise OSError("private observability directory must be a real directory")
-            _chmod_private(directory, 0o700)
-            _require_private_path(directory, mode=0o700, directory=True)
-        return None
-
-    expected_root = workspace_root.lstat()
-    if stat.S_ISLNK(expected_root.st_mode) or not stat.S_ISDIR(expected_root.st_mode):
-        raise OSError("workspace root must be a real directory")
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    root_fd = os.open(workspace_root, flags)
-    tasks_fd: int | None = None
-    try:
-        current_root = os.fstat(root_fd)
-        if (
-            not stat.S_ISDIR(current_root.st_mode)
-            or (current_root.st_dev, current_root.st_ino)
-            != (expected_root.st_dev, expected_root.st_ino)
-            or current_root.st_uid != os.geteuid()
-        ):
-            raise OSError("workspace root identity is unsafe")
-        tasks_fd = _open_private_child_dir_at(
-            root_fd,
-            TASKS_DIRNAME,
-            create=create,
-        )
-        return _open_private_child_dir_at(tasks_fd, task_id, create=create)
-    finally:
-        if tasks_fd is not None:
-            os.close(tasks_fd)
-        os.close(root_fd)
-
-
-def _private_json_bytes(payload: Dict[str, Any]) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        indent=2,
-        sort_keys=True,
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def _write_private_json_at(dir_fd: int, name: str, payload: Dict[str, Any]) -> None:
-    if not name or Path(name).name != name or name in {".", ".."}:
-        raise OSError("private artifact name is invalid")
-    encoded = _private_json_bytes(payload)
-    if len(encoded) > MAX_CONTEXT_ARTIFACT_BYTES:
-        raise ValueError("private observability artifact exceeds the hard size limit")
-    temp_name = f".{name}.{uuid.uuid4().hex}.tmp"
-    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    temp_exists = False
-    try:
-        fd = os.open(temp_name, flags, 0o600, dir_fd=dir_fd)
-        temp_exists = True
-        try:
-            current = os.fstat(fd)
-            if (
-                not stat.S_ISREG(current.st_mode)
-                or current.st_nlink != 1
-                or (os.name == "posix" and current.st_uid != os.geteuid())
-            ):
-                raise OSError("private temporary artifact is unsafe")
-            os.fchmod(fd, 0o600)
-            remaining = memoryview(encoded)
-            while remaining:
-                written = os.write(fd, remaining)
-                if written <= 0:
-                    raise OSError("failed to write private observability artifact")
-                remaining = remaining[written:]
-            os.fsync(fd)
-        finally:
-            os.close(fd)
-
-        try:
-            existing = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            existing = None
-        if existing is not None and (
-            not stat.S_ISREG(existing.st_mode)
-            or existing.st_nlink != 1
-            or (os.name == "posix" and existing.st_uid != os.geteuid())
-        ):
-            raise OSError("existing private observability artifact is unsafe")
-        os.replace(temp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        temp_exists = False
-    finally:
-        if temp_exists:
-            try:
-                os.unlink(temp_name, dir_fd=dir_fd)
-            except FileNotFoundError:
-                pass
-
-
-def _read_private_json_at(
-    dir_fd: int,
-    name: str,
-    *,
-    max_bytes: int = MAX_TASK_SUMMARY_BYTES,
-) -> Dict[str, Any] | None:
-    if not name or Path(name).name != name or name in {".", ".."}:
-        return None
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = os.open(name, flags, dir_fd=dir_fd)
-    except FileNotFoundError:
-        return None
-    try:
-        current = os.fstat(fd)
-        if (
-            not stat.S_ISREG(current.st_mode)
-            or current.st_nlink != 1
-            or current.st_size > max_bytes
-            or (os.name == "posix" and current.st_uid != os.geteuid())
-        ):
-            return None
-        chunks: list[bytes] = []
-        remaining = current.st_size + 1
-        while remaining > 0:
-            chunk = os.read(fd, min(64 * 1024, remaining))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        if sum(len(chunk) for chunk in chunks) > max_bytes:
-            return None
-        loaded = load_bounded_observability_json(
-            b"".join(chunks),
-            max_bytes=max_bytes,
-        )
-        if not loaded.ok:
-            return None
-        payload = loaded.value
-    except OSError:
-        return None
-    finally:
-        os.close(fd)
-    return payload if isinstance(payload, dict) else None
-
-
-def _read_private_task_json(task_dir: Path, name: str) -> Dict[str, Any] | None:
-    task_dir_fd = _open_private_task_dir(task_dir, create=False)
-    try:
-        if task_dir_fd is None:  # pragma: no cover - native Windows validation required
-            return read_json_file(task_dir / name)
-        return _read_private_json_at(task_dir_fd, name)
-    finally:
-        if task_dir_fd is not None:
-            os.close(task_dir_fd)
-
-
-def _write_private_task_json(
-    task_dir: Path,
-    name: str,
-    payload: Dict[str, Any],
-    *,
-    create: bool = False,
-) -> None:
-    bounded_payload = _bounded_task_or_turn_document(name, payload)
-    task_dir_fd = _open_private_task_dir(task_dir, create=create)
-    try:
-        if task_dir_fd is None:  # pragma: no cover - native Windows validation required
-            target = task_dir / name
-            write_json_atomic(target, bounded_payload)
-            _chmod_private(target, 0o600)
-            _require_private_path(target, mode=0o600, directory=False)
-        else:
-            _write_private_json_at(task_dir_fd, name, bounded_payload)
-    finally:
-        if task_dir_fd is not None:
-            os.close(task_dir_fd)
 
 
 @dataclass
@@ -655,7 +67,7 @@ class TurnTaskRecorder:
     _context_snapshots: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _input_resources: List[Dict[str, Any]] = field(default_factory=list, init=False, repr=False)
     _usage_totals: Dict[str, Any] = field(
-        default_factory=_empty_usage_totals, init=False, repr=False
+        default_factory=_projection._empty_usage_totals, init=False, repr=False
     )
     _job_ids: List[str] = field(default_factory=list, init=False, repr=False)
     _status: str = field(default="running", init=False, repr=False)
@@ -676,24 +88,24 @@ class TurnTaskRecorder:
     _provider_omission_event_written: bool = field(default=False, init=False, repr=False)
 
     def __post_init__(self) -> None:
-        self._observability_root = _resolve_task_observability_root(
+        self._observability_root = _storage._resolve_task_observability_root(
             self.workspace,
             self.history_root,
         )
         if self.unauthenticated_intake and self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
-            storage_root = group_task_intake_root(self.workspace, create=True)
+            storage_root = _storage.group_task_intake_root(self.workspace, create=True)
         else:
             if self.workspace.scope != WORKSPACE_SCOPE_GROUP_SHARED:
-                _materialize_private_task_workspace(
+                _storage._materialize_private_task_workspace(
                     self.workspace,
                     history_root=self.history_root,
                     observability_root=self._observability_root,
                 )
-            storage_root = group_task_actor_root(
+            storage_root = _storage.group_task_actor_root(
                 self.workspace,
                 create=self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
             )
-        self._path = storage_root / TASKS_DIRNAME / self.task_id / TASK_FILENAME
+        self._path = storage_root / _projection.TASKS_DIRNAME / self.task_id / _projection.TASK_FILENAME
         self._forecast = {
             "status": "insufficient",
             "model": "",
@@ -727,7 +139,7 @@ class TurnTaskRecorder:
         progress: Optional[str] = None,
         finished_at: Optional[float] = None,
     ) -> None:
-        with _task_completion_lock(self._path.parent, create=True):
+        with _storage._task_completion_lock(self._path.parent, create=True):
             self._apply_write_state(
                 status=status,
                 progress=progress,
@@ -759,18 +171,18 @@ class TurnTaskRecorder:
         recorder's older in-memory view.
         """
 
-        persisted = _read_private_task_json(self._path.parent, TASK_FILENAME)
+        persisted = _storage._read_private_task_json(self._path.parent, _projection.TASK_FILENAME)
         if not isinstance(persisted, dict):
             return
 
         ordered_ids = [
             job_id
             for job_id in self._job_ids
-            if isinstance(job_id, str) and _JOB_ID_RE.fullmatch(job_id)
+            if isinstance(job_id, str) and _projection._JOB_ID_RE.fullmatch(job_id)
         ]
         for raw_job_id in persisted.get("job_ids") or []:
             job_id = str(raw_job_id or "")
-            if _JOB_ID_RE.fullmatch(job_id) and job_id not in ordered_ids:
+            if _projection._JOB_ID_RE.fullmatch(job_id) and job_id not in ordered_ids:
                 ordered_ids.append(job_id)
 
         summaries: Dict[str, Dict[str, Any]] = {}
@@ -781,7 +193,7 @@ class TurnTaskRecorder:
                 if not isinstance(raw_summary, dict):
                     continue
                 job_id = str(raw_summary.get("job_id") or "")
-                if not _JOB_ID_RE.fullmatch(job_id):
+                if not _projection._JOB_ID_RE.fullmatch(job_id):
                     continue
                 summaries[job_id] = dict(raw_summary)
                 if job_id not in ordered_ids:
@@ -818,9 +230,9 @@ class TurnTaskRecorder:
             payload,
             retain_group_current_text=True,
         )
-        _write_private_task_json(
+        _storage._write_private_task_json(
             self._path.parent,
-            TASK_FILENAME,
+            _projection.TASK_FILENAME,
             safe_payload,
             create=True,
         )
@@ -829,7 +241,7 @@ class TurnTaskRecorder:
     def _write_activity_progress(self, progress: str) -> None:
         """Bound task.json rewrites while raw activity events remain append-only."""
         self._progress = progress
-        if time.monotonic() - self._last_summary_write_at < ACTIVITY_SUMMARY_WRITE_INTERVAL_SECONDS:
+        if time.monotonic() - self._last_summary_write_at < _projection.ACTIVITY_SUMMARY_WRITE_INTERVAL_SECONDS:
             return
         self.write()
 
@@ -847,7 +259,7 @@ class TurnTaskRecorder:
             and isinstance(payload, dict)
         ):
             expected = {
-                "description": describe_user_text(self.user_text),
+                "description": _projection.describe_user_text(self.user_text),
                 "user_text": self.user_text,
             }
             retained = {
@@ -857,7 +269,7 @@ class TurnTaskRecorder:
             }
         prepared = payload
         if not self.redact_identity:
-            prepared = _redact_group_turn_content(
+            prepared = _projection._redact_group_turn_content(
                 payload,
                 self.workspace,
                 user_text=self.user_text,
@@ -866,13 +278,13 @@ class TurnTaskRecorder:
         if retained and isinstance(prepared, dict):
             prepared = {**prepared, **retained}
         if self.redact_identity and self.message_id:
-            prepared = _replace_identity_literals(prepared, (self.message_id,))
+            prepared = _projection._replace_identity_literals(prepared, (self.message_id,))
         result = redact_observability_payload(
             prepared,
             secrets=collect_observability_secrets(),
             roots=default_observability_roots(self._observability_root),
         )
-        return _redact_workspace_identity(
+        return _projection._redact_workspace_identity(
             result.value,
             self.workspace,
             force=self.redact_identity,
@@ -921,9 +333,9 @@ class TurnTaskRecorder:
             "summary": "",
             "error": None,
             "metadata": dict(metadata or {}),
-            "estimated_usage": normalize_usage(estimated_usage),
-            "actual_usage": normalize_usage({}),
-            "inclusive_usage": normalize_usage({}),
+            "estimated_usage": _projection.normalize_usage(estimated_usage),
+            "actual_usage": _projection.normalize_usage({}),
+            "inclusive_usage": _projection.normalize_usage({}),
             "raw_event_types": [raw_event],
         }
         self._steps.append(step)
@@ -950,7 +362,7 @@ class TurnTaskRecorder:
         step["summary"] = summary or ""
         step["error"] = error
         if actual_usage is not None:
-            step["actual_usage"] = normalize_usage(actual_usage)
+            step["actual_usage"] = _projection.normalize_usage(actual_usage)
         if raw_event not in step["raw_event_types"]:
             step["raw_event_types"].append(raw_event)
         self._refresh_inclusive_usage()
@@ -965,9 +377,9 @@ class TurnTaskRecorder:
         def inclusive(step: Dict[str, Any], seen: set[str]) -> Dict[str, int]:
             step_id = str(step.get("step_id") or "")
             if not step_id or step_id in seen:
-                return normalize_usage(step.get("actual_usage"))
+                return _projection.normalize_usage(step.get("actual_usage"))
             next_seen = {*seen, step_id}
-            totals = normalize_usage(step.get("actual_usage"))
+            totals = _projection.normalize_usage(step.get("actual_usage"))
             for child in by_parent.get(step_id, []):
                 child_usage = inclusive(child, next_seen)
                 for key in (
@@ -979,11 +391,11 @@ class TurnTaskRecorder:
                     "cache_read_tokens",
                     "cache_write_tokens",
                 ):
-                    totals[key] = _saturating_nonnegative_add(
+                    totals[key] = _projection._saturating_nonnegative_add(
                         totals.get(key, 0),
                         child_usage.get(key, 0),
                     )
-            totals = normalize_usage(totals)
+            totals = _projection.normalize_usage(totals)
             step["inclusive_usage"] = totals
             return totals
 
@@ -991,13 +403,13 @@ class TurnTaskRecorder:
             inclusive(item, set())
 
     def _accumulate_usage(self, usage: Dict[str, Any]) -> None:
-        normalized = _normalize_usage_payload(usage)
-        self._usage_totals["llm_calls"] = _saturating_nonnegative_add(
+        normalized = _projection._normalize_usage_payload(usage)
+        self._usage_totals["llm_calls"] = _projection._saturating_nonnegative_add(
             self._usage_totals.get("llm_calls", 0),
             1,
         )
         if normalized.get("cached_tokens", 0) > 0 or normalized.get("cache_read_tokens", 0) > 0:
-            self._usage_totals["cache_hit_calls"] = _saturating_nonnegative_add(
+            self._usage_totals["cache_hit_calls"] = _projection._saturating_nonnegative_add(
                 self._usage_totals.get("cache_hit_calls", 0),
                 1,
             )
@@ -1010,7 +422,7 @@ class TurnTaskRecorder:
             "cache_read_tokens",
             "cache_write_tokens",
         ):
-            self._usage_totals[key] = _saturating_nonnegative_add(
+            self._usage_totals[key] = _projection._saturating_nonnegative_add(
                 self._usage_totals.get(key, 0),
                 normalized.get(key, 0),
             )
@@ -1071,7 +483,7 @@ class TurnTaskRecorder:
 
     def record_job_submitted(self, job_id: str) -> None:
         normalized = str(job_id or "").strip()
-        if not _JOB_ID_RE.fullmatch(normalized):
+        if not _projection._JOB_ID_RE.fullmatch(normalized):
             raise ValueError(f"invalid background job id: {job_id}")
         if normalized not in self._job_ids:
             self._job_ids.append(normalized)
@@ -1129,7 +541,7 @@ class TurnTaskRecorder:
             raw_event="tool_finished",
         )
         self._append_event("tool_finished", target)
-        for job_id in _extract_job_ids(summary, error):
+        for job_id in _projection._extract_job_ids(summary, error):
             if job_id not in self._job_ids:
                 self._job_ids.append(job_id)
         if depth <= 0:
@@ -1174,22 +586,22 @@ class TurnTaskRecorder:
             "parent_span_id": parent_span_id,
             "depth": depth,
         }
-        if kind == _PROVIDER_OMISSION_KIND:
+        if kind == _projection._PROVIDER_OMISSION_KIND:
             self._append_event("span_started", entry)
             return
-        is_provider_activity = kind in _PROVIDER_ACTIVITY_KINDS
+        is_provider_activity = kind in _projection._PROVIDER_ACTIVITY_KINDS
         retain_summary = True
         if is_provider_activity:
-            self._provider_activity_total = _saturating_nonnegative_add(
+            self._provider_activity_total = _projection._saturating_nonnegative_add(
                 self._provider_activity_total,
                 1,
             )
             retained = sum(
-                1 for item in self._tools if str(item.get("kind") or "") in _PROVIDER_ACTIVITY_KINDS
+                1 for item in self._tools if str(item.get("kind") or "") in _projection._PROVIDER_ACTIVITY_KINDS
             )
-            retain_summary = retained < MAX_PROVIDER_ACTIVITY_SUMMARIES
+            retain_summary = retained < _projection.MAX_PROVIDER_ACTIVITY_SUMMARIES
             if not retain_summary:
-                self._provider_activity_dropped = _saturating_nonnegative_add(
+                self._provider_activity_dropped = _projection._saturating_nonnegative_add(
                     self._provider_activity_dropped,
                     1,
                 )
@@ -1227,7 +639,7 @@ class TurnTaskRecorder:
         data: Optional[Dict[str, Any]] = None,
     ) -> None:
         finished_at = time.time()
-        if kind == _PROVIDER_OMISSION_KIND:
+        if kind == _projection._PROVIDER_OMISSION_KIND:
             raw_count = (data or {}).get("omitted_count")
             omitted_count = (
                 raw_count
@@ -1236,11 +648,11 @@ class TurnTaskRecorder:
                 and 0 < raw_count <= (1 << 63) - 1
                 else 0
             )
-            self._provider_activity_total = _saturating_nonnegative_add(
+            self._provider_activity_total = _projection._saturating_nonnegative_add(
                 self._provider_activity_total,
                 omitted_count,
             )
-            self._provider_activity_dropped = _saturating_nonnegative_add(
+            self._provider_activity_dropped = _projection._saturating_nonnegative_add(
                 self._provider_activity_dropped,
                 omitted_count,
             )
@@ -1292,11 +704,11 @@ class TurnTaskRecorder:
         )
         target = self._match_running(name, span_id)
         if target is None:
-            is_provider_activity = kind in _PROVIDER_ACTIVITY_KINDS
+            is_provider_activity = kind in _projection._PROVIDER_ACTIVITY_KINDS
             retained = sum(
-                1 for item in self._tools if str(item.get("kind") or "") in _PROVIDER_ACTIVITY_KINDS
+                1 for item in self._tools if str(item.get("kind") or "") in _projection._PROVIDER_ACTIVITY_KINDS
             )
-            if is_provider_activity and retained >= MAX_PROVIDER_ACTIVITY_SUMMARIES:
+            if is_provider_activity and retained >= _projection.MAX_PROVIDER_ACTIVITY_SUMMARIES:
                 self._append_provider_activity_omission_event()
                 self._write_activity_progress(f"{name} 完成。")
                 return
@@ -1305,7 +717,7 @@ class TurnTaskRecorder:
                 target["span_id"] = span_id
             self._tools.append(target)
             if is_provider_activity:
-                self._provider_activity_total = _saturating_nonnegative_add(
+                self._provider_activity_total = _projection._saturating_nonnegative_add(
                     self._provider_activity_total,
                     1,
                 )
@@ -1370,7 +782,7 @@ class TurnTaskRecorder:
     ) -> None:
         """Persist one redacted model-boundary snapshot outside task.json."""
 
-        if not _CONTEXT_ID_RE.fullmatch(snapshot_id):
+        if not _projection._CONTEXT_ID_RE.fullmatch(snapshot_id):
             raise ValueError("invalid context snapshot id")
         captured_at = time.time()
         group_turn_redacted = self.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
@@ -1447,7 +859,7 @@ class TurnTaskRecorder:
             "tool_schemas": list(tool_schemas),
             "resources": list(resources),
         }
-        prepared_payload = _redact_group_turn_content(
+        prepared_payload = _projection._redact_group_turn_content(
             raw_payload,
             self.workspace,
             user_text=self.user_text,
@@ -1463,7 +875,7 @@ class TurnTaskRecorder:
         if redaction.truncated and "observability_budget_exhausted" not in effective_omitted:
             effective_omitted.append("observability_budget_exhausted")
             effective_coverage = "partial"
-        identity_safe_value = _redact_workspace_identity(
+        identity_safe_value = _projection._redact_workspace_identity(
             redaction.value,
             self.workspace,
         )
@@ -1482,7 +894,7 @@ class TurnTaskRecorder:
         )
         safe_payload["coverage"] = effective_coverage
         safe_payload["omitted"] = effective_omitted
-        canonical = _json_bytes(safe_payload)
+        canonical = _projection._json_bytes(safe_payload)
         content_sha256 = hashlib.sha256(canonical).hexdigest()
         original_bytes = len(canonical)
         was_redacted = (
@@ -1510,8 +922,8 @@ class TurnTaskRecorder:
                 },
             }
         )
-        if payload_truncated or len(_json_bytes(safe_payload)) > MAX_CONTEXT_ARTIFACT_BYTES:
-            safe_payload = _truncated_context_payload(
+        if payload_truncated or len(_projection._json_bytes(safe_payload)) > _projection.MAX_CONTEXT_ARTIFACT_BYTES:
+            safe_payload = _projection._truncated_context_payload(
                 safe_payload,
                 original_bytes=original_bytes,
                 content_sha256=content_sha256,
@@ -1546,36 +958,9 @@ class TurnTaskRecorder:
             "role": "main" if depth <= 0 else "subagent",
         }
         try:
-            contexts_dir = self._path.parent / CONTEXTS_DIRNAME
-            target = contexts_dir / f"{snapshot_id}.json"
-            task_dir_fd = _open_private_task_dir(self._path.parent, create=False)
-            contexts_fd: int | None = None
-            try:
-                if task_dir_fd is None:  # pragma: no cover - native Windows validation required
-                    if contexts_dir.is_symlink():
-                        raise OSError("context artifact directory must not be a symlink")
-                    contexts_dir.mkdir(mode=0o700, exist_ok=True)
-                    _chmod_private(contexts_dir, 0o700)
-                    _require_private_path(contexts_dir, mode=0o700, directory=True)
-                    write_json_atomic(target, safe_payload)
-                    _chmod_private(target, 0o600)
-                    _require_private_path(target, mode=0o600, directory=False)
-                else:
-                    contexts_fd = _open_private_child_dir_at(
-                        task_dir_fd,
-                        CONTEXTS_DIRNAME,
-                        create=True,
-                    )
-                    _write_private_json_at(
-                        contexts_fd,
-                        f"{snapshot_id}.json",
-                        safe_payload,
-                    )
-            finally:
-                if contexts_fd is not None:
-                    os.close(contexts_fd)
-                if task_dir_fd is not None:
-                    os.close(task_dir_fd)
+            _storage.write_task_artifact(
+                self._path.parent, collection="contexts", name=f"{snapshot_id}.json", payload=safe_payload,
+            )
         except (OSError, ValueError):
             failure_omitted = list(effective_omitted)
             if "persistence_failed" not in failure_omitted:
@@ -1633,7 +1018,7 @@ class TurnTaskRecorder:
         tool_schema_count: int,
         context_kind: str,
     ) -> str:
-        valid_id = snapshot_id if _CONTEXT_ID_RE.fullmatch(snapshot_id) else ""
+        valid_id = snapshot_id if _projection._CONTEXT_ID_RE.fullmatch(snapshot_id) else ""
         if valid_id and any(
             str(item.get("snapshot_id") or "") == valid_id for item in self._context_snapshots
         ):
@@ -1728,7 +1113,7 @@ class TurnTaskRecorder:
             tool_schema_count=tool_schema_count,
             context_kind=context_kind,
         )
-        history = load_task_history(self.history_root)
+        history = _storage.load_task_history(self.history_root)
         role = "main" if depth <= 0 else "subagent"
         step_forecast = forecast_llm_usage(
             history,
@@ -1824,7 +1209,7 @@ class TurnTaskRecorder:
         context_snapshot_id: str = "",
         ok: bool = True,
     ) -> None:
-        normalized = _normalize_usage_payload(usage or {})
+        normalized = _projection._normalize_usage_payload(usage or {})
         effective_span_id = span_id
         existing_step = self._find_step(span_id)
         if not context_snapshot_id and existing_step is not None:
@@ -1934,7 +1319,7 @@ class TurnTaskRecorder:
         if elapsed_s is not None:
             step["elapsed_s"] = max(0.0, float(elapsed_s))
         if usage:
-            normalized = _normalize_usage_payload(usage)
+            normalized = _projection._normalize_usage_payload(usage)
             self._llm_calls.append(
                 {
                     "kind": "routing",
@@ -2019,7 +1404,7 @@ class TurnTaskRecorder:
             raw_event="persona_decision",
         )
         if usage:
-            normalized = _normalize_usage_payload(usage)
+            normalized = _projection._normalize_usage_payload(usage)
             self._llm_calls.append(
                 {
                     "kind": "persona_control",
@@ -2082,7 +1467,7 @@ class TurnTaskRecorder:
             raw_event="persona_draft",
         )
         for call in result.calls:
-            normalized = _normalize_usage_payload(dict(call.usage or {}))
+            normalized = _projection._normalize_usage_payload(dict(call.usage or {}))
             call_summary = {
                 "kind": "persona_draft",
                 "model": call.model,
@@ -2140,13 +1525,11 @@ class TurnTaskRecorder:
         self, span_id: str, name: str, data: Dict[str, Any]
     ) -> Optional[Path]:
         try:
-            target_dir = self._path.parent / "subagents"
             artifact_stem = (
                 span_id
-                if _ARTIFACT_SEGMENT_RE.fullmatch(span_id)
+                if _projection._ARTIFACT_SEGMENT_RE.fullmatch(span_id)
                 else f"span_{hashlib.sha256(span_id.encode('utf-8')).hexdigest()[:24]}"
             )
-            target = target_dir / f"{artifact_stem}.json"
             raw_transcript = data.get("transcript")
             transcript_items = (
                 list(raw_transcript) if isinstance(raw_transcript, (list, tuple)) else []
@@ -2197,31 +1580,9 @@ class TurnTaskRecorder:
                     },
                 }
             )
-            task_dir_fd = _open_private_task_dir(self._path.parent, create=False)
-            subagents_fd: int | None = None
-            try:
-                if task_dir_fd is None:  # pragma: no cover - native Windows validation required
-                    if target_dir.is_symlink():
-                        raise OSError("subagent artifact directory must not be a symlink")
-                    target_dir.mkdir(mode=0o700, exist_ok=True)
-                    _chmod_private(target_dir, 0o700)
-                    _require_private_path(target_dir, mode=0o700, directory=True)
-                    write_json_atomic(target, payload)
-                    _chmod_private(target, 0o600)
-                    _require_private_path(target, mode=0o600, directory=False)
-                else:
-                    subagents_fd = _open_private_child_dir_at(
-                        task_dir_fd,
-                        "subagents",
-                        create=True,
-                    )
-                    _write_private_json_at(subagents_fd, target.name, payload)
-            finally:
-                if subagents_fd is not None:
-                    os.close(subagents_fd)
-                if task_dir_fd is not None:
-                    os.close(task_dir_fd)
-            return target
+            return _storage.write_task_artifact(
+                self._path.parent, collection="subagents", name=f"{artifact_stem}.json", payload=payload,
+            )
         except Exception:  # noqa: BLE001
             return None
 
@@ -2253,7 +1614,7 @@ class TurnTaskRecorder:
                 )
         self._turn_finished_at = turn_finished_at
         try:
-            with _task_completion_lock(self._path.parent, create=True):
+            with _storage._task_completion_lock(self._path.parent, create=True):
                 self._apply_write_state(
                     status=status,
                     progress=progress,
@@ -2277,7 +1638,7 @@ class TurnTaskRecorder:
                     self._status = (
                         "failed" if status == "failed" or not children_succeeded else "succeeded"
                     )
-                    self._progress = _delegated_progress(
+                    self._progress = _projection._delegated_progress(
                         child_results,
                         len(self._job_ids),
                     )
@@ -2288,7 +1649,7 @@ class TurnTaskRecorder:
                     # failure is persisted separately in turn.json and becomes
                     # authoritative when the final child closes the task.
                     self._status = "delegated"
-                    self._progress = _delegated_progress(
+                    self._progress = _projection._delegated_progress(
                         list(known_results.values()),
                         len(self._job_ids),
                     )
@@ -2334,9 +1695,9 @@ class TurnTaskRecorder:
                     turn,
                     retain_group_current_text=True,
                 )
-                _write_private_task_json(
+                _storage._write_private_task_json(
                     self._path.parent,
-                    TURN_FILENAME,
+                    _projection.TURN_FILENAME,
                     safe_turn,
                 )
                 self._write_task_summary_locked()
@@ -2372,14 +1733,14 @@ class TurnTaskRecorder:
             "provider_activity_omitted",
             {
                 "reason": "provider_activity_limit",
-                "retained_summary_limit": MAX_PROVIDER_ACTIVITY_SUMMARIES,
-                "retained_raw_event_limit": MAX_PROVIDER_ACTIVITY_RAW_EVENTS,
+                "retained_summary_limit": _projection.MAX_PROVIDER_ACTIVITY_SUMMARIES,
+                "retained_raw_event_limit": _projection.MAX_PROVIDER_ACTIVITY_RAW_EVENTS,
             },
         )
 
     def _append_event(self, event_type: str, payload: Dict[str, Any]) -> None:
         with self._event_lock:
-            _append_task_event(
+            _storage._append_task_event(
                 self._path.parent,
                 event_type,
                 self._sanitize_for_persistence(
@@ -2415,9 +1776,9 @@ class TurnTaskRecorder:
         else:
             submitter = self.workspace.user_name or self.workspace.user_id or ""
         return {
-            "schema_version": TASK_SCHEMA_VERSION,
+            "schema_version": _projection.TASK_SCHEMA_VERSION,
             "task_id": self.task_id,
-            "description": describe_user_text(self.user_text),
+            "description": _projection.describe_user_text(self.user_text),
             "progress": self._progress,
             "status": self._status,
             "submitter": submitter,
@@ -2427,11 +1788,11 @@ class TurnTaskRecorder:
             "turn_finished_at": self._turn_finished_at,
             "elapsed_s": elapsed_s,
             "updated_at": updated_at,
-            "tools": _task_tool_summaries(self._tools),
+            "tools": _projection._task_tool_summaries(self._tools),
             "llm_calls": self._llm_calls,
             "context_snapshots": self._context_snapshots,
             "input_resources": self._input_resources,
-            "steps": _task_step_summaries(self._steps),
+            "steps": _projection._task_step_summaries(self._steps),
             "activity_summary": {
                 "provider_total": self._provider_activity_total,
                 "provider_retained": max(
@@ -2443,12 +1804,12 @@ class TurnTaskRecorder:
             },
             "summary_limits": {
                 "tools_total": len(self._tools),
-                "tools_retained": min(len(self._tools), MAX_TASK_TOOL_SUMMARIES),
+                "tools_retained": min(len(self._tools), _projection.MAX_TASK_TOOL_SUMMARIES),
                 "steps_total": len(self._steps),
-                "steps_retained": min(len(self._steps), MAX_TASK_STEP_SUMMARIES),
+                "steps_retained": min(len(self._steps), _projection.MAX_TASK_STEP_SUMMARIES),
                 "truncated": (
-                    len(self._tools) > MAX_TASK_TOOL_SUMMARIES
-                    or len(self._steps) > MAX_TASK_STEP_SUMMARIES
+                    len(self._tools) > _projection.MAX_TASK_TOOL_SUMMARIES
+                    or len(self._steps) > _projection.MAX_TASK_STEP_SUMMARIES
                 ),
             },
             "current_step": current.get("title") if current else self._progress,
@@ -2461,615 +1822,16 @@ class TurnTaskRecorder:
             "job_results": self._job_results,
             "session_id": self.session_id,
             "message_id": self.message_id,
-            "workspace": _workspace_payload(
+            "workspace": _projection._workspace_payload(
                 self.workspace,
                 redact_identity=self.redact_identity,
                 unauthenticated_intake=self.unauthenticated_intake,
             ),
             "path": str(self._path.parent),
             "trace_id": self.task_id,
-            "events_path": str(self._path.parent / EVENTS_FILENAME),
-            "turn_path": str(self._path.parent / TURN_FILENAME),
+            "events_path": str(self._path.parent / _projection.EVENTS_FILENAME),
+            "turn_path": str(self._path.parent / _projection.TURN_FILENAME),
         }
-
-
-def _bounded_string(value: Any, limit: int) -> tuple[str, bool]:
-    try:
-        text = str(value or "")
-    except (ValueError, RecursionError):
-        return "[invalid text]", True
-    return (text, False) if len(text) <= limit else (text[: limit - 1] + "…", True)
-
-
-def _payload_digest(value: Any) -> str:
-    try:
-        encoded = json.dumps(
-            value,
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-            allow_nan=False,
-        ).encode("utf-8")
-    except (TypeError, ValueError, RecursionError):
-        encoded = b"[unserializable]"
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def _bounded_job_result(item: Any, *, compact: bool = False) -> Dict[str, Any]:
-    source = item if isinstance(item, dict) else {}
-    summary, summary_truncated = _bounded_string(
-        source.get("summary"),
-        MAX_JOB_RESULT_TEXT_CHARS,
-    )
-    error, error_truncated = _bounded_string(
-        source.get("error"),
-        MAX_JOB_RESULT_TEXT_CHARS,
-    )
-    output_values, output_total, invalid_outputs = _bounded_collection(
-        source.get("outputs"),
-        MAX_JOB_RESULT_OUTPUTS,
-    )
-    raw_outputs = [value for value in output_values if isinstance(value, str)]
-    outputs: list[str] = []
-    output_text_truncated = False
-    for value in raw_outputs:
-        bounded, was_truncated = _bounded_string(value, MAX_JOB_RESULT_OUTPUT_CHARS)
-        outputs.append(bounded)
-        output_text_truncated = output_text_truncated or was_truncated
-    omissions = [
-        field
-        for field in source.get("omitted_fields") or []
-        if field in {"summary", "error", "outputs"}
-    ]
-    if summary_truncated:
-        omissions.append("summary")
-    if error_truncated:
-        omissions.append("error")
-    if invalid_outputs or output_total > len(outputs) or output_text_truncated:
-        omissions.append("outputs")
-    if compact:
-        omissions.extend(
-            field
-            for field, value in (("summary", summary), ("error", error), ("outputs", outputs))
-            if value and field not in omissions
-        )
-        summary = ""
-        error = ""
-        outputs = []
-    result = {
-        "job_id": _bounded_text(source.get("job_id"), 256),
-        "ok": bool(source.get("ok")),
-        "status": _bounded_text(source.get("status"), 64),
-        "stage": _bounded_text(source.get("stage"), 256),
-        "error_code": _bounded_text(source.get("error_code"), 256),
-        "summary": summary,
-        "error": error,
-        "outputs": outputs,
-        "output_count": output_total,
-        "finished_at": _bounded_observed_number(source.get("finished_at")),
-    }
-    if omissions or bool(source.get("payload_truncated")):
-        result.update(
-            {
-                "payload_truncated": True,
-                "omitted_fields": sorted(set(omissions)),
-                "payload_sha256": str(source.get("payload_sha256") or _payload_digest(source)),
-            }
-        )
-    return result
-
-
-def _bounded_job_results(values: Any, *, compact: bool = False) -> list[Dict[str, Any]]:
-    items, _, _ = _bounded_collection(values, MAX_JOB_RESULT_SUMMARIES)
-    return [_bounded_job_result(item, compact=compact) for item in items]
-
-
-def _bounded_collection(
-    value: Any,
-    limit: int,
-    *,
-    keep_latest: bool = False,
-) -> tuple[list[Any], int, bool]:
-    if not isinstance(value, (list, tuple)):
-        return [], 0, value not in (None, [])
-    total = len(value)
-    retained = value[-limit:] if keep_latest and limit > 0 else value[:limit]
-    return list(retained), total, total > limit
-
-
-def _bounded_nonnegative_integer(value: Any) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        return 0
-    return min(value, MAX_USAGE_TOTAL)
-
-
-def _bounded_observed_number(value: Any) -> int | float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, int):
-        return max(-MAX_USAGE_TOTAL, min(value, MAX_USAGE_TOTAL))
-    if isinstance(value, float) and math.isfinite(value):
-        return value
-    return None
-
-
-def _task_llm_call_summaries(values: Any) -> tuple[list[Dict[str, Any]], int, bool]:
-    items, total, truncated = _bounded_collection(
-        values,
-        MAX_TASK_LLM_CALL_SUMMARIES,
-        keep_latest=True,
-    )
-    summaries: list[Dict[str, Any]] = []
-    for raw in items:
-        item = raw if isinstance(raw, dict) else {}
-        raw_usage = item.get("usage")
-        usage: Dict[str, Any] = raw_usage if isinstance(raw_usage, dict) else {}
-        summaries.append(
-            {
-                "model": _bounded_text(item.get("model"), 512),
-                "runtime_id": _bounded_text(item.get("runtime_id"), 128),
-                "iteration": _bounded_nonnegative_integer(item.get("iteration")),
-                "finish_reason": _bounded_text(item.get("finish_reason"), 512),
-                "usage": _normalize_usage_payload(usage),
-                "trace_id": _bounded_text(item.get("trace_id"), 256),
-                "span_id": _bounded_text(item.get("span_id"), 256),
-                "parent_span_id": _bounded_text(item.get("parent_span_id"), 256),
-                "depth": _bounded_nonnegative_integer(item.get("depth")),
-                "role": _bounded_text(item.get("role"), 32),
-                "started_at": _bounded_observed_number(item.get("started_at")),
-                "recorded_at": _bounded_observed_number(item.get("recorded_at")),
-                "input_message_count": _bounded_nonnegative_integer(
-                    item.get("input_message_count")
-                ),
-                "input_estimated_tokens": _bounded_nonnegative_integer(
-                    item.get("input_estimated_tokens")
-                ),
-                "system_estimated_tokens": _bounded_nonnegative_integer(
-                    item.get("system_estimated_tokens")
-                ),
-                "tool_schema_count": _bounded_nonnegative_integer(item.get("tool_schema_count")),
-                "tool_schema_estimated_tokens": _bounded_nonnegative_integer(
-                    item.get("tool_schema_estimated_tokens")
-                ),
-                "estimator_version": _bounded_text(item.get("estimator_version"), 128),
-                "context_kind": _bounded_text(item.get("context_kind"), 128),
-                "context_snapshot_id": _bounded_text(
-                    item.get("context_snapshot_id"),
-                    128,
-                ),
-                "step_id": _bounded_text(item.get("step_id"), 256),
-                "ok": bool(item.get("ok", True)),
-            }
-        )
-    return summaries, total, truncated
-
-
-def _task_context_snapshot_summaries(
-    values: Any,
-    *,
-    minimal: bool = False,
-) -> tuple[list[Dict[str, Any]], int, bool]:
-    items, total, truncated = _bounded_collection(
-        values,
-        MAX_TASK_CONTEXT_SNAPSHOT_SUMMARIES,
-        keep_latest=True,
-    )
-    summaries: list[Dict[str, Any]] = []
-    for raw in items:
-        item = raw if isinstance(raw, dict) else {}
-        summary: Dict[str, Any] = {
-            # This identity is the Console authorization/index key for the
-            # separate context artifact and must survive total-size fallback.
-            "snapshot_id": _bounded_text(item.get("snapshot_id"), 128),
-            "capture_status": _bounded_text(item.get("capture_status"), 64),
-            "runtime_id": _bounded_text(item.get("runtime_id"), 128),
-            "model": _bounded_text(item.get("model"), 128 if minimal else 512),
-            "coverage": _bounded_text(item.get("coverage"), 64),
-            "truncated": bool(item.get("truncated")),
-            "captured_at": _bounded_observed_number(item.get("captured_at")),
-        }
-        if not minimal:
-            omitted_items, _, omitted_truncated = _bounded_collection(
-                item.get("omitted"),
-                20,
-            )
-            summary.update(
-                {
-                    "redacted": bool(item.get("redacted")),
-                    "iteration": _bounded_nonnegative_integer(item.get("iteration")),
-                    "message_count": _bounded_nonnegative_integer(item.get("message_count")),
-                    "effective_message_count": _bounded_nonnegative_integer(
-                        item.get("effective_message_count")
-                    ),
-                    "tool_schema_count": _bounded_nonnegative_integer(
-                        item.get("tool_schema_count")
-                    ),
-                    "resource_count": _bounded_nonnegative_integer(item.get("resource_count")),
-                    "estimated_tokens": _bounded_nonnegative_integer(item.get("estimated_tokens")),
-                    "reasoning_effort": _bounded_text(
-                        item.get("reasoning_effort"),
-                        64,
-                    ),
-                    "context_kind": _bounded_text(item.get("context_kind"), 128),
-                    "omitted": [_bounded_text(value, 128) for value in omitted_items],
-                    "omitted_truncated": omitted_truncated,
-                    "trace_id": _bounded_text(item.get("trace_id"), 256),
-                    "span_id": _bounded_text(item.get("span_id"), 256),
-                    "parent_span_id": _bounded_text(item.get("parent_span_id"), 256),
-                    "depth": _bounded_nonnegative_integer(item.get("depth")),
-                    "role": _bounded_text(item.get("role"), 32),
-                }
-            )
-        summaries.append(summary)
-    return summaries, total, truncated
-
-
-def _task_input_resource_summaries(
-    values: Any,
-) -> tuple[list[Dict[str, Any]], int, bool]:
-    items, total, truncated = _bounded_collection(
-        values,
-        MAX_TASK_INPUT_RESOURCE_SUMMARIES,
-        keep_latest=True,
-    )
-    summaries: list[Dict[str, Any]] = []
-    for raw in items:
-        item = raw if isinstance(raw, dict) else {}
-        resources, resource_total, resource_truncated = _bounded_collection(
-            item.get("resources"),
-            MAX_INPUT_RESOURCES_PER_SUMMARY,
-        )
-        resource_summaries: list[Dict[str, Any]] = []
-        for raw_resource in resources:
-            resource = raw_resource if isinstance(raw_resource, dict) else {}
-            resource_summaries.append(
-                {
-                    "sequence": _bounded_nonnegative_integer(resource.get("sequence")),
-                    "media_type": _bounded_text(resource.get("media_type"), 128),
-                    "size_bytes": _bounded_nonnegative_integer(resource.get("size_bytes")),
-                    "sha256": _bounded_text(resource.get("sha256"), 128),
-                    "dispatch": _bounded_text(resource.get("dispatch"), 64),
-                }
-            )
-        summaries.append(
-            {
-                "runtime_id": _bounded_text(item.get("runtime_id"), 128),
-                "turn_index": _bounded_nonnegative_integer(item.get("turn_index")),
-                "request_id": _bounded_text(item.get("request_id"), 256),
-                "recorded_at": _bounded_observed_number(item.get("recorded_at")),
-                "resources": resource_summaries,
-                "resource_count": resource_total,
-                "resources_truncated": resource_truncated,
-            }
-        )
-    return summaries, total, truncated
-
-
-def _previous_collection_total(limits: Dict[str, Any], key: str, observed: int) -> int:
-    previous = limits.get(f"{key}_total")
-    if isinstance(previous, int) and not isinstance(previous, bool) and previous >= 0:
-        return max(observed, min(previous, MAX_USAGE_TOTAL))
-    return observed
-
-
-def _task_forecast_summary(value: Any) -> Dict[str, Any]:
-    source = value if isinstance(value, dict) else {}
-    baseline = source.get("baseline") if isinstance(source.get("baseline"), dict) else None
-    usage = source.get("usage") if isinstance(source.get("usage"), dict) else None
-    return {
-        "status": _bounded_text(source.get("status"), 64),
-        "model": _bounded_text(source.get("model"), 512),
-        "context_kind": _bounded_text(source.get("context_kind"), 128),
-        "sample_count": _bounded_nonnegative_integer(source.get("sample_count")),
-        "max_samples": _bounded_nonnegative_integer(source.get("max_samples")),
-        "min_samples": _bounded_nonnegative_integer(source.get("min_samples")),
-        "calibration_ratio": _bounded_observed_number(source.get("calibration_ratio")),
-        "estimator_version": _bounded_text(source.get("estimator_version"), 128),
-        "baseline": normalize_usage(baseline or {}) if baseline is not None else None,
-        "usage": normalize_usage(usage or {}) if usage is not None else None,
-        "fixed_at": _bounded_observed_number(source.get("fixed_at")),
-    }
-
-
-def _task_usage_summary(value: Any) -> Dict[str, Any]:
-    source = value if isinstance(value, dict) else {}
-    summary: Dict[str, Any] = _normalize_usage_payload(source)
-    summary.update(
-        {
-            "llm_calls": _bounded_nonnegative_integer(source.get("llm_calls")),
-            "cache_hit_calls": _bounded_nonnegative_integer(source.get("cache_hit_calls")),
-            "cache_hit_rate": _bounded_observed_number(source.get("cache_hit_rate")) or 0.0,
-            "cache_hit_call_rate": _bounded_observed_number(source.get("cache_hit_call_rate"))
-            or 0.0,
-        }
-    )
-    return summary
-
-
-def _bounded_task_document(payload: Dict[str, Any]) -> Dict[str, Any]:
-    document_fields = {
-        "schema_version",
-        "task_id",
-        "description",
-        "progress",
-        "status",
-        "submitter",
-        "asked_at",
-        "started_at",
-        "finished_at",
-        "turn_finished_at",
-        "elapsed_s",
-        "updated_at",
-        "tools",
-        "llm_calls",
-        "context_snapshots",
-        "input_resources",
-        "steps",
-        "activity_summary",
-        "summary_limits",
-        "current_step",
-        "usage_totals",
-        "forecast",
-        "primary_model",
-        "context_kind",
-        "persona_outcome",
-        "job_ids",
-        "job_results",
-        "session_id",
-        "message_id",
-        "workspace",
-        "path",
-        "trace_id",
-        "events_path",
-        "turn_path",
-    }
-    unknown_field_count = sum(1 for key in payload if key not in document_fields)
-    bounded = {key: value for key, value in payload.items() if key in document_fields}
-    bounded["schema_version"] = _bounded_nonnegative_integer(bounded.get("schema_version"))
-    for key, limit in (
-        ("task_id", 256),
-        ("description", 512),
-        ("progress", 4096),
-        ("status", 64),
-        ("submitter", 512),
-        ("current_step", 1024),
-        ("primary_model", 512),
-        ("context_kind", 256),
-        ("session_id", 256),
-        ("message_id", 256),
-        ("trace_id", 256),
-        ("path", 1024),
-        ("events_path", 1024),
-        ("turn_path", 1024),
-    ):
-        if key in bounded and bounded.get(key) is not None:
-            bounded[key] = _bounded_text(bounded.get(key), limit)
-    for key in (
-        "asked_at",
-        "started_at",
-        "finished_at",
-        "turn_finished_at",
-        "elapsed_s",
-        "updated_at",
-    ):
-        if key in bounded:
-            bounded[key] = _bounded_observed_number(bounded.get(key))
-    bounded["workspace"] = _bounded_mapping(bounded.get("workspace"))
-    raw_persona_outcome = bounded.get("persona_outcome")
-    persona_outcome = raw_persona_outcome if isinstance(raw_persona_outcome, dict) else {}
-    bounded["persona_outcome"] = {
-        "outcome": _bounded_text(persona_outcome.get("outcome"), 80),
-        "error_code": _bounded_text(persona_outcome.get("error_code"), 120),
-    }
-    bounded["usage_totals"] = _task_usage_summary(bounded.get("usage_totals"))
-    bounded["forecast"] = _task_forecast_summary(bounded.get("forecast"))
-    raw_activity = bounded.get("activity_summary")
-    activity: Dict[str, Any] = raw_activity if isinstance(raw_activity, dict) else {}
-    bounded["activity_summary"] = {
-        "provider_total": _bounded_nonnegative_integer(activity.get("provider_total")),
-        "provider_retained": _bounded_nonnegative_integer(activity.get("provider_retained")),
-        "provider_dropped": _bounded_nonnegative_integer(activity.get("provider_dropped")),
-        "truncated": bool(activity.get("truncated")),
-    }
-    raw_tools = bounded.get("tools")
-    tool_source = raw_tools if isinstance(raw_tools, (list, tuple)) else []
-    observed_tool_total = len(tool_source)
-    tool_values = [
-        item if isinstance(item, dict) else {} for item in tool_source[-MAX_TASK_TOOL_SUMMARIES:]
-    ]
-    bounded["tools"] = _task_tool_summaries(tool_values)
-    raw_steps = bounded.get("steps")
-    step_source = raw_steps if isinstance(raw_steps, (list, tuple)) else []
-    observed_step_total = len(step_source)
-    step_values = [
-        item if isinstance(item, dict) else {} for item in step_source[-MAX_TASK_STEP_SUMMARIES:]
-    ]
-    bounded["steps"] = _task_step_summaries(step_values)
-    raw_job_id_values, raw_job_id_total, invalid_job_ids = _bounded_collection(
-        bounded.get("job_ids"),
-        MAX_JOB_RESULT_SUMMARIES,
-    )
-    raw_job_ids = [str(value) for value in raw_job_id_values]
-    raw_job_result_values, raw_job_result_total, invalid_job_results = _bounded_collection(
-        bounded.get("job_results"),
-        MAX_JOB_RESULT_SUMMARIES,
-    )
-    raw_job_results = list(raw_job_result_values)
-    bounded["job_ids"] = [_bounded_text(value, 256) for value in raw_job_ids]
-    bounded["job_results"] = _bounded_job_results(raw_job_results)
-    limits = _bounded_mapping(bounded.get("summary_limits"))
-    if unknown_field_count:
-        limits["unknown_fields_omitted"] = unknown_field_count
-        limits["truncated"] = True
-    llm_calls, llm_call_total, llm_calls_truncated = _task_llm_call_summaries(
-        bounded.get("llm_calls")
-    )
-    contexts, context_total, contexts_truncated = _task_context_snapshot_summaries(
-        bounded.get("context_snapshots")
-    )
-    input_resources, input_resource_total, input_resources_truncated = (
-        _task_input_resource_summaries(bounded.get("input_resources"))
-    )
-    bounded["llm_calls"] = llm_calls
-    bounded["context_snapshots"] = contexts
-    bounded["input_resources"] = input_resources
-    llm_call_total = _previous_collection_total(limits, "llm_calls", llm_call_total)
-    context_total = _previous_collection_total(
-        limits,
-        "context_snapshots",
-        context_total,
-    )
-    input_resource_total = _previous_collection_total(
-        limits,
-        "input_resources",
-        input_resource_total,
-    )
-    tool_total = _previous_collection_total(limits, "tools", observed_tool_total)
-    step_total = _previous_collection_total(limits, "steps", observed_step_total)
-    job_truncated = (
-        invalid_job_ids
-        or invalid_job_results
-        or raw_job_id_total > len(bounded["job_ids"])
-        or raw_job_result_total > len(bounded["job_results"])
-        or any(item.get("payload_truncated") for item in bounded["job_results"])
-    )
-    limits.update(
-        {
-            "job_ids_total": raw_job_id_total,
-            "job_ids_retained": len(bounded["job_ids"]),
-            "job_results_total": raw_job_result_total,
-            "job_results_retained": len(bounded["job_results"]),
-            "job_results_truncated": job_truncated,
-            "tools_total": tool_total,
-            "tools_retained": len(bounded["tools"]),
-            "steps_total": step_total,
-            "steps_retained": len(bounded["steps"]),
-            "llm_calls_total": llm_call_total,
-            "llm_calls_retained": len(llm_calls),
-            "llm_calls_truncated": llm_calls_truncated or llm_call_total > len(llm_calls),
-            "context_snapshots_total": context_total,
-            "context_snapshots_retained": len(contexts),
-            "context_snapshots_truncated": contexts_truncated or context_total > len(contexts),
-            "input_resources_total": input_resource_total,
-            "input_resources_retained": len(input_resources),
-            "input_resources_truncated": input_resources_truncated
-            or input_resource_total > len(input_resources),
-        }
-    )
-    limits["truncated"] = bool(limits.get("truncated")) or any(
-        (
-            job_truncated,
-            tool_total > len(bounded["tools"]),
-            step_total > len(bounded["steps"]),
-            limits["llm_calls_truncated"],
-            limits["context_snapshots_truncated"],
-            limits["input_resources_truncated"],
-        )
-    )
-    bounded["summary_limits"] = limits
-    encoded = _private_json_bytes(bounded)
-    if len(encoded) <= MAX_TASK_SUMMARY_BYTES:
-        return bounded
-
-    original_bytes = len(encoded)
-    original_sha256 = hashlib.sha256(encoded).hexdigest()
-    for key in ("tools", "steps"):
-        value = bounded.get(key)
-        limits[f"{key}_payload_count"] = len(value) if isinstance(value, list) else 0
-        bounded[key] = []
-    minimal_contexts, _, _ = _task_context_snapshot_summaries(
-        contexts,
-        minimal=True,
-    )
-    bounded["context_snapshots"] = minimal_contexts
-    limits["context_snapshots_retained"] = len(minimal_contexts)
-    limits["context_snapshots_minimal"] = True
-    limits.update(
-        {
-            "payload_truncated": True,
-            "payload_original_bytes": original_bytes,
-            "payload_sha256": original_sha256,
-            "truncated": True,
-        }
-    )
-    if len(_private_json_bytes(bounded)) <= MAX_TASK_SUMMARY_BYTES:
-        return bounded
-
-    bounded["job_results"] = _bounded_job_results(raw_job_results, compact=True)
-    limits["job_result_content_omitted"] = True
-    bounded["llm_calls"] = []
-    bounded["input_resources"] = []
-    limits["llm_calls_retained"] = 0
-    limits["llm_calls_truncated"] = llm_call_total > 0
-    limits["input_resources_retained"] = 0
-    limits["input_resources_truncated"] = input_resource_total > 0
-    if len(_private_json_bytes(bounded)) > MAX_TASK_SUMMARY_BYTES:
-        raise ValueError("bounded task summary exceeds the hard size limit")
-    return bounded
-
-
-def _bounded_turn_document(payload: Dict[str, Any]) -> Dict[str, Any]:
-    bounded = dict(payload)
-    omissions: list[str] = []
-    for key, limit in (
-        ("task_id", 256),
-        ("session_id", 256),
-        ("message_id", 256),
-        ("stop_reason", 512),
-        ("user_text", 1024 * 1024),
-        ("final_text", 1024 * 1024),
-        ("error", 1024 * 1024),
-    ):
-        if key not in bounded or bounded.get(key) is None:
-            continue
-        value, truncated = _bounded_string(bounded.get(key), limit)
-        bounded[key] = value
-        if truncated:
-            omissions.append(key)
-    resource_values, resource_total, invalid_resources = _bounded_collection(
-        bounded.get("produced_resources"),
-        1000,
-    )
-    raw_resources = [value for value in resource_values if isinstance(value, str)]
-    bounded["produced_resources"] = [_bounded_text(value, 1024) for value in raw_resources]
-    if invalid_resources or resource_total > len(bounded["produced_resources"]):
-        omissions.append("produced_resources")
-    raw_job_results, job_result_total, invalid_job_results = _bounded_collection(
-        bounded.get("job_results"),
-        MAX_JOB_RESULT_SUMMARIES,
-    )
-    bounded["job_results"] = _bounded_job_results(raw_job_results)
-    if (
-        invalid_job_results
-        or job_result_total > len(bounded["job_results"])
-        or any(item.get("payload_truncated") for item in bounded["job_results"])
-    ):
-        omissions.append("job_results")
-    if omissions:
-        bounded["payload_truncated"] = True
-        bounded["omitted_fields"] = sorted(set(omissions))
-        bounded["payload_sha256"] = _payload_digest(payload)
-    if len(_private_json_bytes(bounded)) <= MAX_TASK_SUMMARY_BYTES:
-        return bounded
-    bounded["user_text"] = _bounded_text(bounded.get("user_text"), 256 * 1024)
-    bounded["final_text"] = _bounded_text(bounded.get("final_text"), 256 * 1024)
-    bounded["error"] = _bounded_text(bounded.get("error"), 256 * 1024)
-    bounded["job_results"] = _bounded_job_results(raw_job_results, compact=True)
-    bounded["payload_truncated"] = True
-    bounded["omitted_fields"] = sorted(
-        set(list(bounded.get("omitted_fields") or []) + ["large_content"])
-    )
-    if len(_private_json_bytes(bounded)) > MAX_TASK_SUMMARY_BYTES:
-        raise ValueError("bounded turn artifact exceeds the hard size limit")
-    return bounded
-
-
-def _bounded_task_or_turn_document(name: str, payload: Dict[str, Any]) -> Dict[str, Any]:
-    if name == TASK_FILENAME:
-        return _bounded_task_document(payload)
-    if name == TURN_FILENAME:
-        return _bounded_turn_document(payload)
-    return payload
 
 
 def complete_delegated_task(
@@ -3085,13 +1847,13 @@ def complete_delegated_task(
     if not str(task_id or "").startswith("task_") or "/" in task_id or "\\" in task_id:
         return None
     try:
-        storage_root = group_task_actor_root(workspace, create=False)
-        observability_root = _resolve_task_observability_root(workspace, history_root)
+        storage_root = _storage.group_task_actor_root(workspace, create=False)
+        observability_root = _storage._resolve_task_observability_root(workspace, history_root)
     except ValueError:
         return None
-    task_dir = storage_root / TASKS_DIRNAME / task_id
+    task_dir = storage_root / _projection.TASKS_DIRNAME / task_id
     try:
-        with _task_completion_lock(task_dir):
+        with _storage._task_completion_lock(task_dir):
             completion = _merge_delegated_task_completion(
                 workspace,
                 task_dir=task_dir,
@@ -3105,20 +1867,20 @@ def complete_delegated_task(
             if completed_result is None:
                 return task
             try:
-                _append_task_event(
+                _storage._append_task_event(
                     task_dir,
                     "job_completed",
-                    _redact_workspace_identity(
+                    _projection._redact_workspace_identity(
                         {"job_id": job_id, "result": completed_result},
                         workspace,
                     ),
                     workspace_root=observability_root,
                 )
                 if all_complete:
-                    _append_task_event(
+                    _storage._append_task_event(
                         task_dir,
                         "task_finished",
-                        _redact_workspace_identity(
+                        _projection._redact_workspace_identity(
                             {
                                 "status": task["status"],
                                 "job_results": task["job_results"],
@@ -3142,32 +1904,6 @@ def complete_delegated_task(
         return None
 
 
-@contextmanager
-def _task_completion_lock(task_dir: Path, *, create: bool = False) -> Iterator[None]:
-    task_dir_fd = _open_private_task_dir(task_dir, create=create)
-    lock_fd: int | None = None
-    try:
-        lock_path = task_dir / COMPLETION_LOCK_FILENAME
-        lock_fd = _open_event_path(
-            lock_path,
-            os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-            dir_fd=task_dir_fd,
-        )
-        _require_private_event_fd(lock_fd, label="task completion lock")
-        _acquire_bounded_file_lock(
-            lock_fd,
-            timeout_seconds=_COMPLETION_LOCK_TIMEOUT_SECONDS,
-            label="task completion lock",
-        )
-        yield
-    finally:
-        if lock_fd is not None:
-            os.close(lock_fd)
-        if task_dir_fd is not None:
-            os.close(task_dir_fd)
-
-
 def _merge_delegated_task_completion(
     workspace: Workspace,
     *,
@@ -3176,10 +1912,10 @@ def _merge_delegated_task_completion(
     result: Dict[str, Any],
     observability_root: Path,
 ) -> tuple[Dict[str, Any], Optional[Dict[str, Any]], bool] | None:
-    task = _read_private_task_json(task_dir, TASK_FILENAME)
+    task = _storage._read_private_task_json(task_dir, _projection.TASK_FILENAME)
     if not isinstance(task, dict):
         return None
-    turn = _read_private_task_json(task_dir, TURN_FILENAME) or {}
+    turn = _storage._read_private_task_json(task_dir, _projection.TURN_FILENAME) or {}
     if not isinstance(turn, dict):
         turn = {}
     main_failed = str(turn.get("main_status") or "") == "failed" or (
@@ -3197,7 +1933,7 @@ def _merge_delegated_task_completion(
     result_already_recorded = job_id in summaries
     already_terminal = result_already_recorded and task.get("status") in {"succeeded", "failed"}
     if not result_already_recorded:
-        summaries[job_id] = _job_result_summary(
+        summaries[job_id] = _projection._job_result_summary(
             job_id,
             result,
             omit_free_text=workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED,
@@ -3223,7 +1959,7 @@ def _merge_delegated_task_completion(
         task["job_ids"] = ordered_ids
         task["job_results"] = ordered_results
         task["updated_at"] = now
-        task["progress"] = _delegated_progress(ordered_results, len(ordered_ids))
+        task["progress"] = _projection._delegated_progress(ordered_results, len(ordered_ids))
         if all_complete:
             succeeded = not main_failed and all(bool(item.get("ok")) for item in ordered_results)
             task["status"] = "succeeded" if succeeded else "failed"
@@ -3240,10 +1976,10 @@ def _merge_delegated_task_completion(
             secrets=collect_observability_secrets(),
             roots=default_observability_roots(observability_root),
         )
-        _write_private_task_json(
+        _storage._write_private_task_json(
             task_dir,
-            TASK_FILENAME,
-            _redact_workspace_identity(task_redaction.value, workspace),
+            _projection.TASK_FILENAME,
+            _projection._redact_workspace_identity(task_redaction.value, workspace),
         )
 
     if isinstance(turn, dict):
@@ -3270,715 +2006,16 @@ def _merge_delegated_task_completion(
             secrets=collect_observability_secrets(),
             roots=default_observability_roots(observability_root),
         )
-        _write_private_task_json(
+        _storage._write_private_task_json(
             task_dir,
-            TURN_FILENAME,
-            _redact_workspace_identity(turn_redaction.value, workspace),
+            _projection.TURN_FILENAME,
+            _projection._redact_workspace_identity(turn_redaction.value, workspace),
         )
     return (
         task,
         None if result_already_recorded else summaries[job_id],
         all_complete,
     )
-
-
-def _job_result_summary(
-    job_id: str,
-    result: Dict[str, Any],
-    *,
-    omit_free_text: bool = False,
-) -> Dict[str, Any]:
-    details = result.get("details") if isinstance(result.get("details"), dict) else {}
-    raw_summary = str(result.get("summary") or "")
-    raw_error = str(result.get("error") or "")
-    summary = _bounded_job_result(
-        {
-            "job_id": job_id,
-            "ok": bool(result.get("ok")),
-            "status": "succeeded" if result.get("ok") else "failed",
-            "stage": str(
-                details.get("failed_stage")
-                or result.get("stage")
-                or ("succeeded" if result.get("ok") else "failed")
-            ),
-            "error_code": str(result.get("error_code") or ""),
-            "summary": "" if omit_free_text else raw_summary,
-            "error": "" if omit_free_text else raw_error,
-            "outputs": [str(item) for item in result.get("outputs") or [] if isinstance(item, str)],
-            "finished_at": result.get("finished_at"),
-        }
-    )
-    omitted_fields = [
-        field
-        for field, value in (("summary", raw_summary), ("error", raw_error))
-        if omit_free_text and value
-    ]
-    if omitted_fields:
-        summary["payload_truncated"] = True
-        summary["omitted_fields"] = omitted_fields
-        summary["payload_sha256"] = _payload_digest(
-            {
-                "job_id": job_id,
-                "ok": bool(result.get("ok")),
-                "finished_at": result.get("finished_at"),
-            }
-        )
-    return summary
-
-
-def _delegated_progress(results: List[Dict[str, Any]], expected: int) -> str:
-    completed = len(results)
-    failed = sum(1 for item in results if not item.get("ok"))
-    if completed < expected:
-        return f"Background child jobs completed: {completed}/{expected}."
-    if failed:
-        return f"{failed} background child job(s) failed."
-    return f"All {expected} background child job(s) completed."
-
-
-def _append_task_event(
-    task_dir: Path,
-    event_type: str,
-    payload: Dict[str, Any],
-    *,
-    workspace_root: Path,
-) -> None:
-    target = task_dir / EVENTS_FILENAME
-    task_dir_fd = _open_private_event_task_dir(task_dir)
-    lock_fd: int | None = None
-    try:
-        lock_path = task_dir / ".events.lock"
-        lock_fd = _open_event_path(
-            lock_path,
-            os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0),
-            0o600,
-            dir_fd=task_dir_fd,
-        )
-        _require_private_event_fd(lock_fd, label="event lock")
-        _acquire_event_lock(lock_fd)
-        sequence_path = task_dir / EVENT_SEQUENCE_FILENAME
-        sequence_state = _read_event_sequence_state(
-            sequence_path,
-            dir_fd=task_dir_fd,
-        )
-        flags = os.O_RDWR | os.O_CREAT | os.O_APPEND
-        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        event_fd = _open_event_path(target, flags, 0o600, dir_fd=task_dir_fd)
-        try:
-            _require_private_event_fd(
-                event_fd,
-                label="event log",
-                tighten_legacy_permissions=True,
-            )
-            tail_sequence = _last_complete_event_sequence_from_fd(event_fd)
-            if tail_sequence is not None:
-                last_sequence = tail_sequence
-            elif sequence_state is not None:
-                last_sequence = sequence_state
-            else:
-                last_sequence = _last_event_sequence(target, dir_fd=task_dir_fd)
-            if last_sequence >= MAX_EVENT_SEQUENCE:
-                raise OverflowError("task event sequence exhausted the int64 range")
-            sequence = last_sequence + 1
-            redaction = redact_observability_payload(
-                payload,
-                secrets=collect_observability_secrets(),
-                roots=default_observability_roots(workspace_root),
-            )
-            event = {
-                "event_id": f"{task_dir.name}:{sequence}",
-                "sequence": sequence,
-                "event": event_type,
-                "recorded_at": time.time(),
-                "data": redaction.value,
-                "sanitization": {
-                    "redacted_before_persistence": True,
-                    "redacted": redaction.replacement_count > 0,
-                    "payload_truncated": False,
-                },
-            }
-            encoded_event = _task_event_bytes(event)
-            if len(encoded_event) > MAX_TASK_EVENT_BYTES:
-                event["data"] = _bounded_event_payload(redaction.value)
-                event["sanitization"]["payload_truncated"] = True
-                encoded_event = _task_event_bytes(event)
-            if len(encoded_event) > MAX_TASK_EVENT_BYTES:
-                raise ValueError("bounded task event exceeds the hard size limit")
-            _ensure_event_line_boundary(event_fd)
-            remaining = memoryview(encoded_event)
-            while remaining:
-                written = os.write(event_fd, remaining)
-                if written <= 0:
-                    raise OSError("failed to append task event")
-                remaining = remaining[written:]
-            # The JSONL is authoritative.  Updating the bounded sidecar only
-            # after append lets the next writer recover from a stale cache by
-            # reading the last complete line without rescanning the whole log.
-            _write_event_sequence_state(
-                sequence_path,
-                sequence,
-                dir_fd=task_dir_fd,
-            )
-        finally:
-            os.close(event_fd)
-    finally:
-        if lock_fd is not None:
-            os.close(lock_fd)
-        if task_dir_fd is not None:
-            os.close(task_dir_fd)
-
-
-def _open_event_path(
-    path: Path,
-    flags: int,
-    mode: int = 0o600,
-    *,
-    dir_fd: int | None = None,
-) -> int:
-    if dir_fd is None:
-        return os.open(path, flags, mode)
-    return os.open(path.name, flags, mode, dir_fd=dir_fd)
-
-
-def _open_private_event_task_dir(task_dir: Path) -> int | None:
-    return _open_private_task_dir(task_dir, create=False)
-
-
-def _acquire_event_lock(fd: int) -> None:
-    _acquire_bounded_file_lock(
-        fd,
-        timeout_seconds=_EVENT_LOCK_TIMEOUT_SECONDS,
-        label="task event lock",
-    )
-
-
-def _acquire_bounded_file_lock(
-    fd: int,
-    *,
-    timeout_seconds: float,
-    label: str,
-) -> None:
-    if os.name != "posix":
-        return
-    import fcntl
-
-    deadline = time.monotonic() + max(0.0, timeout_seconds)
-    while True:
-        try:
-            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
-        except BlockingIOError:
-            if time.monotonic() >= deadline:
-                raise TimeoutError(f"{label} acquisition timed out")
-            time.sleep(0.005)
-
-
-def _last_complete_event_sequence_from_fd(fd: int) -> Optional[int]:
-    size = os.fstat(fd).st_size
-    if size == 0:
-        return 0
-    read_size = min(size, MAX_TASK_EVENT_BYTES * 4)
-    os.lseek(fd, size - read_size, os.SEEK_SET)
-    raw = os.read(fd, read_size)
-    if size > read_size:
-        newline = raw.find(b"\n")
-        raw = raw[newline + 1 :] if newline >= 0 else b""
-    for line in reversed(raw.splitlines()):
-        try:
-            event = json.loads(line)
-        except (ValueError, RecursionError):
-            continue
-        if not isinstance(event, dict):
-            continue
-        sequence = event.get("sequence")
-        if (
-            isinstance(sequence, int)
-            and not isinstance(sequence, bool)
-            and 0 <= sequence <= MAX_EVENT_SEQUENCE
-        ):
-            return sequence
-    return None
-
-
-def _ensure_event_line_boundary(fd: int) -> None:
-    size = os.fstat(fd).st_size
-    if size <= 0:
-        return
-    os.lseek(fd, -1, os.SEEK_END)
-    if os.read(fd, 1) != b"\n":
-        os.write(fd, b"\n")
-
-
-def _read_event_sequence_state(
-    path: Path,
-    *,
-    dir_fd: int | None = None,
-) -> Optional[int]:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = _open_event_path(path, flags, dir_fd=dir_fd)
-    except FileNotFoundError:
-        return None
-    try:
-        current = os.fstat(fd)
-        if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-            raise OSError("event sequence state must be a single-link regular file")
-        if os.name == "posix" and current.st_uid != os.geteuid():
-            raise OSError("event sequence state has an unexpected owner")
-        if stat.S_IMODE(current.st_mode) & 0o077:
-            raise OSError("event sequence state has unsafe permissions")
-        raw_bytes = os.read(fd, _MAX_EVENT_SEQUENCE_STATE_BYTES + 1)
-    finally:
-        os.close(fd)
-    if len(raw_bytes) > _MAX_EVENT_SEQUENCE_STATE_BYTES:
-        return None
-    try:
-        raw_text = raw_bytes.decode("ascii", errors="strict")
-        if not raw_text or not raw_text.isdecimal():
-            return None
-        value = int(raw_text)
-    except (UnicodeDecodeError, ValueError):
-        return None
-    if raw_text != str(value):
-        return None
-    return value if 0 <= value <= MAX_EVENT_SEQUENCE else None
-
-
-def _write_event_sequence_state(
-    path: Path,
-    sequence: int,
-    *,
-    dir_fd: int | None = None,
-) -> None:
-    if not isinstance(sequence, int) or isinstance(sequence, bool):
-        raise TypeError("event sequence must be an integer")
-    if not 0 <= sequence <= MAX_EVENT_SEQUENCE:
-        raise OverflowError("event sequence is outside the int64 range")
-    flags = os.O_RDWR | os.O_CREAT
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = _open_event_path(path, flags, 0o600, dir_fd=dir_fd)
-    try:
-        current = os.fstat(fd)
-        if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-            raise OSError("event sequence state must be a single-link regular file")
-        if os.name == "posix" and current.st_uid != os.geteuid():
-            raise OSError("event sequence state has an unexpected owner")
-        if stat.S_IMODE(current.st_mode) & 0o077:
-            raise OSError("event sequence state has unsafe permissions")
-        os.ftruncate(fd, 0)
-        os.lseek(fd, 0, os.SEEK_SET)
-        remaining = memoryview(str(sequence).encode("ascii"))
-        while remaining:
-            written = os.write(fd, remaining)
-            if written <= 0:
-                raise OSError("failed to update event sequence state")
-            remaining = remaining[written:]
-    finally:
-        os.close(fd)
-
-
-def _require_private_event_fd(
-    fd: int,
-    *,
-    label: str,
-    tighten_legacy_permissions: bool = False,
-) -> None:
-    current = os.fstat(fd)
-    if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
-        raise OSError(f"{label} must be a single-link regular file")
-    if os.name == "posix" and current.st_uid != os.geteuid():
-        raise OSError(f"{label} has an unexpected owner")
-    unsafe_permissions = stat.S_IMODE(current.st_mode) & 0o077
-    if unsafe_permissions:
-        # A historical 0644-style log can be made private after inode, owner,
-        # and link validation.  Never trust or migrate a file that another
-        # user could write: it may still be held open after chmod.
-        if unsafe_permissions & 0o022:
-            raise OSError(f"{label} has unsafe writable permissions")
-        if not tighten_legacy_permissions or not hasattr(os, "fchmod"):
-            raise OSError(f"{label} has unsafe permissions")
-        # Historical v2 event logs were commonly created as 0644.  Tighten only
-        # after the open descriptor has passed type, ownership, and link-count
-        # validation so a symlink/hardlink cannot turn migration into a chmod
-        # gadget.  Re-check the descriptor after mutation before appending.
-        os.fchmod(fd, 0o600)
-        current = os.fstat(fd)
-        if (
-            not stat.S_ISREG(current.st_mode)
-            or current.st_nlink != 1
-            or (os.name == "posix" and current.st_uid != os.geteuid())
-            or stat.S_IMODE(current.st_mode) & 0o077
-        ):
-            raise OSError(f"{label} could not be made private")
-
-
-def _last_event_sequence(path: Path, *, dir_fd: int | None = None) -> int:
-    last = 0
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        fd = _open_event_path(path, flags, dir_fd=dir_fd)
-    except FileNotFoundError:
-        return 0
-    try:
-        _require_private_event_fd(
-            fd,
-            label="event log",
-            tighten_legacy_permissions=True,
-        )
-        with os.fdopen(fd, "r", encoding="utf-8", errors="replace") as handle:
-            fd = -1
-            while True:
-                line = handle.readline(MAX_TASK_EVENT_BYTES + 1)
-                if not line:
-                    break
-                if len(line) > MAX_TASK_EVENT_BYTES and not line.endswith("\n"):
-                    while line and not line.endswith("\n"):
-                        line = handle.readline(MAX_TASK_EVENT_BYTES + 1)
-                    continue
-                try:
-                    event = json.loads(line)
-                except (ValueError, RecursionError):
-                    continue
-                if isinstance(event, dict):
-                    value = event.get("sequence")
-                    if (
-                        isinstance(value, int)
-                        and not isinstance(value, bool)
-                        and last < value <= MAX_EVENT_SEQUENCE
-                    ):
-                        last = value
-    except OSError:
-        return 0
-    finally:
-        if fd >= 0:
-            os.close(fd)
-    return last
-
-
-def _task_tool_summaries(tools: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    summaries: List[Dict[str, Any]] = []
-    for item in tools[-MAX_TASK_TOOL_SUMMARIES:]:
-        summaries.append(
-            {
-                "name": _bounded_text(item.get("name"), 256),
-                "kind": _bounded_text(item.get("kind"), 64),
-                "status": _bounded_text(item.get("status"), 64),
-                "started_at": item.get("started_at"),
-                "finished_at": item.get("finished_at"),
-                "elapsed_s": item.get("elapsed_s"),
-                "summary": _bounded_text(item.get("summary"), 2000),
-                "error": (
-                    _bounded_text(item.get("error"), 2000)
-                    if item.get("error") is not None
-                    else None
-                ),
-                "span_id": (
-                    _bounded_text(item.get("span_id"), 256)
-                    if item.get("span_id") is not None
-                    else None
-                ),
-                "parent_span_id": (
-                    _bounded_text(item.get("parent_span_id"), 256)
-                    if item.get("parent_span_id") is not None
-                    else None
-                ),
-                "depth": item.get("depth"),
-            }
-        )
-    return summaries
-
-
-def _task_event_bytes(event: Dict[str, Any]) -> bytes:
-    return (
-        json.dumps(
-            event,
-            ensure_ascii=False,
-            default=str,
-            allow_nan=False,
-            separators=(",", ":"),
-        )
-        + "\n"
-    ).encode("utf-8")
-
-
-def _bounded_event_payload(value: Any) -> Dict[str, Any]:
-    canonical = _json_bytes(value)
-    retained: Dict[str, Any] = {}
-    if isinstance(value, dict):
-        for key in (
-            "name",
-            "kind",
-            "status",
-            "ok",
-            "trace_id",
-            "span_id",
-            "parent_span_id",
-            "step_id",
-            "job_id",
-            "depth",
-            "iteration",
-            "model",
-            "finish_reason",
-            "started_at",
-            "finished_at",
-            "recorded_at",
-        ):
-            raw = value.get(key)
-            if raw is None or isinstance(raw, (bool, int, float)):
-                retained[key] = raw
-            elif isinstance(raw, str):
-                retained[key] = _bounded_text(raw, 512)
-        for key in ("summary", "error", "message"):
-            if key in value:
-                retained[key] = _bounded_text(value.get(key), 2000)
-    retained.update(
-        {
-            "payload_truncated": True,
-            "original_bytes": len(canonical),
-            "payload_sha256": hashlib.sha256(canonical).hexdigest(),
-            "top_level_item_count": len(value) if isinstance(value, (dict, list)) else 1,
-        }
-    )
-    return retained
-
-
-def _task_step_summaries(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    summaries: List[Dict[str, Any]] = []
-    for item in steps[-MAX_TASK_STEP_SUMMARIES:]:
-        summaries.append(
-            {
-                "step_id": _bounded_text(item.get("step_id"), 256),
-                "type": _bounded_text(item.get("type"), 64),
-                "parent_step_id": (
-                    _bounded_text(item.get("parent_step_id"), 256)
-                    if item.get("parent_step_id") is not None
-                    else None
-                ),
-                "depth": item.get("depth"),
-                "status": _bounded_text(item.get("status"), 64),
-                "title": _bounded_text(item.get("title"), 512),
-                "started_at": item.get("started_at"),
-                "finished_at": item.get("finished_at"),
-                "elapsed_s": item.get("elapsed_s"),
-                "summary": _bounded_text(item.get("summary"), 2000),
-                "error": (
-                    _bounded_text(item.get("error"), 2000)
-                    if item.get("error") is not None
-                    else None
-                ),
-                "metadata": _bounded_mapping(item.get("metadata")),
-                "estimated_usage": normalize_usage(item.get("estimated_usage")),
-                "actual_usage": normalize_usage(item.get("actual_usage")),
-                "inclusive_usage": normalize_usage(item.get("inclusive_usage")),
-                "raw_event_types": [
-                    _bounded_text(value, 128)
-                    for value in list(item.get("raw_event_types") or [])[:20]
-                ],
-            }
-        )
-    return summaries
-
-
-def _json_bytes(payload: Any) -> bytes:
-    return json.dumps(
-        payload,
-        ensure_ascii=False,
-        sort_keys=True,
-        indent=2,
-        default=str,
-        allow_nan=False,
-    ).encode("utf-8")
-
-
-def _message_manifest(messages: Any) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for raw in list(messages or [])[:200]:
-        item = raw if isinstance(raw, dict) else {"content": raw}
-        content = item.get("content")
-        serialized = (
-            content
-            if isinstance(content, str)
-            else json.dumps(content, ensure_ascii=False, default=str)
-        )
-        serialized_message = json.dumps(
-            item,
-            ensure_ascii=False,
-            sort_keys=True,
-            default=str,
-        )
-        reported_content_chars = len(serialized)
-        if isinstance(content, str):
-            for match in _TRUNCATED_ORIGINAL_CHARS_RE.finditer(content):
-                try:
-                    reported_content_chars = max(
-                        reported_content_chars,
-                        int(match.group(1)),
-                    )
-                except ValueError:
-                    continue
-        reported_message_chars = len(serialized_message) + max(
-            0,
-            reported_content_chars - len(serialized),
-        )
-        out.append(
-            {
-                "role": _bounded_text(item.get("role"), 256),
-                "name": _bounded_text(item.get("name"), 256),
-                "char_count": reported_message_chars,
-                "message_sha256": hashlib.sha256(serialized_message.encode("utf-8")).hexdigest(),
-                "content_char_count": reported_content_chars,
-                "content_sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
-                "content_preview": serialized[:1024],
-            }
-        )
-    return out
-
-
-def _tool_schema_manifest(schemas: Any) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for raw in list(schemas or [])[:200]:
-        item = raw if isinstance(raw, dict) else {"schema": raw}
-        function = item.get("function") if isinstance(item.get("function"), dict) else {}
-        name = function.get("name") or item.get("name") or ""
-        serialized = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
-        out.append(
-            {
-                "name": _bounded_text(name, 256),
-                "char_count": len(serialized),
-                "schema_sha256": hashlib.sha256(serialized.encode("utf-8")).hexdigest(),
-            }
-        )
-    return out
-
-
-def _truncated_context_payload(
-    payload: Dict[str, Any],
-    *,
-    original_bytes: int,
-    content_sha256: str,
-) -> Dict[str, Any]:
-    bounded: Dict[str, Any] = {
-        "schema_version": payload.get("schema_version", 1),
-        "task_id": _bounded_text(payload.get("task_id"), 256),
-        "snapshot_id": _bounded_text(payload.get("snapshot_id"), 256),
-        "captured_at": payload.get("captured_at"),
-        "runtime_id": _bounded_text(payload.get("runtime_id"), 256),
-        "model": _bounded_text(payload.get("model"), 1024),
-        "iteration": payload.get("iteration"),
-        "coverage": _bounded_text(payload.get("coverage"), 256),
-        "omitted": [_bounded_text(item, 512) for item in list(payload.get("omitted") or [])[:200]],
-        "context_kind": _bounded_text(payload.get("context_kind"), 256),
-        "trace_id": _bounded_text(payload.get("trace_id"), 256),
-        "span_id": _bounded_text(payload.get("span_id"), 256),
-        "parent_span_id": _bounded_text(payload.get("parent_span_id"), 256),
-        "depth": payload.get("depth"),
-        "estimated_tokens": payload.get("estimated_tokens"),
-        "model_selection": _bounded_mapping(payload.get("model_selection")),
-        "session_messages": _message_manifest(payload.get("session_messages")),
-        "effective_messages": _message_manifest(payload.get("effective_messages")),
-        "tool_schemas": _tool_schema_manifest(payload.get("tool_schemas")),
-        "resources": _resource_manifest(payload.get("resources")),
-        "capture_status": "truncated",
-        "truncated": True,
-        "original_bytes": original_bytes,
-        "content_sha256": content_sha256,
-        "sanitization": payload.get("sanitization"),
-    }
-    _set_stored_bytes(bounded)
-    if len(_json_bytes(bounded)) > MAX_CONTEXT_ARTIFACT_BYTES:
-        for key in ("session_messages", "effective_messages"):
-            for item in bounded.get(key) or []:
-                if isinstance(item, dict):
-                    item.pop("content_preview", None)
-        _set_stored_bytes(bounded)
-    if len(_json_bytes(bounded)) > MAX_CONTEXT_ARTIFACT_BYTES:
-        bounded["session_messages"] = []
-        bounded["effective_messages"] = []
-        bounded["tool_schemas"] = []
-        bounded["resources"] = []
-        bounded["truncation_reason"] = "artifact_size_limit"
-        _set_stored_bytes(bounded)
-    if len(_json_bytes(bounded)) > MAX_CONTEXT_ARTIFACT_BYTES:
-        raise ValueError("truncated context artifact exceeds the hard size limit")
-    return bounded
-
-
-def _bounded_text(value: Any, limit: int) -> str:
-    return str(value or "")[:limit]
-
-
-def _bounded_mapping(value: Any) -> Dict[str, Any]:
-    if not isinstance(value, dict):
-        return {}
-    out: Dict[str, Any] = {}
-    for raw_key, raw_value in list(value.items())[:100]:
-        key = _bounded_text(raw_key, 256)
-        if raw_value is None or isinstance(raw_value, (bool, int, float)):
-            out[key] = raw_value
-        else:
-            out[key] = _bounded_text(raw_value, 1024)
-    return out
-
-
-def _resource_manifest(resources: Any) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
-    for raw in list(resources or [])[:200]:
-        item = raw if isinstance(raw, dict) else {}
-        out.append(
-            {
-                "sequence": item.get("sequence"),
-                "media_type": _bounded_text(item.get("media_type"), 256),
-                "size_bytes": item.get("size_bytes"),
-                "sha256": _bounded_text(item.get("sha256"), 128),
-            }
-        )
-    return out
-
-
-def _set_stored_bytes(payload: Dict[str, Any]) -> None:
-    for _ in range(4):
-        stored_bytes = len(_json_bytes(payload))
-        if payload.get("stored_bytes") == stored_bytes:
-            return
-        payload["stored_bytes"] = stored_bytes
-
-
-def _chmod_private(path: Path, mode: int) -> None:
-    try:
-        path.chmod(mode)
-    except OSError:
-        pass
-
-
-def _require_private_path(path: Path, *, mode: int, directory: bool) -> None:
-    current = path.lstat()
-    if stat.S_ISLNK(current.st_mode):
-        raise OSError("private observability path must not be a symlink")
-    expected_type = stat.S_ISDIR if directory else stat.S_ISREG
-    if not expected_type(current.st_mode):
-        raise OSError("private observability path has an invalid inode type")
-    if stat.S_IMODE(current.st_mode) != mode:
-        raise OSError("private observability path has unsafe permissions")
-    if os.name == "posix" and current.st_uid != os.geteuid():
-        raise OSError("private observability path has an unexpected owner")
-    if not directory and current.st_nlink != 1:
-        raise OSError("private observability artifact must have one hard link")
-
-
-def _normalize_usage_payload(usage: Dict[str, Any]) -> Dict[str, int]:
-    normalized = normalize_usage(usage)
-    return {
-        key: normalized[key]
-        for key in (
-            "prompt_tokens",
-            "completion_tokens",
-            "total_tokens",
-            "reasoning_tokens",
-            "cached_tokens",
-            "cache_read_tokens",
-            "cache_write_tokens",
-        )
-    }
 
 
 def _observed_epoch(value: Optional[float]) -> float:

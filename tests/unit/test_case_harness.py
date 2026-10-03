@@ -1,4 +1,5 @@
 from __future__ import annotations
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 
 import copy
 import subprocess
@@ -559,7 +560,7 @@ def test_repair_markers_are_not_limited_to_recent_global_history(repository, tmp
 
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_managed_candidate_bootstrap_and_database(tmp_path, dry_run):
-    application = EvaluationApplication(tmp_path / "evaluations", repository_root=ROOT)
+    application = EvaluationApplication(tmp_path / "evaluations", repository_root=ROOT, worker=LocalEvaluationWorker())
     record = application.start(
         bot_id="lingye-copilot-qq",
         evaluation_id="eval-source-smoke",

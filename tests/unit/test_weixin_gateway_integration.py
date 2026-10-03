@@ -5,6 +5,8 @@ import base64
 from pathlib import Path
 import socket
 
+import pytest
+
 from test_application_actor_runtime import _FakeAgentRuntime
 
 from chatcopilot.botspec.loader import load_botspec
@@ -20,7 +22,8 @@ PNG = base64.b64decode(
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_weixin_owner_turn_reuses_application_and_records_each_file_delivery(tmp_path, monkeypatch):
+@pytest.mark.parametrize("delivery_error", [None, "weixin_api_rejected", "weixin_request_failed"])
+def test_weixin_owner_turn_reuses_application_and_records_each_file_delivery(tmp_path, monkeypatch, delivery_error):
     agent = _FakeAgentRuntime()
     agent.subagent_default_model_client = None
     agent.close = lambda: None
@@ -67,6 +70,9 @@ def test_weixin_owner_turn_reuses_application_and_records_each_file_delivery(tmp
                     return await self.updates.get()
                 assert endpoint == "sendmessage"
                 self.sent.append(body["msg"])
+                if delivery_error and len(self.sent) == 2:
+                    from chatcopilot.contracts.weixin import WeixinError
+                    raise WeixinError(delivery_error)
                 item = body["msg"]["item_list"][0]
                 if item.get("text_item", {}).get("text", "").startswith("reply:"):
                     self.final.set()
@@ -90,7 +96,12 @@ def test_weixin_owner_turn_reuses_application_and_records_each_file_delivery(tmp
             image.write_bytes(PNG)
             report = root / "report.txt"
             report.write_text("report")
-            creation["file_sender"]([str(image), str(report)], "documents")
+            if delivery_error:
+                from chatcopilot.channels.base import ChannelDeliveryError
+                with pytest.raises(ChannelDeliveryError):
+                    creation["file_sender"]([str(image), str(report)], "documents")
+            else:
+                creation["file_sender"]([str(image), str(report)], "documents")
 
         agent.run_hook = send_files
         try:
@@ -113,7 +124,22 @@ def test_weixin_owner_turn_reuses_application_and_records_each_file_delivery(tmp
                 }
             )
             await asyncio.wait_for(client.final.wait(), 5)
-            assert [entry["item_list"][0]["type"] for entry in client.sent] == [2, 4, 1, 1]
+            assert [entry["item_list"][0]["type"] for entry in client.sent] == (
+                [2, 4, 1] if delivery_error else [2, 4, 1, 1]
+            )
+            assert len({entry["client_id"] for entry in client.sent}) == len(client.sent)
+            receipt_stages = [
+                host.state_store.delivery_receipts(entry["client_id"])[-1].stage
+                for entry in client.sent
+            ]
+            if delivery_error:
+                assert receipt_stages == [
+                    "provider_acknowledged",
+                    "failed" if delivery_error == "weixin_api_rejected" else "delivery_unknown",
+                    "provider_acknowledged",
+                ]
+            else:
+                assert receipt_stages == ["provider_acknowledged"] * 4
             assert all(entry["context_token"] == "private-context" for entry in client.sent)
             session = host.state_store.list_sessions()[0]
             assert session.account == ChannelAccountRef("weixin", "bot-id")

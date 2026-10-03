@@ -42,7 +42,7 @@ from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilt
 from chatcopilot.agent.tools.disclosure import ToolDisclosureView
 from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.registry import ToolRegistry
-from chatcopilot.agent.tools.workspace_context import WorkspaceService
+from chatcopilot.core.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig, RagSourceConfig
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 from chatcopilot.contracts.runtime_adapter import RuntimeOpenRequest, RuntimeSessionOptions

@@ -32,6 +32,7 @@ from chatcopilot.contracts.gateway_protocol import RequestFrame
 from chatcopilot.contracts.identity import ConversationIdentity, Role
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.gateway import runtime as runtime_module
+from chatcopilot.gateway import channel_assembly
 from chatcopilot.gateway.channels import ChannelRuntimeError
 from chatcopilot.gateway.coordinator import GatewayTurnCoordinatorError
 from chatcopilot.gateway.runtime import (
@@ -116,13 +117,13 @@ def test_runtime_config_is_strict_and_redacts_both_credentials(tmp_path: Path) -
     assert config.state_root.name == "gateway"
     assert "g" * 16 not in repr(config)
     assert "q" * 16 not in repr(config)
-    assert config.onebot.action_timeout_seconds == 120.0
+    assert config.channel.action_timeout_seconds == 120.0
 
 
 def test_runtime_preserves_configured_onebot_acknowledgement_timeout(tmp_path: Path) -> None:
     runtime = _runtime()
     runtime.channels = ChannelsSpec(qq=QQChannelSpec(action_timeout_seconds=240.5))
-    assert parse_gateway_runtime_config(runtime, _environment(tmp_path)).onebot.action_timeout_seconds == 240.5
+    assert parse_gateway_runtime_config(runtime, _environment(tmp_path)).channel.action_timeout_seconds == 240.5
 
 
 def test_runtime_preserves_intake_and_native_frame_budgets(tmp_path):
@@ -131,7 +132,7 @@ def test_runtime_preserves_intake_and_native_frame_budgets(tmp_path):
     runtime.channels = ChannelsSpec(qq=QQChannelSpec(max_frame_bytes=8 * 1024 * 1024))
     config = parse_gateway_runtime_config(runtime, _environment(tmp_path))
     assert config.max_concurrent_turns == 12 and config.max_pending_ingress == 4096
-    assert config.onebot.max_frame_bytes == 8 * 1024 * 1024
+    assert config.channel.max_frame_bytes == 8 * 1024 * 1024
 
 
 @pytest.mark.parametrize(
@@ -277,7 +278,7 @@ def _build_fake_host(
     monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *_, **__: agent)
     monkeypatch.setattr(runtime_module, "ActorSessionFactory", _FakeActorFactory)
-    monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", _FakeDriver)
+    monkeypatch.setattr(channel_assembly, "OneBotForwardWebSocketDriver", _FakeDriver)
     monkeypatch.setattr(runtime_module, "GatewayWebSocketServer", _FakeServer)
     host = build_gateway_runtime_host(
         _runtime(),
@@ -626,7 +627,7 @@ def test_build_hydrates_then_closes_recovery_required_run(
     monkeypatch.setattr(runtime_module, "load_config", lambda **_: ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ))
     monkeypatch.setattr(runtime_module, "assemble_agent_runtime", lambda *_, **__: agent)
     monkeypatch.setattr(runtime_module, "ActorSessionFactory", _FakeActorFactory)
-    monkeypatch.setattr(runtime_module, "OneBotForwardWebSocketDriver", _FakeDriver)
+    monkeypatch.setattr(channel_assembly, "OneBotForwardWebSocketDriver", _FakeDriver)
     monkeypatch.setattr(runtime_module, "GatewayWebSocketServer", _FakeServer)
 
     host = build_gateway_runtime_host(_runtime(), environ=environ)

@@ -40,7 +40,7 @@ from chatcopilot.core.session_env_store import (
     session_env_path_from_environment,
 )
 from chatcopilot.core.wiki import WikiStore
-from chatcopilot.middleware.access_control import (
+from chatcopilot.core.access import (
     default_assistant_mode,
     get_admins,
     get_owners,

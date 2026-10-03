@@ -42,7 +42,7 @@ from chatcopilot.agent.subagents.workflow import WorkflowRunner
 from chatcopilot.agent.subagents.workflow_tools import make_workflow_tool as _make_workflow_tool_impl
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter
 from chatcopilot.agent.tools.file_delivery import FileSender
-from chatcopilot.agent.tools.workspace_context import WorkspaceService
+from chatcopilot.core.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.subagents import CustomSubagentSpec, SubagentSpec
 from chatcopilot.contracts.tool_packs import ToolProvider

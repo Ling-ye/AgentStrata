@@ -259,11 +259,19 @@ def test_corrupt_memory_database_fails_without_exposing_path(tmp_path: Path):
 
 def test_prompt_memory_projection_is_bounded(tmp_path: Path):
     state, _ = _state(tmp_path)
-    for index in range(12):
-        state.memory_append(text=f"默认决定{index}：" + "甲" * 600, section="decisions")
-    projected = state.memory_context("默认决定")
-    assert len(projected) <= 4000
-    assert len(state.memory_snapshot()) > len(projected)
+    for index in range(4):
+        state.memory_append(text=f"固定决定{index}：" + "甲" * 2000, section="decisions")
+    for index in range(5):
+        state.memory_append(text=f"检索主题{index}：" + "乙" * 2000, section="facts")
+    # Stable decisions and recall candidates are disjoint, so the fixture
+    # exceeds the documented prompt budget regardless of UUID/time ordering.
+    projected = state.memory_context("检索主题")
+    assert len(projected) <= 12_000
+    assert len(projected.splitlines()) == 5
+    assert all(f"固定决定{index}：" in projected for index in range(4))
+    assert "检索主题" in projected
+    assert len(state.memory_snapshot()) > 12_000
+    assert len(state.memory_search("", limit=100)) == 9
 
 
 def test_owner_destructive_tools_require_current_trusted_request(tmp_path: Path):

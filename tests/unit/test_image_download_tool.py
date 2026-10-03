@@ -9,7 +9,7 @@ from pathlib import Path
 from unittest import mock
 
 from chatcopilot.agent.tools.builtin.workspace import images as image_tools
-from chatcopilot.agent.tools.workspace_context import bind_workspace_service
+from chatcopilot.core.workspace_context import bind_workspace_service
 from chatcopilot.agent.tools.builtin import workspace_tools
 from chatcopilot.agent.tools.registry import discover_tools
 from chatcopilot.contracts.tools import ToolContext
@@ -68,7 +68,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
 
     def _public_dns(self):
         return mock.patch(
-            "chatcopilot.agent.tools.builtin.workspace_tools.socket.getaddrinfo",
+            "chatcopilot.agent.tools.builtin.workspace.images.socket.getaddrinfo",
             return_value=[(None, None, None, None, ("93.184.216.34", 0))],
         )
 
@@ -158,7 +158,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
     def test_fake_ip_dns_uses_independently_resolved_public_address(self) -> None:
         fake_ip = "198.18." + "0.8"
         fake_dns = mock.patch(
-            "chatcopilot.agent.tools.builtin.workspace_tools.socket.getaddrinfo",
+            "chatcopilot.agent.tools.builtin.workspace.images.socket.getaddrinfo",
             return_value=[(None, None, None, None, (fake_ip, 443))],
         )
         with fake_dns, mock.patch(
@@ -183,7 +183,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
     def test_non_fake_private_dns_does_not_use_doh_fallback(self) -> None:
         loopback_ip = "127.0." + "0.2"
         private_dns = mock.patch(
-            "chatcopilot.agent.tools.builtin.workspace_tools.socket.getaddrinfo",
+            "chatcopilot.agent.tools.builtin.workspace.images.socket.getaddrinfo",
             return_value=[(None, None, None, None, (loopback_ip, 443))],
         )
         with private_dns, mock.patch(
@@ -202,7 +202,7 @@ class DownloadImageUrlsTests(unittest.TestCase):
         fake_ip = "198.18." + "0.9"
         loopback_ip = "127.0." + "0.3"
         fake_dns = mock.patch(
-            "chatcopilot.agent.tools.builtin.workspace_tools.socket.getaddrinfo",
+            "chatcopilot.agent.tools.builtin.workspace.images.socket.getaddrinfo",
             return_value=[(None, None, None, None, (fake_ip, 443))],
         )
         with fake_dns, mock.patch(

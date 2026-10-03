@@ -5,37 +5,11 @@ from typing import Any, cast
 import pytest
 
 
-
-
 def test_contracts_root_exports_canonical_agent_runtime_ids() -> None:
     from chatcopilot.contracts import RUNTIME_IDS as root_runtime_ids
     from chatcopilot.contracts.runtime_adapter import RUNTIME_IDS
 
     assert root_runtime_ids is RUNTIME_IDS
-
-
-def test_legacy_research_exports_alias_canonical_search_types() -> None:
-    from chatcopilot.agent.research.models import ResearchRequest
-    from chatcopilot.agent.research.router import ResearchRouter
-    from chatcopilot.agent.research.runtime import build_research_tool
-    from chatcopilot.agent.search.models import SearchRequest
-    from chatcopilot.agent.search.router import SearchRouter
-
-    assert ResearchRequest is SearchRequest
-    assert ResearchRouter is SearchRouter
-    assert callable(build_research_tool)
-
-
-
-
-def test_attachment_detection_compatibility_name_keeps_canonical_behavior() -> None:
-    from chatcopilot.middleware.acp.attachment_pipeline import (
-        has_text_attachment_reference,
-        looks_like_attachment_upload_text,
-    )
-
-    for text in ("请看附件 report.txt", "https://example.com/report.txt"):
-        assert looks_like_attachment_upload_text(text) is has_text_attachment_reference(text)
 
 
 def test_canonical_subagent_catalog_is_immutable() -> None:
@@ -56,11 +30,6 @@ def test_component_catalog_exposes_control_plane_dtos() -> None:
         known_subagent_preset_names,
         known_workflow_names,
     )
-    from chatcopilot.contracts.subagents import (
-        BUILTIN_SUBAGENT_PRESET_NAMES,
-        BUILTIN_SUBAGENT_WORKFLOW_NAMES,
-        BUILTIN_SUBAGENT_WORKFLOWS,
-    )
 
     tool_pack_names = {name for name, _ in iter_tool_packs()}
     preset_records = list(iter_subagent_presets())
@@ -73,9 +42,6 @@ def test_component_catalog_exposes_control_plane_dtos() -> None:
     assert known_subagent_preset_names() == frozenset(preset_names)
     assert get_subagent_preset("developer") is dict(preset_records)["developer"]
     assert get_subagent_preset("missing") is None
-    assert BUILTIN_SUBAGENT_PRESET_NAMES == known_subagent_preset_names()
     assert known_workflow_names() == frozenset()
     assert get_workflow("missing") is None
     assert list(iter_workflows()) == []
-    assert BUILTIN_SUBAGENT_WORKFLOW_NAMES == known_workflow_names()
-    assert BUILTIN_SUBAGENT_WORKFLOWS == dict(iter_workflows())

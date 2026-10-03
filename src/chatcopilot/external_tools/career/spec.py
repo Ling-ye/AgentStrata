@@ -8,7 +8,7 @@ from typing import Any
 from chatcopilot.contracts.tool_packs import static_tool_provider
 from chatcopilot.external_tools.career.service import CareerIntelService
 from chatcopilot.external_tools.shared.spec_helpers import current_workspace
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

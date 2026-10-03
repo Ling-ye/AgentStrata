@@ -1,4 +1,5 @@
 """Explicit purge must prove ownership and inactivity before removing old tasks."""
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -31,7 +32,7 @@ def clients(state=WorkerState.INACTIVE):
 def test_cutover_clears_old_tasks_and_artifacts_after_maintenance(old_store, tmp_path):
     store, ident = old_store
     workers, evaluator = clients()
-    application = EvaluationApplication(tmp_path / "evaluations")
+    application = EvaluationApplication(tmp_path / "evaluations", worker=LocalEvaluationWorker())
     evaluator.client = Mock(wraps=application)
     before = store.get(ident)
     assert cutover(store, workers, evaluator)["applied"] is False

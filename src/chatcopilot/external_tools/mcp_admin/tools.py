@@ -17,7 +17,7 @@ from chatcopilot.core.bot_paths import resolve_bot_spec_path
 from chatcopilot.core.mcp_catalog import load_mcp_catalog, resolve_catalog_server
 from chatcopilot.core.mcp_probe import probe_mcp_server
 from chatcopilot.core.settings import get_bot_spec_env
-from chatcopilot.external_tools.shared.tool_spec import (
+from chatcopilot.contracts.tools import (
     ToolContext,
     ToolDef,
     ToolResult,

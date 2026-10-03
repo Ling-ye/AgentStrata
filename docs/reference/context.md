@@ -52,7 +52,7 @@ BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 sess
 
 启用 `agents.unified_search.enabled` 后，主 Agent 只调用 `search_information`；`web_fetch_page` / `browse_dynamic_page` 仅供该入口内部使用。URL、显式来源、quick、standard 单实体和 thorough 单实体请求由脚本路由；只有 thorough 多实体比较调用路由 LLM。结果先由脚本做 canonical URL/标题去重、来源权重与时间稳定排序；只有 thorough 多来源结果调用 LLM 做语义冲突和事实合并。所有结果记录 `decision_source` / `decision_reason`。Web 源三级降级：Tavily → Brave → SearXNG。
  - **直接搜索执行**：`agents.unified_search.providers` 按顺序声明 `id / kind / enabled / endpoint / credential_env / timeout_seconds / max_results`。Tavily、Brave 与 SearXNG 由有界进程内 HTTP client 执行，账号态或垂直来源继续直接调用 search-only MCP tool；两者都跳过 subagent LLM 并共享 `SearchCircuitBreaker`、deadline、结果归一化与多源降级。凭据 provider 只允许审核过的官方 HTTPS endpoint，SearXNG 只允许回环 endpoint，redirect 不得携带 credential。
- - **显式来源约束**：用户点名小红书 / XHS / Xiaohongshu 时，`ResearchRequest` 归一为 `source_hints=["experience"]`，router 只保留显式来源，避免静默回退到通用网页搜索。
+ - **显式来源约束**：用户点名小红书 / XHS / Xiaohongshu 时，`SearchRequest` 归一为 `source_hints=["experience"]`，router 只保留显式来源，避免静默回退到通用网页搜索。
  - **完整结果与预览**：预览仍按条目与字符预算压缩；已收集、去重排序后的完整结果存入当前 actor 的会话结果缓存，通过 `result_ref` 和 `read_tool_result` 分页读取。来源的相关性过滤与 HTTP 容量校验仍生效；缓存关闭或淘汰后明确返回引用失效，不自动重放搜索。
  - **网页全文**：静态抓取最多读取 2 MiB 响应字节，HTTP 等待 60 秒，超限明确失败，不把
    响应前缀称为完整正文。提取正文与模型预览分别保存；`max_chars` 只控制预览，允许 1 到

@@ -11,7 +11,7 @@ from chatcopilot.agent.subagents.registry import SearchCircuitBreaker
 from chatcopilot.agent.tools.executor import BackgroundSubmitter, PermissionFilter
 from chatcopilot.agent.tools.file_delivery import FileSender
 from chatcopilot.agent.tools.result_reader import SessionResultStore
-from chatcopilot.agent.tools.workspace_context import WorkspaceService
+from chatcopilot.core.workspace_context import WorkspaceService
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.skills import SkillIndexEntry
 from chatcopilot.contracts.subagents import SubagentSpec

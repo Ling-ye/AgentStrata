@@ -124,8 +124,6 @@ from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
 from chatcopilot.platforms import router as _platform_router
 from chatcopilot.project import ENV_PREFIX, PROJECT_SLUG
 
-feishu_notifier = _platform_router.get_notifier("feishu")  # noqa: F401 (compat for tests)
-feishu_sender = _platform_router.get_sender("feishu")  # noqa: F401 (compat for tests)
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.acp.server")
 
@@ -134,8 +132,7 @@ _MAX_GROUP_ACTOR_SESSIONS = 64
 
 
 # ----------------------------------------------------------------------------
-# 附件 ack 时序常量（测试通过 monkey-patch ``acp_server.<const> = ...`` 直接覆盖，
-# 因此保留在本模块顶层而非 attachment_pipeline）。
+# 附件 ack 时序常量：由 ACP 宿主协调 debounce 与轮询。
 # ----------------------------------------------------------------------------
 _ATTACHMENT_ACK_DEBOUNCE_SEC = 3.0
 # debounced ack 在 _ATTACHMENT_ACK_DEBOUNCE_SEC 之后还会按
@@ -160,19 +157,6 @@ def _setup_logging() -> None:
 
     configure_logging("INFO", f"{ENV_PREFIX}_ACP_LOG_LEVEL")
 
-
-# ----------------------------------------------------------------------------
-# 测试 monkey-patch 兼容层：以下符号被测试通过 ``acp_server.<name>`` 直接 patch
-# （或从 ``acp_server`` 直接 import）。为避免破坏现有测试，把子模块函数 alias 到
-# 本模块命名空间。新代码请直接 ``from chatcopilot.middleware.acp.agent_bridge``
-# / ``meta_commands`` / ``job_dispatch`` 引用。
-# ----------------------------------------------------------------------------
-_enrich_workspace_identity = _agent_bridge._enrich_workspace_identity
-_fallback_p2p_workspace_from_sender = _agent_bridge._fallback_p2p_workspace_from_sender
-_build_session_for_workspace = _agent_bridge._build_session_for_workspace
-_materialize_session_for_workspace = _agent_bridge._materialize_session_for_workspace
-_latest_workspace_from_session_env = _agent_bridge._latest_workspace_from_session_env
-_refresh_session_prompt_plan = _agent_bridge._refresh_session_prompt_plan
 
 _FEATURE_IMAGE_INPUTS = "chat.image_inputs"
 _FEATURE_FILE_UPLOADS = "chat.file_uploads"
@@ -260,21 +244,21 @@ class AcpChatAgent(Agent):
         execution_session_id: str | None = None,
     ) -> SessionState:
         """统一的 SessionState 工厂；封装 background_submitter 工厂调用。"""
-        chat_config = getattr(self, "_chat_config", None)
-        llm = getattr(chat_config, "llm", None)
+        chat_config = self._chat_config
+        llm = chat_config.llm
         from chatcopilot.core.model_routes import resolve_model_config
-        if llm is not None and chat_config.model_settings:
+        if chat_config.model_settings:
             llm = resolve_model_config(self._runtime.spec.llm.chat, fallback=llm,
                 prefix=self._runtime.spec.llm.env_prefix, environment=os.environ, document=chat_config.model_settings)
-        return _build_session_for_workspace(
+        return _agent_bridge._build_session_for_workspace(
             session_id=session_id,
             ws=ws,
             agent_runtime=None,
             runtime=self._runtime,
-            llm_model=getattr(llm, "model", None),
-            routing_config=getattr(chat_config, "routing", None),
-            main_model_route=llm.model_route() if llm is not None else None,
-            model_profiles=chat_config.model_profiles if chat_config is not None else {},
+            llm_model=llm.model,
+            routing_config=chat_config.routing,
+            main_model_route=llm.model_route(),
+            model_profiles=chat_config.model_profiles,
             execution_session_id=execution_session_id,
         )
 
@@ -400,10 +384,7 @@ class AcpChatAgent(Agent):
             user_name=actor.sender_user_name,
             platform_type=platform_type,
         )
-        cache = getattr(self, "_group_actor_sessions", None)
-        if cache is None:
-            cache = {}
-            self._group_actor_sessions = cache
+        cache = self._group_actor_sessions
         # Raw stable identity is safe for the in-memory key and avoids treating
         # a truncated display hash as an authorization identity.
         cache_key = (session_id, actor.sender_user_id)
@@ -463,10 +444,10 @@ class AcpChatAgent(Agent):
             state = cache.pop(key, None)
             if state is None:
                 return
-            if getattr(self, "_sessions", {}).get(key[0]) is state:
+            if self._sessions.get(key[0]) is state:
                 self._sessions.pop(key[0], None)
-            tasks = getattr(self, "_attachment_ack_tasks", {})
-            resources = getattr(self, "_attachment_ack_resource_names", {})
+            tasks = self._attachment_ack_tasks
+            resources = self._attachment_ack_resource_names
             ack_task = tasks.pop(key, None)
             resources.pop(key, None)
             if ack_task is not None and not ack_task.done():
@@ -498,16 +479,16 @@ class AcpChatAgent(Agent):
         identity = session.turn_identity
         if identity is not None:
             key = (session_id, identity.sender_user_id)
-            cache = getattr(self, "_group_actor_sessions", {})
+            cache = self._group_actor_sessions
             if cache.get(key) is session:
                 cache.pop(key, None)
-            tasks = getattr(self, "_attachment_ack_tasks", {})
-            resources = getattr(self, "_attachment_ack_resource_names", {})
+            tasks = self._attachment_ack_tasks
+            resources = self._attachment_ack_resource_names
             ack_task = tasks.pop(key, None)
             resources.pop(key, None)
             if ack_task is not None and not ack_task.done():
                 ack_task.cancel()
-        if getattr(self, "_sessions", {}).get(session_id) is session:
+        if self._sessions.get(session_id) is session:
             self._sessions.pop(session_id, None)
         discard = getattr(session.session, "discard", None)
         close = getattr(session.session, "close", None)
@@ -521,7 +502,7 @@ class AcpChatAgent(Agent):
     def _invalidate_group_conversation_sessions(self, *, session_id: str) -> None:
         """Discard every actor runtime bound to one inconsistent group journal."""
 
-        cache = getattr(self, "_group_actor_sessions", {})
+        cache = self._group_actor_sessions
         states: list[SessionState] = []
         seen_state_ids: set[int] = set()
         for key in [key for key in cache if key[0] == session_id]:
@@ -529,14 +510,14 @@ class AcpChatAgent(Agent):
             if state is not None and id(state) not in seen_state_ids:
                 states.append(state)
                 seen_state_ids.add(id(state))
-            tasks = getattr(self, "_attachment_ack_tasks", {})
-            resources = getattr(self, "_attachment_ack_resource_names", {})
+            tasks = self._attachment_ack_tasks
+            resources = self._attachment_ack_resource_names
             ack_task = tasks.pop(key, None)
             resources.pop(key, None)
             if ack_task is not None and not ack_task.done():
                 ack_task.cancel()
 
-        current = getattr(self, "_sessions", {}).get(session_id)
+        current = self._sessions.get(session_id)
         if (
             current is not None
             and current.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
@@ -587,7 +568,7 @@ class AcpChatAgent(Agent):
         if session.is_materialized:
             return session
         agent_runtime = await asyncio.to_thread(self._get_or_build_agent_runtime)
-        _materialize_session_for_workspace(
+        _agent_bridge._materialize_session_for_workspace(
             session,
             agent_runtime=agent_runtime,
             background_submitter=self._make_background_submitter(
@@ -597,42 +578,25 @@ class AcpChatAgent(Agent):
         )
         return session
 
-    # ------------------------------------------------------------------
-    # 后台任务派发 thin wrappers：转发给 self._jobs，让测试可以 monkey-patch
-    # 这些方法名（``agent._send_unnotified_completed_jobs = noop`` 等）。
-    # 测试用 ``__new__`` 跳过 __init__ 时（没有 self._jobs）懒创建一个临时
-    # JobDispatcher，让 job 业务行为不受是否走 __init__ 影响。
-    # ------------------------------------------------------------------
-    def _ensure_jobs(self) -> JobDispatcher:
-        jobs = getattr(self, "_jobs", None)
-        if jobs is None:
-            jobs = self._new_job_dispatcher()
-            self._jobs = jobs
-        return jobs
-
     def _new_job_dispatcher(self) -> JobDispatcher:
-        watch_tasks = getattr(self, "_job_watch_tasks", None)
-        if watch_tasks is None:
-            watch_tasks = {}
-            self._job_watch_tasks = watch_tasks
         return JobDispatcher(
             JobDispatchPort(
                 connection=lambda: self._conn,
-                runtime=lambda: getattr(self, "_runtime", None),
-                loop=lambda: getattr(self, "_loop", None),
-                watch_tasks=watch_tasks,
+                runtime=lambda: self._runtime,
+                loop=lambda: self._loop,
+                watch_tasks=self._job_watch_tasks,
                 make_text_update=lambda text: update_agent_message_text(text),
             )
         )
 
     def _make_background_submitter(self, *, session_id: str, ws: Workspace) -> Any:
-        return self._ensure_jobs().make_background_submitter(session_id=session_id, ws=ws)
+        return self._jobs.make_background_submitter(session_id=session_id, ws=ws)
 
     def _schedule_job_watch(self, job: Any) -> None:
-        self._ensure_jobs().schedule_job_watch(job)
+        self._jobs.schedule_job_watch(job)
 
     async def _watch_background_job(self, job: Any) -> None:
-        await self._ensure_jobs()._watch_background_job(job)
+        await self._jobs._watch_background_job(job)
 
     async def _send_job_result(
         self,
@@ -641,12 +605,12 @@ class AcpChatAgent(Agent):
         *,
         fallback_workspace: Optional[Workspace] = None,
     ) -> None:
-        await self._ensure_jobs().send_job_result(
+        await self._jobs.send_job_result(
             job, result, fallback_workspace=fallback_workspace
         )
 
     async def _send_job_status(self, session_id: str, session: SessionState, job_id: str) -> None:
-        await self._ensure_jobs().send_job_status(session_id, session, job_id)
+        await self._jobs.send_job_status(session_id, session, job_id)
 
     async def _handle_code_task_control(
         self,
@@ -655,7 +619,7 @@ class AcpChatAgent(Agent):
         action: str,
         job_id: str,
     ) -> str:
-        return await self._ensure_jobs().handle_code_task_control(
+        return await self._jobs.handle_code_task_control(
             session_id,
             session,
             action,
@@ -675,50 +639,22 @@ class AcpChatAgent(Agent):
         # 避免触发 notifier 占位实现的 NotImplementedError。
         if not _platform_router.supports_background_jobs(self._platform_type()):
             return
-        await self._ensure_jobs().send_unnotified_completed_jobs(session_id, session)
+        await self._jobs.send_unnotified_completed_jobs(session_id, session)
 
     def _platform_type(self) -> str:
-        """读取当前 BotSpec 平台类型；测试通过 __new__ 构造时兜底为 feishu。
+        return self._runtime.platform_type
 
-        历史飞书测试用 ``AcpChatAgent.__new__(AcpChatAgent)`` 跳过 __init__，
-        因此 ``self._runtime`` 不存在；此时按既有飞书行为兜底，让所有已通过的
-        飞书集成测试无需感知 platform_type 字段。
-        """
-        runtime = getattr(self, "_runtime", None)
-        if runtime is None:
-            return "feishu"
-        return getattr(runtime, "platform_type", "feishu") or "feishu"
+    def _runtime_has_feature(self, feature: str) -> bool:
+        return feature in self._runtime.tool_features
 
-    def _runtime_has_feature(self, feature: str, *, legacy_platform_default: bool) -> bool:
-        """Return whether current BotSpec enables a runtime feature.
-
-        Older tests instantiate ``AcpChatAgent`` via ``__new__`` and therefore do
-        not have ``_runtime``. In that case we keep the original platform-flag
-        behavior so the tests still exercise the historical Feishu path.
-        """
-        runtime = getattr(self, "_runtime", None)
-        if runtime is None:
-            return legacy_platform_default
-        features = getattr(runtime, "tool_features", ()) or ()
-        return feature in set(features)
-
-    def _has_user_files_pipeline(self, platform_type: str) -> bool:
-        return self._runtime_has_feature(
-            _FEATURE_FILE_UPLOADS,
-            legacy_platform_default=_platform_router.supports_user_files_pipeline(platform_type),
-        )
+    def _has_user_files_pipeline(self) -> bool:
+        return self._runtime_has_feature(_FEATURE_FILE_UPLOADS)
 
     def _has_image_inputs(self) -> bool:
-        return self._runtime_has_feature(
-            _FEATURE_IMAGE_INPUTS,
-            legacy_platform_default=False,
-        )
+        return self._runtime_has_feature(_FEATURE_IMAGE_INPUTS)
 
-    def _has_private_space_inventory(self, platform_type: str) -> bool:
-        return self._runtime_has_feature(
-            _FEATURE_PRIVATE_WORKSPACE,
-            legacy_platform_default=_platform_router.supports_user_files_pipeline(platform_type),
-        )
+    def _has_private_space_inventory(self) -> bool:
+        return self._runtime_has_feature(_FEATURE_PRIVATE_WORKSPACE)
 
     # ------------------------------------------------------------------
     # Attachment ack 调度（per-session debounce + poll）
@@ -731,7 +667,7 @@ class AcpChatAgent(Agent):
         resource_names: list[str],
         session: SessionState | None = None,
     ) -> None:
-        bound_session = session or getattr(self, "_sessions", {}).get(session_id)
+        bound_session = session or self._sessions.get(session_id)
         ack_key = self._attachment_ack_key(session_id, bound_session)
         pending = self._attachment_ack_resource_names.setdefault(ack_key, [])
         seen = set(pending)
@@ -756,9 +692,9 @@ class AcpChatAgent(Agent):
         self._attachment_ack_tasks[ack_key] = task
 
     def _cancel_attachment_ack(self, session_id: str) -> None:
-        tasks = getattr(self, "_attachment_ack_tasks", {})
-        resource_names = getattr(self, "_attachment_ack_resource_names", {})
-        bound_session = getattr(self, "_sessions", {}).get(session_id)
+        tasks = self._attachment_ack_tasks
+        resource_names = self._attachment_ack_resource_names
+        bound_session = self._sessions.get(session_id)
         ack_key = self._attachment_ack_key(session_id, bound_session)
         task = tasks.pop(ack_key, None)
         resource_names.pop(ack_key, None)
@@ -947,7 +883,7 @@ class AcpChatAgent(Agent):
         ACP 的 ``cwd`` 参数当前只用于日志；真实路径由稳定会话身份决定，不使用
         cc-connect 的 ``$WS_DEFAULT`` 作为用户可见 workspace。
         """
-        ws = _enrich_workspace_identity(
+        ws = _agent_bridge._enrich_workspace_identity(
             self._resolve_conversation_workspace(),
             self._platform_type(),
         )
@@ -982,7 +918,7 @@ class AcpChatAgent(Agent):
             _LOGGER.info("session/load | sid=%s reuse existing", session_id)
             return LoadSessionResponse()
 
-        ws = _enrich_workspace_identity(
+        ws = _agent_bridge._enrich_workspace_identity(
             self._resolve_conversation_workspace(),
             self._platform_type(),
         )
@@ -1326,7 +1262,7 @@ class AcpChatAgent(Agent):
         if session is None:
             # cc-connect 在某些恢复场景可能略过 session/new 直接 prompt；兜底新建一个。
             _LOGGER.warning("prompt | sid=%s missing, building fresh SessionState", session_id)
-            ws = _enrich_workspace_identity(
+            ws = _agent_bridge._enrich_workspace_identity(
                 self._resolve_conversation_workspace(),
                 self._platform_type(),
             )
@@ -1342,7 +1278,7 @@ class AcpChatAgent(Agent):
         platform_type = self._platform_type()
         latest_ws = None
         if getattr(session.workspace, "scope", "actor") != WORKSPACE_SCOPE_GROUP_SHARED:
-            latest_ws = _latest_workspace_from_session_env(
+            latest_ws = _agent_bridge._latest_workspace_from_session_env(
                 session.workspace,
                 platform_type=platform_type,
             )
@@ -1362,12 +1298,9 @@ class AcpChatAgent(Agent):
 
         # 当前 BotSpec 运行时能力位（控制下面短路与附件流水线的启用范围）。
         # 具体实例是否启用文件空间由 bots/<bot-id>/bot.yaml 的 capability 决定；
-        # 平台 adapter 只在测试兼容兜底路径中保留历史默认。
-        # 测试构造 AcpChatAgent 时常用 ``__new__`` 跳过 __init__，此时 ``_runtime``
-        # 不存在；兜底成 feishu 以保留既有飞书测试的全部行为。
         has_role_matrix = _platform_router.supports_role_matrix(platform_type)
-        has_user_files_pipeline = self._has_user_files_pipeline(platform_type)
-        has_private_space_inventory = self._has_private_space_inventory(platform_type)
+        has_user_files_pipeline = self._has_user_files_pipeline()
+        has_private_space_inventory = self._has_private_space_inventory()
 
         orchestrator = AcpTurnOrchestrator(
             self,
@@ -1377,8 +1310,8 @@ class AcpChatAgent(Agent):
             has_user_files_pipeline=has_user_files_pipeline,
             has_private_space_inventory=has_private_space_inventory,
             update_text=update_agent_message_text,
-            recover_workspace=_fallback_p2p_workspace_from_sender,
-            refresh_prompt_plan=_refresh_session_prompt_plan,
+            recover_workspace=_agent_bridge._fallback_p2p_workspace_from_sender,
+            refresh_prompt_plan=_agent_bridge._refresh_session_prompt_plan,
             prepare_turn_identity=self._prepare_turn_identity,
             activate_turn_identity=self._activate_turn_identity,
         )
@@ -1607,7 +1540,7 @@ class AcpChatAgent(Agent):
                 "lifecycle_error": "",
             }
             if result.lifecycle_intents:
-                barrier = getattr(self, "_lifecycle_barrier", None)
+                barrier = self._lifecycle_barrier
                 if barrier is None:
                     barrier = LifecycleBarrierExecutor()
                     self._lifecycle_barrier = barrier

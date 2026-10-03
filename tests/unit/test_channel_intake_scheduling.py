@@ -28,6 +28,12 @@ def test_busy_turn_does_not_hold_transport_workers_or_acknowledgements(tmp_path)
         store = GatewayStateStore(tmp_path / "state")
         ingress = _Ingress()
         ingress.entered, ingress.release = asyncio.Event(), asyncio.Event()
+        accepted_when_turn_started = []
+        original_handle = ingress.handle_authorized_inbound
+        async def handle(event, principal):
+            accepted_when_turn_started.append(store.pending_ingress_count())
+            await original_handle(event, principal)
+        ingress.handle_authorized_inbound = handle
         manager = ChannelRuntimeManager(state_store=store, gateway_ingress=ingress)
         connection = _FakeConnection()
         driver = OneBotForwardWebSocketDriver(
@@ -43,6 +49,7 @@ def test_busy_turn_does_not_hold_transport_workers_or_acknowledgements(tmp_path)
                 payload["message_id"] = index + 1
                 await connection.incoming.put(json.dumps(payload))
             await asyncio.wait_for(ingress.entered.wait(), timeout=2)
+            assert accepted_when_turn_started[0] < 100, "queued intake must yield before exhausting the burst"
             receipt = await asyncio.wait_for(manager.send(_outbound()), timeout=5)
             assert receipt.stage == "provider_acknowledged"
             for _ in range(200):

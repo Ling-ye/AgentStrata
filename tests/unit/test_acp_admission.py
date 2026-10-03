@@ -13,7 +13,7 @@ from unittest import mock
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
 
 from chatcopilot.core.allowlists import AllowlistConfigError, parse_numeric_allowlist
-from chatcopilot.middleware.access_control import Role, resolve_role
+from chatcopilot.core.access import Role, resolve_role
 from chatcopilot.middleware.acp.admission import AdmissionDecision, evaluate_admission
 from chatcopilot.middleware.acp.meta_commands import _handle_owner_runtime_info_query
 

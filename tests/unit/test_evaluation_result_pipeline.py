@@ -1,4 +1,5 @@
 """v2 regression at real process, serialization and persistence boundaries."""
+from chatcopilot.evals.application.worker_runtime import LocalEvaluationWorker
 
 from dataclasses import replace
 import json
@@ -247,7 +248,7 @@ def test_unscored_supervisor_error_preserves_required_quality_coverage(tmp_path)
 def test_archived_case_id_is_explicit_and_original_artifacts_are_unchanged(tmp_path):
     from chatcopilot.evals.application import EvaluationApplication
     from chatcopilot.evals.result_codec import ArchivedResultError
-    application = EvaluationApplication(tmp_path / "evals", repository_root=tmp_path)
+    application = EvaluationApplication(tmp_path / "evals", repository_root=tmp_path, worker=LocalEvaluationWorker())
     identifier = "eval-archive-fixture"
     directory = application.root / identifier
     directory.mkdir(mode=0o700)

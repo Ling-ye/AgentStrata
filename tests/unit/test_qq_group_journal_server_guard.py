@@ -1,8 +1,8 @@
 from __future__ import annotations
+from tests.acp_runtime_fixture import make_acp_agent, acp_runtime
 
 from collections import OrderedDict
 from pathlib import Path
-from types import SimpleNamespace
 
 import pytest
 
@@ -13,7 +13,6 @@ from chatcopilot.middleware.acp.group_conversation import (
     GroupConversationJournal,
     SenderEnvelopeError,
 )
-from chatcopilot.middleware.acp.server import AcpChatAgent
 from chatcopilot.middleware.acp.session_state import SessionState
 from chatcopilot.core.workspace_runtime import Workspace
 
@@ -66,7 +65,7 @@ def test_journal_generation_failure_discards_every_cached_group_actor(
             ),
             role=Role.USER,
             assistant_mode=AssistantMode.PERFORMANCE,
-            runtime=SimpleNamespace(platform_type="qq"),
+            runtime=acp_runtime(platform_type="qq"),
             session=backend,  # type: ignore[arg-type]
         )
         state.bind_group_turn(identity=identity, journal=journal, turn_context="")
@@ -83,8 +82,8 @@ def test_journal_generation_failure_discards_every_cached_group_actor(
     # failure instead of a new empty conversation starting at sequence 1.
     journal.path.unlink()
 
-    agent = AcpChatAgent.__new__(AcpChatAgent)
-    agent._runtime = SimpleNamespace(platform_type="qq")
+    agent = make_acp_agent()
+    agent._runtime = acp_runtime(platform_type="qq")
     agent._sessions = {session_id: states[0]}
     agent._group_actor_sessions = OrderedDict(
         ((session_id, identity.sender_user_id), state)
