@@ -192,6 +192,8 @@ def test_actual_adapter_nested_git_queries_and_write_denials(repository, tmp_pat
     assert root not in execution_scope.writable_roots
     assert not execution_scope.permits(root / "unexpected-root.py", write=True)
     if source_kind == "code_health" and stage == "run":
+        assert seen["scope"].writable_roots == (root.parent,)
+        assert Path("/") not in seen["scope"].writable_roots
         assert root / ".env.example" in execution_scope.writable_roots
         assert (root / ".env.example").read_text() == "candidate write"
     for path in codex_environment.git_metadata(root):

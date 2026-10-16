@@ -13,6 +13,8 @@
 
 ## 待确认的设计条件
 
+- [Harness LangGraph 编排](harness-langgraph/spec.md)：本地编排与恢复实现已完成；真实模型、外部交付及运行库切换需独立验收。
+
 - [微信 ClawBot 渠道](weixin-clawbot-channel/spec.md)：代码与本地验证已完成；真实微信扫码和媒体往返需独立验收。
 
 - [隔离修复会话与宿主验收](harness-repair-v2/spec.md)：修复内核、独立沙箱和图片交付验证的实施与真实模型验收。

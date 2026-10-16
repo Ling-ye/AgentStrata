@@ -21,6 +21,7 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--root", type=Path, required=True)
     parser.add_argument("--task", required=True)
+    parser.add_argument("--delivery", action="store_true")
     args = parser.parse_args(argv)
     os.umask(0o077)
     store = HarnessStore(args.root)
@@ -30,11 +31,15 @@ def main(argv: list[str] | None = None) -> int:
                      **({"status": "cancel_requested"} if current["status"] in ACTIVE else {}))
 
     try:
+        signal.signal(signal.SIGTERM, cancel)
+        signal.signal(signal.SIGINT, cancel)
+        if args.delivery:
+            from chatcopilot.harness.delivery_runtime import run_one
+            result = run_one(store, args.task)
+            return 1 if result.get("delivery", {}).get("state") in {"blocked", "cancel_pending"} else 0
         with worker_execution(store, args.task) as task:
             if task is None:
                 return 0
-            signal.signal(signal.SIGTERM, cancel)
-            signal.signal(signal.SIGINT, cancel)
             try:
                 result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
                     lambda root, ref: store.register_trace(args.task, root, ref)))

@@ -172,7 +172,7 @@ def test_current_pass_ends_without_coder(repository, tmp_path):
     assert coder.calls == 0 and len(evaluator.calls) == 1
 
 
-def test_storage_interruption_does_not_charge_next_product_attempt(repository, tmp_path):
+def test_storage_interruption_does_not_charge_or_replay_an_unconfirmed_role(repository, tmp_path):
     import sqlite3
     evaluator = FakeEvaluator()
     controller, task_id = task_fixture(repository, tmp_path, evaluator, attempts=1)
@@ -192,8 +192,10 @@ def test_storage_interruption_does_not_charge_next_product_attempt(repository, t
     controller.store.claim_resume(task_id)
     coder = FakeCoder()
     result = run_task(controller.store, task_id, evaluator, coder)
-    assert result["status"] == "fixed" and coder.calls == 1
-    assert [(a["number"], a["status"]) for a in controller.store.attempts(task_id)] == [(1, "interrupted"), (2, "accepted")]
+    assert result["status"] == "blocked" and result["error_code"] == "session_unconfirmed"
+    assert coder.calls == 0
+    assert controller.store.attempts(task_id)[0]["counts_toward_budget"] is False
+    assert [(a["number"], a["status"]) for a in controller.store.attempts(task_id)] == [(1, "interrupted")]
 
 
 @pytest.mark.parametrize("version", [None, 4])

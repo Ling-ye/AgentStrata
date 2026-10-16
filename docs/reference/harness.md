@@ -20,7 +20,7 @@ Provider 连接使用冻结 fixture；模拟回执不等于真实 QQ 送达。�
 
 ## 按需角色协作
 
-Main 安排首轮与处理根因变化、分歧；Plan 追踪调用链并提出最小方案；Coding 只写产品；
+首轮直接进入 Plan；Main 只处理根因变化和分歧；Plan 追踪调用链并提出最小方案；Coding 只写产品；
 Test 只写独立测试草案；Review 只读审查。所有角色共用运行器，使用独立会话与权限。
 角色不得自行创建嵌套委派。正常阶段由宿主推进，明确代码或测试错误只返工相关角色。
 Plan 用 proceed/blocked 区分待验证假设与必要条件缺失。Coding/Test 的局部工具说明放 notes，
@@ -99,6 +99,23 @@ App Server 父进程仍可维护自己的状态。角色命令网络保持关闭
 
 ## 修复流程记录
 
+### LangGraph 编排与恢复
+
+任务、代码熵回收批次与交付分别使用 StateGraph，首次验收与主干复验复用同一验收图。
+任务图显式安排环境、冻结快照、原 Case 复现、Plan、目标绑定、Coding/Test、候选收录和验收。
+按 test_first、code_first、existing 选择角色顺序；明确代码或测试失败定向返工，预算和无进展
+判定仍由宿主负责。交付图拆分提交、推送、PR、远端对账、主干整合、复验与清理。
+批次与交付等待使用 interrupt，由现有定时入口唤醒，不占用常驻等待进程。
+
+checkpoint 位于私有根目录的独立 SQLite 文件，按稳定 thread_id 隔离并同步写入；图保存执行
+位置、轮次和不可变产物引用。框架恢复未完成节点及已持久化的 pending writes，完整角色结果
+还以宿主回执核对，避免节点结果保存后、检查点提交前故障导致重复模型调用。角色终态未知
+时停止并核对；测评恢复使用同一个外部执行 ID。checkpoint 不代替工作区、外部执行及 PR 事实。
+
+`graph` 与 `delivery_graph` 是公开的可重建位置投影，含检查点身份、下一节点和等待标记；
+Console 展示恢复位置，查询不执行图。原始证据和命令日志继续按下述产物接口读取。
+设计与验收边界见 [LangGraph 编排规格](../../specs/harness-langgraph/spec.md)。
+
 问题、原则、计划和角色输出以不可变 JSON 保存，任务数据库保留可搜索身份和引用。
 摘要和阅读索引按角色提供，大正文按需读取，不嵌套复制整个历史。Console 展示角色、
 输入、结论和证据；命令日志独立分页。查询不推进任务或探测 worker。
@@ -126,7 +143,7 @@ App Server 父进程仍可维护自己的状态。角色命令网络保持关闭
 负责 systemd、冻结目录和进程事实。存活判断检查任务的执行锁、修复与交付 unit，以及尚未完成的
 systemd job。调度结果 unknown 不等于进程停止，未知时保留取消请求与任务占用。
 
-修复和交付 worker 共用 `worker_execution`，按维护共享锁、任务控制锁、执行锁的顺序登记。
+修复和交付使用同一个 worker 入口和任务 systemd unit，共用 `worker_execution`，按维护共享锁、任务控制锁、执行锁的顺序登记。
 worker 等待控制锁，在锁内复读执行资格；只有另一个实际执行者持有执行锁时才按重复 worker 退出。
 queued 且 dispatch_state=creating 表示尚未完成派发，对账保留该状态；显式取消仍可终止准备。
 登记后释放控制锁，执行结束才释放执行锁和维护锁，因此探测不会导致待启动 worker 误退出。
@@ -144,18 +161,24 @@ queued 且 dispatch_state=creating 表示尚未完成派发，对账保留该状
 CLI 的 `reconcile` 可主动核对，取消、恢复和接续也会立即检查运行事实。定时器不可用时不能承诺
 失联状态的自动更新时限。完整设计见 [Harness 控制生命周期](../../specs/harness-control-lifecycle/spec.md)。
 
-六层静态门禁目前只覆盖控制 Types/Service 及直接 CLI/Console 入口，包含函数内导入与重导出检查；
-其他 Harness 模块仍按领域基线逐步整理。静态检查不是 Python 执行沙箱，也不能证明运行时状态正确。
+六层静态门禁登记 Harness 模块职责并检查领域内依赖，包含函数内导入与重导出检查；
+图定义和路由属于 Service，checkpoint 与历史导出属于 Repo，具体执行及装配属于 Runtime。
+静态检查不是 Python 执行沙箱，也不能证明运行时状态正确。
 
 ## 协议切换
 
-新协议为 pipeline 10。旧记录阻止创建新任务。显式清空操作在维护锁和 Evaluation 租约内
-确认 worker、外部测评与 PR 均已结束，然后删除本仓库旧任务、批次、任务产物、归档及专属
-worktree，包括无任务索引的旧目录。不保留旧协议兼容，不续跑旧 worker；原始机器人观测、
-独立 Evaluation 数据、人工工作区和远端 GitHub 资源不在清空范围。新协议已有任务时拒绝再次清空。
+当前协议为 pipeline 11。旧记录阻止创建新任务。显式切换在维护锁和 Evaluation 租约内
+确认旧 worker、外部测评与 PR 均已结束，使用 SQLite backup API 导出数据库，复制证据、
+源码、补丁、日志和检查点并核验摘要，再替换活动数据库。原数据库保存在导出目录，旧任务
+目录、归档、检查点、worktree 和分支均保留；临时运行环境和凭据不复制进导出。
+旧任务不迁移、不续跑，新活动库仅接受新协议。导出路径和清单摘要随切换结果返回，
+原始机器人观测、独立 Evaluation 和远端资源保持独立。已切换或已有新任务时拒绝再次切换。
 
 ## 源码入口
 
+- [任务图](../../src/chatcopilot/harness/task_graph.py)、[任务节点](../../src/chatcopilot/harness/task_operations.py)
+- [验收图](../../src/chatcopilot/harness/acceptance_graph.py)、[交付图](../../src/chatcopilot/harness/delivery_graph.py)、[批次图](../../src/chatcopilot/harness/batch_graph.py)
+- [图恢复](../../src/chatcopilot/harness/graph_service.py)、[检查点](../../src/chatcopilot/harness/graph_repository.py)、[历史导出](../../src/chatcopilot/harness/history_repository.py)
 - [角色调度](../../src/chatcopilot/harness/role_service.py)
 - [源码索引与失败摘要](../../src/chatcopilot/harness/context_briefs.py)
 - [修复服务](../../src/chatcopilot/harness/workflow.py)

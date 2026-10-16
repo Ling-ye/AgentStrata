@@ -625,6 +625,7 @@ def test_reference_answer_cannot_replace_reproduction(repository, tmp_path):
         "goal_capabilities": [], "coverage": [], "gaps": [{"requirement": "expected_behavior",
         "code": "fixture_missing", "message": "缺少搜索 fixture"}]}}))
     evaluator = Mock()
+    evaluator.capabilities.return_value = {}
     result = run_task(controller.store, task["task_id"], evaluator, coder)
     assert result["status"] == "blocked" and result["error_code"] == "fixture_missing"
     assert "需要真实模型" in result["message"]

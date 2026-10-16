@@ -46,6 +46,8 @@ class HarnessLifecycle:
         self.require_stopped(task)
         task = self._reconcile_locked(task_id)
         self._require_evaluation_stopped(task)
+        if any(row.get("state") in {"running", "uncertain"} for row in task.get("role_executions", {}).values()):
+            raise HarnessError("session_unconfirmed", "角色会话终态未确认；先核对原执行或创建保留证据的接续任务")
         if task["source"].get("kind") == "evaluation" and task["source"].get("result_schema_version") != 2:
             raise HarnessError("source_archived", "旧测评来源已归档，请使用新测评发起修复")
         if task["source"].get("blockers"):

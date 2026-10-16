@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+import hashlib
+import sqlite3
 from pathlib import Path
 from typing import Any
+
+from chatcopilot.core.private_sqlite import json_text, storage_error_details
 
 from chatcopilot.harness.agent_types import AgentCall, AgentRunner, Role, retry_role, role_result
 from chatcopilot.harness.artifact_repository import ArtifactRepository
@@ -13,14 +17,28 @@ from chatcopilot.harness.context_briefs import build_failure_brief, build_source
 
 
 class RoleWorkflow:
-    def __init__(self, store, task_id: str, runner: AgentRunner, artifacts: ArtifactRepository):
+    def __init__(self, store, task_id: str, runner: AgentRunner, artifacts: ArtifactRepository, workspace_digest):
         self.store, self.task_id, self.runner, self.artifacts = store, task_id, runner, artifacts
+        self.workspace_digest = workspace_digest
 
     def _read(self, key: str) -> Any:
         ref = self.store.get(self.task_id).get("role_artifacts", {}).get(key)
         return self.artifacts.read(ref) if ref else None
 
+    def _failed(self, operation, binding, error):
+        # Do not retry a business transaction after a storage failure. The
+        # existing running receipt correctly leaves external termination unknown.
+        if isinstance(error, sqlite3.Error) or storage_error_details(error):
+            return
+        from chatcopilot.harness.config import safe_error
+        code = getattr(error, "code", "coding_environment")
+        current = self.store.get(self.task_id)
+        self.store.update(self.task_id, role_executions={**current.get("role_executions", {}),
+            operation: {"state": "uncertain" if code in {"session_unconfirmed", "session_changed"} else "failed",
+                        "binding": binding, "code": code, "message": safe_error(error)}})
+
     def call(self, role, root, number, goal, evidence, options, cancel):
+        cancel()
         task = self.store.get(self.task_id)
         refs = task.get("role_artifacts", {})
         governance = task["source"].get("kind") == "code_health"
@@ -52,6 +70,29 @@ class RoleWorkflow:
             skill = role_context(self.artifacts, task)
             if skill:
                 context["harness_skill"] = skill
+        # A checkpoint may be lost after a confirmed role result. Reuse that exact
+        # result; an accepted session with unknown termination must never be replayed.
+        stable = {**context, "inputs": {key: ref for key, ref in context["inputs"].items()
+                  if key != role.value}}
+        configured = options()
+        binding = hashlib.sha256(json_text({"role": role.value, "attempt": number,
+            "root": str(root), "goal": goal, "context": stable, "model": configured.model,
+            "effort": configured.reasoning_effort, "settings": configured.model_settings,
+            "profile": configured.model_profile}).encode()).hexdigest()
+        operation = f"{role.value}-{number}"
+        receipt = task.get("role_executions", {}).get(operation)
+        if receipt:
+            if receipt["binding"] != binding:
+                raise HarnessError("session_changed", "角色节点的输入或执行身份发生变化")
+            if receipt["state"] == "complete":
+                if self.workspace_digest(root) != receipt["workspace_digest"]:
+                    raise HarnessError("workspace_changed", "已完成角色节点的源码工作区发生变化")
+                return self.artifacts.read(receipt["output"])
+            if receipt["state"] == "failed":
+                raise HarnessError(receipt["code"], receipt["message"])
+            raise HarnessError("session_unconfirmed", "角色节点终态未知，保留现场并先核对原会话")
+        self.store.update(self.task_id, role_executions={**task.get("role_executions", {}),
+            operation: {"state": "running", "binding": binding}})
         output = self.artifacts.directory / f"attempt-{number}" / role.value
         source_id = f"{role.value}-{number}"
         self.store.update(self.task_id, stage=role.value, current_role=role.value)
@@ -64,13 +105,25 @@ class RoleWorkflow:
                 inputs={"role": role.value, "goal": task["acceptance"], "assignment": goal, "inputs": refs,
                         "problem": task["problem_ref"], "principles": task["principles"]}) as step:
             cancel()
-            result = self.runner.execute(root, AgentCall(self.task_id, role, number, goal, context), options(), output, cancel)
-            cancel()
+            try:
+                result = self.runner.execute(root, AgentCall(self.task_id, role, number, goal, context), configured, output, cancel)
+            except Exception as exc:
+                self._failed(operation, binding, exc)
+                raise
+            try:
+                cancel()
+            except HarnessError as exc:
+                self._failed(operation, binding, exc)
+                raise
             if context.get("harness_skill"):
                 skill = context["harness_skill"]
                 result.execution["skill_load"] = {key: skill[key] for key in
                                                  ("name", "path", "sha256", "reference_sha256")}
-            value = role_result(role, result.payload, governance=governance)
+            try:
+                value = role_result(role, result.payload, governance=governance)
+            except HarnessError as exc:
+                self._failed(operation, binding, exc)
+                raise
             if (governance and role == Role.CODING and task["source"].get("skill_learning")
                     and not value["needs_replan"] and not value["gaps"]):
                 from chatcopilot.harness.skill_context import LESSONS_PATH, promote_lesson_draft
@@ -80,14 +133,19 @@ class RoleWorkflow:
             reference = self.artifacts.put(role.value, number, value)
             execution = self.artifacts.put("execution", number, result.execution)
             refs = {**self.store.get(self.task_id).get("role_artifacts", {}), role.value: asdict(reference)}
-            self.store.update(self.task_id, role_artifacts=refs, current_role=None)
+            digest = self.workspace_digest(root)
+            self.store.update(self.task_id, role_artifacts=refs, current_role=None,
+                **({"working_digest": digest} if role == Role.CODING else {}),
+                role_executions={**self.store.get(self.task_id).get("role_executions", {}),
+                    operation: {"state": "complete", "binding": binding, "output": asdict(reference),
+                                "execution": asdict(execution), "workspace_digest": digest}})
             step.conclusion = value.get("summary", value.get("reason", ""))
             step.evidence = {"role": role.value, "output": asdict(reference), "execution": asdict(execution),
                              **({"skill_load": result.execution["skill_load"]} if result.execution.get("skill_load") else {})}
             return value
 
-    def prepare_round(self, root: Path, baseline: Path, number: int, previous: dict | None,
-                      options, cancel, capabilities: dict) -> tuple[dict, Path | None]:
+    def context(self, root: Path, baseline: Path, number: int, previous: dict | None,
+                capabilities: dict) -> dict:
         task = self.store.get(self.task_id)
         original = self.artifacts.read(task["problem_ref"])
         governance = original.get("kind") == "code_health"
@@ -95,12 +153,12 @@ class RoleWorkflow:
         # ACP adapter is not the execution entrypoint for this source kind.
         runtime_entrypoint = "src/chatcopilot/gateway/runtime.py" if not governance else ""
         plan = self._read("plan")
-        route = retry_role(previous["stage"], previous["code"]) if previous else Role.MAIN
+        route = retry_role(previous["stage"], previous["code"]) if previous else Role.PLAN
         rediagnosis = bool(previous and previous.get("rediagnosis"))
         if rediagnosis:
             route = Role.PLAN
         if not plan:
-            route = Role.MAIN
+            route = Role.PLAN
         failure = None
         if previous and previous.get("brief_ref"):
             failure = self.artifacts.read(previous["brief_ref"])
@@ -142,42 +200,64 @@ class RoleWorkflow:
                                "给出不同的具体 changes 和 next_role=coding/test；无新依据返回 blocked。"}
         if index_ref:
             evidence.update(source_index=index, source_index_ref=asdict(index_ref))
-        if route == Role.MAIN:
-            allowed = ["plan"] if not plan else ["plan", "coding", "test"]
-            action = self.call(Role.MAIN, root, number, "安排下一项工作", {**evidence, "allowed_roles": allowed}, options, cancel)
-            if action["next_role"] == "blocked":
-                raise HarnessError("material_missing", "；".join(action["unresolved"]))
-            if action["next_role"] not in allowed:
-                raise HarnessError("invalid_role_result", "主 Agent 选择了当前不允许的步骤")
-            route = Role(action["next_role"])
-        if route == Role.PLAN:
-            prior_plan = plan
-            plan = self.call(Role.PLAN, root, number, "自主调查仓库并选择一个代码熵问题" if governance else "定位根因并提出最小修复", evidence, options, cancel)
-            if rediagnosis:
-                result_paths = [ref["path"] for ref in (failure or {}).get("evidence_refs", []) if ref.get("sha256")]
-                references = plan["evidence_refs"]
-                bound = False
-                for ref in (failure or {}).get("evidence_refs", []):
-                    if not ref.get("sha256"):
+        return {"route": route.value, "evidence": evidence, "rediagnosis": rediagnosis}
+
+    def main(self, root, number, context, options, cancel):
+        allowed = ["plan", "coding", "test"]
+        action = self.call(Role.MAIN, root, number, "安排下一项工作",
+                           {**context["evidence"], "allowed_roles": allowed}, options, cancel)
+        if action["next_role"] == "blocked":
+            raise HarnessError("material_missing", "；".join(action["unresolved"]))
+        if action["next_role"] not in allowed:
+            raise HarnessError("invalid_role_result", "主 Agent 选择了当前不允许的步骤")
+        return {**context, "route": action["next_role"]}
+
+    def plan(self, root, number, context, options, cancel):
+        task = self.store.get(self.task_id)
+        governance = task["source"].get("kind") == "code_health"
+        prior_plan = self._read("plan")
+        evidence = context["evidence"]
+        failure = evidence.get("failure_brief")
+        rediagnosis = context["rediagnosis"]
+        plan = self.call(Role.PLAN, root, number,
+            "自主调查仓库并选择一个代码熵问题" if governance else "定位根因并提出最小修复", evidence, options, cancel)
+        if rediagnosis:
+            result_paths = [ref["path"] for ref in (failure or {}).get("evidence_refs", []) if ref.get("sha256")]
+            references = plan["evidence_refs"]
+            bound = False
+            for ref in (failure or {}).get("evidence_refs", []):
+                if not ref.get("sha256"):
+                    continue
+                for reference in references:
+                    if not reference.startswith(ref["path"] + "#/"):
                         continue
-                    for reference in references:
-                        if not reference.startswith(ref["path"] + "#/"):
-                            continue
-                        try:
-                            body = self.artifacts.read(ref)
-                            for part in reference.split("#", 1)[1].lstrip("/").split("/"):
-                                part = part.replace("~1", "/").replace("~0", "~")
-                                body = body[int(part)] if isinstance(body, list) else body[part]
-                            bound = True
-                        except (KeyError, IndexError, ValueError, TypeError):
-                            continue
-                if (plan["decision"] != "proceed" or not result_paths or not bound
-                        or plan["changes"] == (prior_plan or {}).get("changes")
-                        or not plan["changes"] or plan.get("next_role") not in {"coding", "test"}):
-                    raise HarnessError("no_progress", "重诊断未提供绑定失败证据的新修正行动")
-                route = Role(plan["next_role"])
-            if plan["decision"] == "blocked" and not governance:
-                raise HarnessError("plan_blocked", "；".join(plan["unresolved"]))
+                    try:
+                        body = self.artifacts.read(ref)
+                        for part in reference.split("#", 1)[1].lstrip("/").split("/"):
+                            part = part.replace("~1", "/").replace("~0", "~")
+                            body = body[int(part)] if isinstance(body, list) else body[part]
+                        bound = True
+                    except (KeyError, IndexError, ValueError, TypeError):
+                        continue
+            if (plan["decision"] != "proceed" or not result_paths or not bound
+                    or plan["changes"] == (prior_plan or {}).get("changes")
+                    or not plan["changes"] or plan.get("next_role") not in {"coding", "test"}):
+                raise HarnessError("no_progress", "重诊断未提供绑定失败证据的新修正行动")
+            context["route"] = plan["next_role"]
+        if plan["decision"] == "blocked" and not governance:
+            raise HarnessError("plan_blocked", "；".join(plan["unresolved"]))
+        return context
+
+    def bind_plan(self, baseline, number, context):
+        task = self.store.get(self.task_id)
+        original = self.artifacts.read(task["problem_ref"])
+        governance = original.get("kind") == "code_health"
+        plan = self._read("plan")
+        route = Role(context["route"])
+        evidence = context["evidence"]
+        principles = self.artifacts.read(task["principles"])
+        rules = (self.artifacts.read(task["governance_context"])["rules"] if governance
+                 else principles.get("documents", []))
         if governance:
             from chatcopilot.harness.governance_repository import bind_report
             try:
@@ -190,8 +270,7 @@ class RoleWorkflow:
             if report["decision"] == "blocked":
                 raise HarnessError("plan_blocked", "；".join(plan["unresolved"]))
             if report["decision"] in {"no_changes", "needs_review"}:
-                return {"decision": report["decision"], "summary": report["summary"], "goal_capabilities": [],
-                        "coverage": [], "gaps": [], "notes": []}, None
+                return {**context, "terminal_proposal": {"decision": report["decision"], "summary": report["summary"], "goal_capabilities": [], "coverage": [], "gaps": [], "notes": []}}
             original = {**original, "governance_target": report["selected"],
                         "governance_report": self.store.get(self.task_id)["governance_report"]}
             evidence["governance_target"] = report["selected"]
@@ -209,27 +288,25 @@ class RoleWorkflow:
         existing = governance and plan["verification_order"] == "existing"
         test = self._read("test")
         needs_test = not existing and (not test or route in {Role.TEST, Role.PLAN})
-        coding = self._read("coding") or {"gaps": []}
-        test_error = None
-
-        def test_call():
-            return self.call(Role.TEST, root, number, "建立原目标的独立复现与回归依据", evidence, options, cancel)
-
+        pending = []
         if needs_test and plan["verification_order"] == "test_first":
-            try:
-                test = test_call()
-            except HarnessError as exc:
-                if exc.code not in {"invalid_role_result", "test_definition"}:
-                    raise
-                test_error = exc
+            pending.append("test")
         if route != Role.TEST or not self._read("coding"):
-            coding = self.call(Role.CODING, root, number, "实现最小候选并报告局部检查", evidence, options, cancel)
-            if coding["needs_replan"]:
-                raise HarnessError("needs_replan", coding["summary"])
+            pending.append("coding")
         if needs_test and plan["verification_order"] != "test_first":
-            test = test_call()
-        if test_error:
-            raise test_error
+            pending.append("test")
+        return {**context, "evidence": evidence, "pending_roles": pending, "existing": existing}
+
+    def submission(self, number, context):
+        task = self.store.get(self.task_id)
+        original = self.artifacts.read(task["problem_ref"])
+        governance = original.get("kind") == "code_health"
+        plan = self._read("plan")
+        goal_capabilities = plan["goal_capabilities"]
+        requirements = task["acceptance"]
+        existing = context["existing"]
+        test = self._read("test")
+        coding = self._read("coding") or {"gaps": []}
         if existing:
             test = {"decision": "candidate", "summary": "复用冻结测评", "verification_kind": "existing",
                     "goal_capabilities": goal_capabilities,

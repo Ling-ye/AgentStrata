@@ -42,7 +42,7 @@ def _task(controller, run_id, sequence, *, finding=None, delivery="merged", elap
     task_id = f"repair-{run_id}-{sequence}"
     task, created = controller.store.create({
         "task_id": task_id,
-        "pipeline_version": 10,
+        "pipeline_version": 11,
         "request_key": task_id,
         "request_digest": task_id,
         "match_key": task_id,

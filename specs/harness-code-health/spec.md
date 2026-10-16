@@ -38,7 +38,7 @@ stop_condition 是 `{mode: time, seconds}` 或 `{mode: findings, count}`。Conso
 定时默认关闭、间隔 24 小时，有活动批次或未完成交付时跳过。现有分钟级交付入口负责推进。
 批次创建和合并后创建下一项前，宿主用 worker 的 Codex 二进制与凭据查询原生模型目录；
 指定模型或推理强度不可用时不创建子任务，不自动换模。首次预检失败不留下批次，定时触发保留失败回执供下次重试。
-旧参数不兼容转换，旧定时需重新保存，旧任务保留只读；新存储结构增量建立，沿用 pipeline 10。
+旧参数不兼容转换，旧定时需重新保存，旧任务保留只读；批次使用持久化 LangGraph 图，协议及导出切换规则见 [Harness](../../docs/reference/harness.md#协议切换)。
 
 职责遵循[六层依赖](../domain-layered-dependencies/spec.md)和[四层运行时](../runtime-four-layer-definition/spec.md)：
 Types 定义批次输入和执行端口，Repo 保存记录，Service 判定顺序与预算，Runtime 装配既有

@@ -40,7 +40,7 @@ def repair(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "robot_task", "original_input": "Return one", "bot_id": "fixture"}
-    store.create({"task_id": ident, "pipeline_version": 10, "request_key": "request", "request_digest": "req",
+    store.create({"task_id": ident, "pipeline_version": 11, "request_key": "request", "request_digest": "req",
                   "match_key": "match", "context_key": "context", "active_key": "active", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"), "options": asdict(RepairOptions("fixture"))})
     from chatcopilot.harness.artifact_repository import ArtifactRepository

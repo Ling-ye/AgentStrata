@@ -159,121 +159,165 @@ class GovernanceRuns:
         return True
 
     def _advance(self, run_id, *, preflighted=False):
+        from chatcopilot.harness.batch_graph import build_batch_graph
+        from chatcopilot.harness.graph_repository import checkpoints
+        from chatcopilot.harness.graph_service import execute_graph
         run = self._refresh(run_id)
         if run["status"] not in RUN_ACTIVE:
             return
-        try:
-            task = self.store.get(run["current_task_id"]) if run["current_task_id"] else None
-            if run["status"] == "cancel_requested":
-                if task:
-                    self.lifecycle.cancel(task["task_id"])
-                    task = self.store.get(task["task_id"])
-                    if (self.lifecycle.workers.observe(task) != WorkerState.INACTIVE
-                            or task["status"] in ACTIVE or task.get("current_evaluation_id") or task.get("delivery_evaluation")
-                            or task.get("delivery", {}).get("state") not in {None, "cancelled", "closed", "merged", "no_changes"}):
-                        return
-                self.runs.update(run_id, status="cancelled", stop_reason="cancelled", message="整次熵回收已取消")
-                return
-            if task:
-                observed = self.lifecycle.workers.observe(task)
-                if observed == WorkerState.UNKNOWN:
-                    self._fail_run(run_id, "worker_unavailable", "无法确认当前 worker 已停止；未创建下一项")
-                    return
-                if task["status"] == "queued" and task.get("dispatch_state") == "creating":
-                    if observed == WorkerState.INACTIVE:
-                        self.tasks.launch(task["task_id"])
-                    return
-                self.lifecycle.reconcile(task["task_id"])
-                task = self.store.get(task["task_id"])
-                observed = self.lifecycle.workers.observe(task)
-                if observed == WorkerState.UNKNOWN:
-                    self._fail_run(run_id, "worker_unavailable", "对账后无法确认当前 worker 已停止；未创建下一项")
-                    return
-                delivery = task.get("delivery", {}).get("state")
-                learning = task["source"].get("skill_learning")
-                if task["status"] == "fixed":
-                    self.runs.update(run_id, status="waiting_delivery",
-                        message="等待 Skill PR 合并" if learning else "等待当前问题 PR 合并")
-                if observed != WorkerState.INACTIVE:
-                    return
-                if task.get("current_evaluation_id") or task.get("delivery_evaluation"):
-                    self._fail_run(run_id, "evaluation_unconfirmed", "验证尚未确认停止；未创建下一项")
-                    return
-                if task["status"] in ACTIVE:
-                    return
-                if learning:
-                    if task["status"] == "fixed" and delivery not in {"merged", *_DELIVERY_FAILED}:
-                        return
-                    if delivery in _DELIVERY_FAILED and delivery not in {"closed", "cancelled"}:
-                        if not self._settle_failed_item(run_id, task):
-                            return
-                        delivery = self.store.get(task["task_id"]).get("delivery", {}).get("state")
-                    state = ("merged" if delivery == "merged" else "no_change" if task["status"] == "no_changes" else "failed")
-                    self.store.update(learning["origin_task_id"], skill_learning={"state": state, "task_id": task["task_id"]})
-                else:
-                    if task["status"] == "no_changes":
-                        self.runs.update(run_id, status="completed", stop_reason="no_changes", message="未发现可执行问题；调查范围见当前任务")
-                        return
-                    if task["status"] == "fixed" and delivery not in {"merged", *_DELIVERY_FAILED}:
-                        return
-                    if task["status"] == "fixed" and delivery == "merged":
-                        from chatcopilot.harness.skill_context import learning_source
-                        source = learning_source(task, self.store.attempts(task["task_id"]))
-                        if source:
-                            options = GovernanceOptions.from_payload(run["options"])
-                            child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800, options.model_settings, options.model_profile)
-                            self.tasks.preflight_model(options.model, options.reasoning_effort, model_settings=options.model_settings, model_profile=options.model_profile)
-                            child = self.tasks.start_learning(run, run["sequence"] + 1, child_options, source)
-                            if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
-                                raise HarnessError("governance_active", "Skill 学习任务不属于当前回收批次")
-                            self.store.update(task["task_id"], skill_learning={"state": "queued", "task_id": child["task_id"]})
-                            self._refresh(run_id)
-                            self.runs.update(run_id, status="running", stop_reason="", message="核对已合并改善的可复用教训")
-                            self.tasks.launch(child["task_id"])
-                            return
-                    else:
-                        if not task.get("governance_finding_id"):
-                            self._fail_run(run_id, task.get("error_code") or "discovery_failed",
-                                task.get("message") or "调查未形成可计数的问题")
-                            return
-                        if not self._settle_failed_item(run_id, task):
-                            return
-            run = self._refresh(run_id)
-            stop = run["options"]["stop_condition"]
-            if stop["mode"] == "findings" and run["found_count"] >= stop["count"]:
-                self.runs.update(run_id, status="completed", stop_reason="findings_limit",
-                    message=f"已发现 {run['found_count']} 项；已合并 {run['merged_count']} 项，处理失败 {run['failed_count']} 项")
-                return
-            remaining = self.remaining(run)
-            if remaining is not None and remaining <= 0:
-                self.runs.update(run_id, status="completed", stop_reason="budget_exhausted", message="累计执行时间已用完")
-                return
-            busy = self.store.active_governance(run["repository"])
-            if busy:
-                raise HarnessError("governance_active", "仓库仍有未完成的代码熵回收任务或交付")
-            options = GovernanceOptions.from_payload(run["options"])
+        with checkpoints(self.store.root, "gc:" + run_id) as saver:
+            execute_graph(build_batch_graph(self, saver), "gc:" + run_id,
+                          initial={"preflighted": preflighted})
+
+    def graph_node(self, name):
+        def node(state):
+            run_id = state["identity"].removeprefix("gc:")
+            try:
+                return {"phase": name, **getattr(self, "graph_" + name)(run_id, state)}
+            except Exception as exc:
+                current = self._refresh(run_id)
+                if current["status"] != "cancel_requested" and current["current_task_id"]:
+                    child = self.store.get(current["current_task_id"])
+                    if (child.get("governance_run_id") == run_id
+                            and child.get("governance_sequence") == current["sequence"]
+                            and child.get("request_key") == f"{run_id}-{current['sequence']}"
+                            and child["status"] == "queued" and child.get("dispatch_state") == "creating"):
+                        self.runs.update(run_id, status="running", stop_reason="", message="核对已创建任务的派发")
+                        return {"route": "wait", "child_id": child["task_id"]}
+                self.runs.update(run_id, status="cancel_requested" if current["status"] == "cancel_requested" else "failed",
+                                 stop_reason=getattr(exc, "code", "execution_error"), message=safe_error(exc))
+                return {"route": "wait" if current["status"] == "cancel_requested" else "__end__"}
+        return node
+
+    def graph_observe(self, run_id, state):
+        run = self._refresh(run_id)
+        if run["status"] not in RUN_ACTIVE:
+            return {"route": "__end__"}
+        if run["status"] == "cancel_requested":
+            return {"route": "cancel"}
+        if not run["current_task_id"]:
+            return {"route": "limits"}
+        task = self.store.get(run["current_task_id"])
+        observed = self.lifecycle.workers.observe(task)
+        if observed == WorkerState.UNKNOWN:
+            self._fail_run(run_id, "worker_unavailable", "无法确认当前 worker 已停止；未创建下一项")
+            return {"route": "__end__"}
+        if task["status"] == "queued" and task.get("dispatch_state") == "creating":
+            return {"route": "launch" if observed == WorkerState.INACTIVE else "wait", "child_id": task["task_id"]}
+        self.lifecycle.reconcile(task["task_id"])
+        task = self.store.get(task["task_id"])
+        observed = self.lifecycle.workers.observe(task)
+        if observed == WorkerState.UNKNOWN:
+            self._fail_run(run_id, "worker_unavailable", "对账后无法确认当前 worker 已停止；未创建下一项")
+            return {"route": "__end__"}
+        if task["status"] == "fixed":
+            self.runs.update(run_id, status="waiting_delivery", message="等待当前问题 PR 合并")
+        if observed != WorkerState.INACTIVE:
+            return {"route": "wait"}
+        if task.get("current_evaluation_id") or task.get("delivery_evaluation"):
+            self._fail_run(run_id, "evaluation_unconfirmed", "验证尚未确认停止；未创建下一项")
+            return {"route": "__end__"}
+        if task["status"] in ACTIVE:
+            return {"route": "wait"}
+        delivery = task.get("delivery", {}).get("state")
+        if task["status"] == "fixed" and delivery not in {"merged", *_DELIVERY_FAILED}:
+            return {"route": "wait"}
+        if task["source"].get("skill_learning"):
+            return {"route": "settle"}
+        if task["status"] == "no_changes":
+            self.runs.update(run_id, status="completed", stop_reason="no_changes", message="未发现可执行问题；调查范围见当前任务")
+            return {"route": "__end__"}
+        if task["status"] == "fixed" and delivery == "merged":
+            return {"route": "learning"}
+        if not task.get("governance_finding_id"):
+            self._fail_run(run_id, task.get("error_code") or "discovery_failed", task.get("message") or "调查未形成可计数的问题")
+            return {"route": "__end__"}
+        return {"route": "settle"}
+
+    def graph_cancel(self, run_id, state):
+        run = self._refresh(run_id)
+        if run["current_task_id"]:
+            self.lifecycle.cancel(run["current_task_id"])
+            task = self.store.get(run["current_task_id"])
+            if (self.lifecycle.workers.observe(task) != WorkerState.INACTIVE
+                    or task["status"] in ACTIVE or task.get("current_evaluation_id") or task.get("delivery_evaluation")
+                    or task.get("delivery", {}).get("state") not in {None, "cancelled", "closed", "merged", "no_changes"}):
+                return {"route": "wait"}
+        self.runs.update(run_id, status="cancelled", stop_reason="cancelled", message="整次熵回收已取消")
+        return {"route": "__end__"}
+
+    def graph_settle(self, run_id, state):
+        run = self._refresh(run_id)
+        task = self.store.get(run["current_task_id"])
+        learning = task["source"].get("skill_learning")
+        delivery = task.get("delivery", {}).get("state")
+        if learning:
+            if delivery in _DELIVERY_FAILED and delivery not in {"closed", "cancelled"}:
+                if not self._settle_failed_item(run_id, task):
+                    return {"route": "wait" if self.runs.get(run_id)["status"] in RUN_ACTIVE else "__end__"}
+            result = "merged" if delivery == "merged" else "no_change" if task["status"] == "no_changes" else "failed"
+            self.store.update(learning["origin_task_id"], skill_learning={"state": result, "task_id": task["task_id"]})
+        elif not self._settle_failed_item(run_id, task):
+            return {"route": "wait" if self.runs.get(run_id)["status"] in RUN_ACTIVE else "__end__"}
+        return {"route": "limits"}
+
+    def graph_learning(self, run_id, state):
+        from dataclasses import asdict
+        from chatcopilot.harness.artifact_repository import ArtifactRepository
+        from chatcopilot.harness.skill_context import learning_source
+        run = self._refresh(run_id)
+        task = self.store.get(run["current_task_id"])
+        source = learning_source(task, self.store.attempts(task["task_id"]))
+        if not source or self.remaining(run) is not None and self.remaining(run) <= 0:
+            return {"route": "limits", "kind": "code_health"}
+        reference = asdict(ArtifactRepository(self.store.root / "jobs" / task["task_id"]).put("learning_source", 1, source))
+        return {"route": "create", "kind": "skill_learning", "sequence": run["sequence"] + 1,
+                "context_ref": reference, "child_id": task["task_id"], "preflighted": False}
+
+    def graph_limits(self, run_id, state):
+        run = self._refresh(run_id)
+        if run["status"] == "cancel_requested":
+            return self.graph_cancel(run_id, state)
+        stop = run["options"]["stop_condition"]
+        if stop["mode"] == "findings" and run["found_count"] >= stop["count"]:
+            self.runs.update(run_id, status="completed", stop_reason="findings_limit",
+                message=f"已发现 {run['found_count']} 项；已合并 {run['merged_count']} 项，处理失败 {run['failed_count']} 项")
+            return {"route": "__end__"}
+        remaining = self.remaining(run)
+        if remaining is not None and remaining <= 0:
+            self.runs.update(run_id, status="completed", stop_reason="budget_exhausted", message="累计执行时间已用完")
+            return {"route": "__end__"}
+        if self.store.active_governance(run["repository"]):
+            raise HarnessError("governance_active", "仓库仍有未完成的代码熵回收任务或交付")
+        return {"route": "create", "kind": "code_health", "sequence": run["sequence"] + 1}
+
+    def graph_create(self, run_id, state):
+        from chatcopilot.harness.artifact_repository import ArtifactRepository
+        run = self._refresh(run_id)
+        if run["status"] == "cancel_requested":
+            return {"route": "wait"}
+        options = GovernanceOptions.from_payload(run["options"])
+        remaining = self.remaining(run)
+        if not state.get("preflighted"):
+            self.tasks.preflight_model(options.model, options.reasoning_effort, model_settings=options.model_settings, model_profile=options.model_profile)
+        if state["kind"] == "skill_learning":
+            source = ArtifactRepository(self.store.root / "jobs" / state["child_id"]).read(state["context_ref"])
+            child_options = RepairOptions(options.model, options.reasoning_effort, 1, 1800, options.model_settings, options.model_profile)
+            child = self.tasks.start_learning(run, state["sequence"], child_options, source)
+            self.store.update(source["origin_task_id"], skill_learning={"state": "queued", "task_id": child["task_id"]})
+        else:
             child_options = RepairOptions(options.model, options.reasoning_effort, options.max_attempts,
-                                          math.ceil(remaining) if remaining is not None else None, options.model_settings, options.model_profile)
-            if not preflighted:
-                self.tasks.preflight_model(options.model, options.reasoning_effort, model_settings=options.model_settings, model_profile=options.model_profile)
-            child = self.tasks.start(run, run["sequence"] + 1, child_options)
-            if child.get("governance_run_id") != run_id or child.get("governance_sequence") != run["sequence"] + 1:
-                raise HarnessError("governance_active", "创建结果不属于当前回收批次，未启动任务")
-            self._refresh(run_id)
-            self.runs.update(run_id, status="running", stop_reason="", message="逐项发现并处理")
-            self.tasks.launch(child["task_id"])
-        except Exception as exc:
-            current = self._refresh(run_id)
-            if current["status"] != "cancel_requested" and current["current_task_id"]:
-                child = self.store.get(current["current_task_id"])
-                if (child.get("governance_run_id") == run_id
-                        and child.get("governance_sequence") == current["sequence"]
-                        and child.get("request_key") == f"{run_id}-{current['sequence']}"
-                        and child["status"] == "queued" and child.get("dispatch_state") == "creating"):
-                    self.runs.update(run_id, status="running", stop_reason="", message="核对已创建任务的派发")
-                    return
-            self.runs.update(run_id, status="cancel_requested" if current["status"] == "cancel_requested" else "failed",
-                stop_reason=getattr(exc, "code", "execution_error"), message=safe_error(exc))
+                math.ceil(remaining) if remaining is not None else None, options.model_settings, options.model_profile)
+            child = self.tasks.start(run, state["sequence"], child_options)
+        if child.get("governance_run_id") != run_id or child.get("governance_sequence") != state["sequence"]:
+            raise HarnessError("governance_active", "创建结果不属于当前回收批次，未启动任务")
+        self._refresh(run_id)
+        self.runs.update(run_id, status="running", stop_reason="", message="逐项发现并处理")
+        return {"route": "launch", "child_id": child["task_id"], "preflighted": False}
+
+    def graph_launch(self, run_id, state):
+        self.tasks.launch(state["child_id"])
+        return {"route": "wait"}
 
     def cancel(self, run_id):
         with self.runs.locked():

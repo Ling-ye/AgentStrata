@@ -179,11 +179,14 @@ class CodexCoder:
             # Codex writable roots require directories. The outer namespace
             # keeps the original exact file mounts and read-only parent, while
             # the native child protects Git and the parent's runtime state.
-            # No vendor-specific mountpoints are created in the candidate.
+            # A writable candidate root makes Codex create .codex/.agents
+            # mountpoints in its read-only parent. Project the task directory
+            # instead: it is only a namespace skeleton, with real files still
+            # confined by the outer mounts and protected runtime roots.
             native_scope = replace(
                 native_scope,
                 readable_roots=(),
-                writable_roots=(Path("/"),),
+                writable_roots=(task_root,),
             )
         config = permission_config(
             native_scope, workdir=execution_directory, private_paths=(str(runtime_home / "auth.json"),), network_access=False

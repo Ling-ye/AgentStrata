@@ -456,7 +456,7 @@ class HarnessController:
             "pipeline_version", "archived", "continued_from", "next_action", "message", "branch", "worktree", "verified_at",
             "candidate_available", "elapsed_seconds", "remaining_seconds", "stop_reason", "verification_gaps", "acceptance_coverage",
             "candidate_checkpoint", "error_code", "heartbeat_at", "current_attempt", "options",
-            "local_commit", "commit_state", "commit_in_main", "cleanup", "archive") if key in value}
+            "local_commit", "commit_state", "commit_in_main", "cleanup", "archive", "graph", "delivery_graph") if key in value}
         result["source"] = {key: item for key, item in value["source"].items() if key in {
             "kind", "run_id", "evaluation_id", "case_id", "case_instance_id", "bot_id", "target_id", "case_ids", "blockers", "warnings", "test_sha256"}}
         result["preparation_revisions"] = [{"revision": r["revision"], "status": r["status"]} for r in value.get("preparation_revisions", [])]
@@ -595,12 +595,6 @@ class HarnessController:
                 source_manifest(Path(task["worktree"]))
             ) != task.get("working_digest"):
                 raise HarnessError("workspace_changed", "工作区被外部修改，不能继续原任务")
-            for attempt in self.store.attempts(task_id):
-                if attempt["status"] == "coding":
-                    attempt.update(
-                        status="interrupted", error="上次编程执行被中断；保留该次改动并消耗一次尝试"
-                    )
-                    self.store.save_attempt(task_id, attempt["number"], attempt)
             task, claimed = self.lifecycle.claim_resume_locked(task_id)
             if claimed:
                 self._launch(task)
@@ -800,6 +794,8 @@ class HarnessController:
                 "flow_steps",
                 "evaluation_history",
                 "artifact_fields",
+                "role_executions",
+                "delivery_acceptance_receipts",
             }
         }
         source = task["source"]

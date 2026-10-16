@@ -36,7 +36,7 @@ def governance(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "code_health", "repository": str(repo), "original_input": GOAL}
-    store.create({"task_id": ident, "pipeline_version": 10, "request_key": "gc", "request_digest": "gc",
+    store.create({"task_id": ident, "pipeline_version": 11, "request_key": "gc", "request_digest": "gc",
                   "context_key": "repo", "match_key": "repo", "active_key": "gc", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"),
                   "options": asdict(RepairOptions("fixture"))})
@@ -121,11 +121,12 @@ def test_green_baseline_gc_is_accepted_without_test_or_extra_main(governance):
     result = run_task(store, ident, verifier, roles)
     assert result["status"] == "fixed", result.get("message")
     assert verifier.results == [True, True]
-    assert roles.calls == [Role.MAIN, Role.PLAN, Role.CODING, Role.REVIEW]
+    assert roles.calls == [Role.PLAN, Role.CODING, Role.REVIEW]
     assert [row["source_id"] for row in store.flow_steps(ident)].count("review-1") == 1
     contexts = {role: evidence for role, evidence in roles.contexts}
     assert "source_index" in contexts[Role.PLAN] and "governance_context" in contexts[Role.PLAN]
-    assert set(contexts[Role.MAIN]["source_index"]) >= {"seeds", "candidate_count", "omitted_counts"}
+    assert Role.MAIN not in contexts
+    assert set(contexts[Role.PLAN]["source_index"]) >= {"seeds", "candidates", "omitted_counts"}
     assert "source_index" not in contexts[Role.CODING] and "target_context" in contexts[Role.CODING]
     assert "governance_context" not in contexts[Role.REVIEW] and "target_context" in contexts[Role.REVIEW]
     assert result["accepted_candidate"] and not result["verification_gaps"]
@@ -173,7 +174,7 @@ def test_no_findings_has_no_candidate_or_pr_and_retains_partial_scope(governance
     assert result["status"] == "no_changes", result.get("message")
     assert not result.get("accepted_candidate")
     assert not accepted(store, result)
-    assert roles.calls == [Role.MAIN, Role.PLAN]
+    assert roles.calls == [Role.PLAN]
     report = ArtifactRepository(store.root / "jobs" / ident).read(result["governance_report"])
     assert report["uninspected"] and not report["inspection_complete"]
 
@@ -301,7 +302,7 @@ def test_invalid_discovery_is_not_reused_as_an_effective_plan(governance):
     result = run_task(store, ident, GreenVerifier(), roles)
     assert result["status"] == "fixed", result.get("message")
     assert roles.plans == 2
-    assert roles.calls[:4] == [Role.MAIN, Role.PLAN, Role.MAIN, Role.PLAN]
+    assert roles.calls[:2] == [Role.PLAN, Role.PLAN]
 
 
 def test_directory_search_is_recorded_as_unconfirmed_not_whole_repo_coverage(governance):
@@ -318,7 +319,7 @@ def test_directory_search_is_recorded_as_unconfirmed_not_whole_repo_coverage(gov
     report = ArtifactRepository(store.root / "jobs" / ident).read(result["governance_report"])
     assert report["inspected_paths"] == [PRODUCT]
     assert any("src" in value for value in report["uninspected"])
-    assert not report["inspection_complete"] and roles.calls == [Role.MAIN, Role.PLAN]
+    assert not report["inspection_complete"] and roles.calls == [Role.PLAN]
 
 
 def test_generated_test_draft_is_not_a_governance_product_path(governance):
@@ -385,7 +386,7 @@ def test_native_startup_failure_stops_without_repeating_repair_rounds(governance
     result = run_task(store, ident, GreenVerifier(), coder)
     assert result["status"] == "blocked" and result["error_code"] == "coding_environment"
     assert "TypeError: native startup failed" in result["message"]
-    assert calls == [Role.MAIN]
+    assert calls == [Role.PLAN]
     assert len(store.attempts(ident)) == 1
     assert result["candidate_checkpoint"]["changed_files"] == []
     assert not result.get("accepted_candidate")

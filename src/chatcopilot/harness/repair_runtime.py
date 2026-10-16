@@ -9,7 +9,7 @@ from chatcopilot.harness.repair_repository import RepairArtifacts
 from chatcopilot.harness.workflow import run_task as execute
 
 
-def run_task(store, task_id, verifier, coder, *, committer=None) -> dict[str, Any]:
+def run_task(store, task_id, verifier, coder, *, committer=None, prepare=None, deliver=None) -> dict[str, Any]:
     from chatcopilot.core.trace_capture import TraceCapture, capture_scope
     from chatcopilot.core.trace_archive import TraceArchive
     capture = TraceCapture({"kind": "harness", "task_id": task_id, "phase": "workflow", "execution_id": uuid.uuid4().hex})
@@ -20,7 +20,8 @@ def run_task(store, task_id, verifier, coder, *, committer=None) -> dict[str, An
     status = "failed"
     try:
         with capture_scope(capture):
-            result = execute(store, task_id, verifier, coder, workspace_factory=lambda task: RepairArtifacts(store.root, task))
+            result = execute(store, task_id, verifier, coder, workspace_factory=lambda task: RepairArtifacts(store.root, task),
+                             prepare=prepare, deliver=deliver)
         status = result["status"]
         return result
     except (sqlite3.Error, OSError) as exc:

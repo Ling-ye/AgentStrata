@@ -54,7 +54,7 @@ def test_host_advances_without_repeated_main_calls(repair):
     roles = Roles((2, 1))
     result = run_task(store, ident, Verifier(), roles)
     assert result["status"] == "fixed", result
-    assert roles.roles == [Role.MAIN, Role.PLAN, Role.CODING, Role.TEST, Role.CODING, Role.REVIEW]
+    assert roles.roles == [Role.PLAN, Role.CODING, Role.TEST, Role.CODING, Role.REVIEW]
     assert result["accepted_candidate"]["candidate_digest"] == result["verified_digest"]
     assert len(store.attempts(ident)) == 2
     assert result["source_index_ref"]["kind"] == "source_index"
@@ -102,7 +102,7 @@ def test_repeated_failure_replans_once_using_remaining_attempt(repair):
     result = run_task(store, ident, Verifier(), roles)
     assert result["status"] == "fixed", result.get("message")
     assert roles.roles.count(Role.PLAN) == 2
-    assert roles.roles.count(Role.MAIN) == 1
+    assert roles.roles.count(Role.MAIN) == 0
     assert roles.roles.count(Role.TEST) == 1
     assert store.attempts(ident)[1]["feedback"]["rediagnosis"]
     assert result["evaluations"]["reproduce-r3"]["reused_from"].endswith("reproduce-r1")
@@ -180,7 +180,8 @@ def test_test_definition_retry_does_not_rewrite_product(repair):
     roles = Roles()
     result = run_task(store, ident, BadFirstDefinition(), roles)
     assert result["status"] == "fixed", result
-    assert roles.roles.count(Role.CODING) == roles.roles.count(Role.MAIN) == 1
+    assert roles.roles.count(Role.CODING) == 1
+    assert roles.roles.count(Role.MAIN) == 0
     assert roles.roles.count(Role.TEST) == 2
     retry = [evidence for role, evidence in roles.evidence if role == Role.TEST][1]
     brief = retry["failure_brief"]
@@ -235,7 +236,7 @@ def test_invalid_test_first_still_retains_exploratory_candidate(repair):
             return super().execute(root, call, *args)
     roles = InvalidTest(order="test_first")
     result = run_task(store, ident, Verifier(), roles)
-    assert roles.roles[:4] == [Role.MAIN, Role.PLAN, Role.TEST, Role.CODING]
+    assert roles.roles[:3] == [Role.PLAN, Role.TEST, Role.CODING]
     assert roles.calls == 1
     assert result["candidate_checkpoint"]["changed_files"]
     assert result["status"] != "fixed" and not result.get("accepted_candidate")
@@ -248,9 +249,12 @@ def test_main_cannot_dispatch_review_to_bypass_plan_or_checks(repair):
             if call.role == Role.MAIN:
                 return AgentResult({"next_role": "review", "summary": "ship now", "unresolved": []}, {})
             return super().execute(root, call, *args)
+        def review(self, *args):
+            return {"decision": "rejected", "problem": "requires coordination", "reason": "review found a dispute",
+                    "evidence_refs": ["verification"]}
     roles = Bypass()
     result = run_task(store, ident, Verifier(), roles)
-    assert roles.calls == 0 and result["status"] != "fixed"
+    assert roles.calls == 1 and result["status"] != "fixed"
     assert result["error_code"] in {"no_progress", "invalid_role_result"}
 
 
@@ -262,7 +266,7 @@ def test_plan_and_test_read_original_evidence_after_candidate_changes(repair):
     assert repo.read(result["problem_ref"]) == {"kind": "robot_task", "original_input": "Return one", "bot_id": "fixture"}
     steps = store.flow_steps(ident)
     role_steps = [s for s in steps if s.get("input", {}).get("role")]
-    assert {s["input"]["role"] for s in role_steps} == {r.value for r in Role}
+    assert {s["input"]["role"] for s in role_steps} == {r.value for r in Role if r != Role.MAIN}
     for step in role_steps:
         assert repo.read(step["evidence"]["output"])
     with store.database.connect() as connection:

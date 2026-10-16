@@ -23,6 +23,8 @@ export interface Delivery {
   auto_merge?: boolean; message?: string; error_code?: string;
 }
 export interface RepairTask {
+  graph?: GraphProgress;
+  delivery_graph?: GraphProgress;
   governance_summary?: { summary: string; topic?: string; inspected_count: number; inventory_count: number; inspection_complete: boolean; finding_count: number; needs_decision_count: number };
   delivery?: Delivery;
   cleanup?: { local?: string; remote?: string; error?: string };
@@ -60,6 +62,9 @@ export interface RepairTask {
   attempts?: Array<{ number: number; status: string; changed_files?: string[]; error?: string; checks?: string[];
     review?: Review; repository_regressions?: { passed_cases: string[]; failed_cases: string[] }; patch_sha256?: string; coding?: { events: Array<Record<string, unknown>> }; regressions?: string[]; verification?: Verification }>;
 }
+export interface GraphProgress {
+  thread_id: string; checkpoint_id?: string; next: string[]; phase?: string; version: number; waiting?: boolean;
+}
 export interface RepairProgress {
   state: "ready" | "empty" | "partial";
   source: { id: string; kind: "prepare" | "coding" | "review" | "audit"; label?: string; number: number | null; current: boolean } | null;
@@ -71,7 +76,7 @@ export interface RepairProgress {
 }
 export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "elapsed_seconds" |
   "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive" |
-  "pipeline_version" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint"> & {
+  "pipeline_version" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint" | "graph" | "delivery_graph"> & {
   options: { model_profile?: string; model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number | null };
   source?: { kind?: SourceKind | "code_health" };
   governance_summary?: RepairTask["governance_summary"];
@@ -96,6 +101,11 @@ export function stageLabel(stage: string): string {
   if (stage.startsWith("confirm-")) return `第 ${stage.slice(8)} 轮独立确认`;
   if (stage.startsWith("verify-")) return `第 ${stage.slice(7)} 轮复测`;
   return ({ auto_correcting: "自动修正复现方案", waiting_image: "等待原图", queued: "等待启动", self_check: "来源自检", prepare_reproducer: "建立复现测试",
+    prepare: "核对冻结源码", begin_attempt: "开始修复轮次", bind: "核对并冻结问题", choose: "选择下一角色", assemble: "收录候选与测试",
+    acceptance: "独立验收", verification: "验证候选", confirmation: "独立确认", seal: "签发验收凭据", failure: "核对失败与返工",
+    delivery: "交付成果", inspect: "核对交付资格", locate_pr: "核对任务 PR", checks: "交付检查", push: "普通推送", create_pr: "创建任务 PR",
+    observe: "核对远端状态", prepare_update: "整合最新主干", revalidate: "主干更新复验", commit_update: "记录复验提交", cleanup_update: "清理复验工作区",
+    enable: "设置自动合并", retire: "核对已结束交付", cancel: "确认取消", cleanup_wait: "归档并等待", cleanup_done: "归档与清理", wait: "等待外部结果",
     environment: "准备独立依赖环境", snapshot: "冻结源码", definition: "冻结验证草案", regressions: "仓库回归", main: "主 Agent 安排任务", plan: "根因与修复计划", test: "独立验证设计", verify: "候选验收",
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }

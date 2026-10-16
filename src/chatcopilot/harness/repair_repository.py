@@ -74,6 +74,11 @@ class RepairArtifacts:
                 private_file(path)
                 content = path.read_bytes()
                 destination = target / name
+                if destination.exists():
+                    private_file(destination)
+                    if destination.read_bytes() != content:
+                        raise HarnessError("reproducer_changed", "已收录的测试草案发生变化")
+                    continue
                 with destination.open("xb") as stream:
                     stream.write(content)
                 destination.chmod(0o600)

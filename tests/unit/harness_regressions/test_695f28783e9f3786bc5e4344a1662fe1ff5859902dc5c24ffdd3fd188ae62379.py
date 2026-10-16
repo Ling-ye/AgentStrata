@@ -183,7 +183,7 @@ class _Tasks:
         request = f"{run['run_id']}-{sequence}"
         task, created = self.store.create({
             "task_id": "repair-" + request,
-            "pipeline_version": 10,
+            "pipeline_version": 11,
             "request_key": request,
             "request_digest": request,
             "match_key": request,

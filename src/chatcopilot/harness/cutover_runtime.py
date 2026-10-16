@@ -1,17 +1,15 @@
-"""Explicit destructive protocol cutover under the existing maintenance leases."""
+"""Export history and replace active state while preserving all retired resources."""
 from __future__ import annotations
 
 import json
 from pathlib import Path
 import re
-import shutil
 import sqlite3
 import uuid
 
 from chatcopilot.core.private_sqlite import private_file
 from chatcopilot.core.source_snapshot import git_output
 from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES, WorkerState, external_evaluation_id
-from chatcopilot.harness.github_delivery import git
 from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
 
 _TASK = re.compile(r"repair-[0-9a-f]{32}")
@@ -52,10 +50,13 @@ def _inventory(store):
 def cutover(store, workers, evaluator, *, apply=False, github=None, repository=None):
     with store.maintenance():
         tasks, current = _inventory(store)
-        if any(tasks[ident].get("pipeline_version") == PIPELINE_VERSION for ident in current):
-            raise HarnessError("cutover_current_tasks", "新协议已创建任务，不允许用旧协议切换命令清空")
+        if store.protocol_version() == PIPELINE_VERSION or any(tasks[ident].get("pipeline_version") == PIPELINE_VERSION for ident in current):
+            raise HarnessError("cutover_current_tasks", "当前状态库已切换或包含新协议任务，不能重复切换")
         for task in tasks.values():
-            if workers.observe(task) != WorkerState.INACTIVE:
+            # Retirement inspects both unit names used by the old protocol;
+            # active execution itself only uses the new unified task unit.
+            retired_delivery = {**task, "unit": "agentstrata-harness-delivery-" + task["task_id"][7:]}
+            if workers.observe(task) != WorkerState.INACTIVE or workers.observe(retired_delivery) != WorkerState.INACTIVE:
                 raise HarnessError("cutover_worker_active", "无法确认旧 worker 已停止：" + task["task_id"])
             references = [external_evaluation_id(task.get("source", {}), task.get("current_evaluation_id")),
                           external_evaluation_id(task.get("source", {}), (task.get("delivery_evaluation") or {}).get("id"))]
@@ -77,7 +78,7 @@ def cutover(store, workers, evaluator, *, apply=False, github=None, repository=N
         if repository is not None:
             roots.add(Path(repository))
         if len(roots) > 1:
-            raise HarnessError("cutover_repository_mismatch", "旧记录涉及不同仓库，不能统一清空")
+            raise HarnessError("cutover_repository_mismatch", "旧记录涉及不同仓库，不能统一切换")
         repo = next(iter(roots), None)
         worktrees, branches = [], []
         if repo:
@@ -116,25 +117,9 @@ def cutover(store, workers, evaluator, *, apply=False, github=None, repository=N
         lease = uuid.uuid4().hex
         evaluator.client.enter_maintenance(lease)
         try:
-            if repo:
-                for path in worktrees:
-                    git(repo, "worktree", "remove", "--force", path)
-                for branch in branches:
-                    git(repo, "branch", "-D", branch)
-            for ident in tasks:
-                path = store.root / "jobs" / ident
-                if path.exists():
-                    shutil.rmtree(path)
-            archive = store.root / "archives"
-            if archive.exists():
-                shutil.rmtree(archive)
-            with store.database.connect(write=True) as connection:
-                tables = {row[0] for row in connection.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-                for name in ("repair_steps", "attempts", "governance_runs", "tasks"):
-                    if name in tables:
-                        connection.execute("DELETE FROM " + name)
-                connection.execute("DROP TRIGGER IF EXISTS harness_pipeline_admission")
-                connection.execute(f"CREATE TRIGGER harness_pipeline_admission BEFORE INSERT ON tasks WHEN COALESCE(json_extract(NEW.payload, '$.pipeline_version'), 0) != {PIPELINE_VERSION} BEGIN SELECT RAISE(ABORT, 'Harness protocol changed; restart the upgraded host'); END")
-            return {**result, "applied": True}
+            from chatcopilot.harness.history_repository import export_history
+            history = export_history(store, tasks)
+            history["retired_database"] = store.replace_active_database(Path(history["path"]))
+            return {**result, "applied": True, "history_export": history, "resources_preserved": True}
         finally:
             evaluator.client.leave_maintenance(lease)

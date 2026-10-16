@@ -93,84 +93,6 @@ def _pr_receipt(store: Any, task_id: str, pr: dict[str, Any]) -> dict[str, Any]:
     return _save(store, task_id, pr_number=pr["number"], pr_url=pr["html_url"], pr_node_id=pr["node_id"], state="pr_open")
 
 
-def _update_main(store: Any, task_id: str, client: GitHubDelivery, main: str, coder: Any, verifier: Any) -> None:
-    from chatcopilot.harness.delivery_validation import revalidate
-    task = store.get(task_id)
-    state = task["delivery"]
-    inflight = bool(task.get("delivery_evaluation"))
-    if inflight and state.get("update_base_sha") != main:
-        raise HarnessError("delivery_update_in_flight", "原主干复测仍在执行，先完成或取消该测评")
-    # Persist ownership of the disable request, so retry does not mistake it for a human action.
-    _save(store, task_id, state="updating", update_base_sha=main, disabling_for_update=True)
-    pr = client.pull(state["pr_number"])
-    if pr.get("auto_merge"):
-        client.disable(state)
-    _poll_cancel(store, task_id)
-    state = _save(store, task_id, auto_merge=False)
-    with _active_work(store, task_id) as (budget, poll):
-        root = delivery_archive.restore(store, task_id)
-        repository, directory, _, branch = delivery_archive.task_paths(store, store.get(task_id))
-        client.fetch(repository, directory, main)
-        if not inflight and git(root, "diff", "--cached", "--name-only").strip():
-            raise HarnessError("index_changed", "主干更新前暂存区出现外部修改")
-        if not inflight and (git(root, "diff", "HEAD", "--name-only").strip() or git(root, "ls-files", "--others", "--exclude-standard").strip()):
-            # Resume a failed update from the last published commit, after preserving the exact owned bytes.
-            delivery_archive.archive(store, task_id)
-            extras = git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
-            git(root, "reset", "--hard", state["commit_sha"])
-            for raw in extras:
-                if raw:
-                    path = root / raw.decode()
-                    if path.exists():
-                        path.unlink()
-            store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
-        baseline = directory / "revalidation-base"
-        if baseline.exists():
-            if (baseline.resolve() != baseline or git(baseline, "rev-parse", "--path-format=absolute", "--git-common-dir")
-                    != git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
-                    or git(baseline, "rev-parse", "HEAD").decode().strip() != main or git(baseline, "status", "--porcelain").strip()):
-                raise HarnessError("delivery_update_interrupted", "主干验证工作区变化，保留现场")
-        else:
-            git(repository, "worktree", "add", "--detach", str(baseline), main)
-        env = github_transport.git_environment(author_name=state["author_name"], author_email=state["author_email"])
-        try:
-            try:
-                if not inflight:
-                    git(root, "merge", "--no-commit", "--no-ff", main, env=env)
-            except HarnessError as exc:
-                # Preserve conflict bytes in the verified archive; do not resolve with a model implicitly.
-                store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
-                raise HarnessError("delivery_merge_conflict", "最新 main 与任务变更冲突，已停止自动交付") from exc
-            store.update(task_id, working_digest=manifest_digest(source_manifest(root)))
-            index_path = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
-            index_digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
-            if inflight and index_digest != task["delivery"].get("update_index_sha256"):
-                raise HarnessError("index_changed", "等待复测期间暂存区变化")
-            _save(store, task_id, update_index_sha256=index_digest)
-            revalidate(store, task_id, root, baseline, coder, verifier, poll,
-                           remaining=lambda: budget.remaining if budget.enabled else None)
-            poll()
-            if hashlib.sha256(index_path.read_bytes()).hexdigest() != index_digest:
-                raise HarnessError("index_changed", "主干复验期间暂存区出现外部修改")
-            tree = git(root, "write-tree").decode().strip()
-            # This is a task-branch merge, while the final main integration remains squash/linear.
-            sha = git(root, "commit-tree", tree, "-p", state["commit_sha"], "-p", main,
-                      data=b"Sync main and repeat Harness acceptance\n", env=env).decode().strip()
-            _save(store, task_id, update_commit_sha=sha, update_tree_sha=tree)
-            git(root, "update-ref", "refs/heads/" + branch, sha, state["commit_sha"])
-            git(root, "reset", "--mixed", "--quiet", sha)
-            store.update(task_id, working_head=sha)
-            poll()
-            approval = store.get(task_id)["publication_candidate"]
-            _save(store, task_id, commit_sha=sha, tree_sha=tree, base_sha=main, state="pr_open", auto_merge=False,
-                  candidate_digest=approval["digest"], push_previous=state["commit_sha"], update_base_sha=None)
-            publication_checks(store, task_id, poll)
-            client.push(root, directory, branch, sha, previous=state["commit_sha"])
-            _save(store, task_id, push_previous=None, disabling_for_update=False)
-        finally:
-            git(repository, "worktree", "remove", "--force", str(baseline))
-
-
 def reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None = None, coder: Any = None,
               verifier: Any = None, retry: bool = False, cleanup_only: bool = False) -> dict[str, Any]:
     task = store.get(task_id)
@@ -200,105 +122,313 @@ def reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None = None,
     return store.get(task_id)
 
 
-def _reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None, coder: Any, verifier: Any) -> None:
-    task = store.get(task_id)
-    state = task["delivery"]
-    repository, directory, root, branch = delivery_archive.task_paths(store, task)
-    if state.get("branch", branch) != branch:
-        raise HarnessError("delivery_target_changed", "交付分支不属于本任务")
-    cancelled = task.get("delivery_cancel_requested") or task["status"] == "cancelled"
-    if cancelled and task.get("delivery_evaluation"):
-        external_id = external_evaluation_id(task["source"], task["delivery_evaluation"]["id"])
-        if external_id:
-            if verifier is None:
-                raise HarnessError("delivery_validator_unavailable", "取消复测需要 Evaluation 适配器")
-            verifier.evaluator.cancel_confirmed(external_id)
-        store.update(task_id, delivery_evaluation=None)
-    if cancelled and not state.get("pr_number") and not state.get("commit_sha"):
-        _save(store, task_id, state="cancelled", message="已取消交付")
-        return
-    if not cancelled and not state.get("commit_sha") and not delivery_candidate.accepted(store, task):
-        _save(store, task_id, state="no_changes", message="没有可交付的验收成果")
-        return
-    client = client or GitHubDelivery(DeliveryConfig.load())
-    client.verify_target(state)
-    if not state.get("commit_sha"):
-        with _active_work(store, task_id):
-            if not root.exists():
-                root = delivery_archive.restore(store, task_id)
-            delivery_candidate.commit(store, task_id)
-        task = store.get(task_id)
-        state = task["delivery"]
-    if not state.get("pr_number"):
-        # Query by deterministic branch even after cancellation: the previous create may have succeeded.
-        rows = client.request("GET", client.repo + "/pulls", params={"state": "all", "head": state["repository"].split('/')[0] + ':' + branch, "per_page": 100})
+class DeliveryOperations:
+    def __init__(self, store, task_id, client, coder, verifier):
+        self.store, self.task_id, self.client, self.coder, self.verifier = store, task_id, client, coder, verifier
+
+    @property
+    def task(self):
+        return self.store.get(self.task_id)
+
+    @property
+    def state(self):
+        return self.task["delivery"]
+
+    def remote(self):
+        if self.client is None:
+            self.client = GitHubDelivery(DeliveryConfig.load())
+        self.client.verify_target(self.state)
+        return self.client
+
+    def paths(self):
+        return delivery_archive.task_paths(self.store, self.task)
+
+    def root(self):
+        root = self.paths()[2]
+        return root if root.exists() else delivery_archive.restore(self.store, self.task_id)
+
+    def cancelling(self):
+        return self.task.get("delivery_cancel_requested") or self.task["status"] in {"cancelled", "cancel_requested"}
+
+    def node(self, name):
+        def node(state):
+            if name not in {"inspect", "observe", "retire", "cancel", "cleanup_done"} and self.cancelling():
+                return {"phase": name, "route": "cancel"}
+            return {"phase": name, "route": getattr(self, name)()}
+        return node
+
+    def inspect(self):
+        state = self.state
+        _, _, _, branch = self.paths()
+        if state.get("branch", branch) != branch:
+            raise HarnessError("delivery_target_changed", "交付分支不属于本任务")
+        if self.cancelling():
+            return "cancel"
+        if not state.get("commit_sha") and not delivery_candidate.accepted(self.store, self.task):
+            _save(self.store, self.task_id, state="no_changes", message="没有可交付的验收成果")
+            return "cleanup_done"
+        self.remote()
+        return "commit" if not state.get("commit_sha") else "locate_pr"
+
+    def commit(self):
+        with _active_work(self.store, self.task_id):
+            self.root()
+            if not self.state.get("commit_sha"):
+                delivery_candidate.commit(self.store, self.task_id)
+        return "locate_pr"
+
+    def locate_pr(self):
+        state = self.state
+        if state.get("pr_number"):
+            return "checks" if state.get("push_previous") else "observe"
+        branch = self.paths()[3]
+        rows = self.remote().request("GET", self.client.repo + "/pulls", params={"state": "all",
+            "head": state["repository"].split('/')[0] + ':' + branch, "per_page": 100})
         if not isinstance(rows, list) or len(rows) > 1:
             raise HarnessError("delivery_pr_ambiguous", "PR 查询结果不唯一")
         if rows:
-            client.verify_pr(rows[0], state)
-            state = _pr_receipt(store, task_id, rows[0])
-        elif cancelled:
-            _save(store, task_id, state="cancelled", message="已取消；未创建 PR")
-            return
-        else:
-            with _active_work(store, task_id) as (_, poll):
-                if not root.exists():
-                    root = delivery_archive.restore(store, task_id)
-                poll()
-                publication_checks(store, task_id, poll)
-                client.push(root, directory, branch, state["commit_sha"])
-                state = _save(store, task_id, state="pushed")
-                poll()
-                pr = client.ensure_pr(state, task["publication_candidate"]["title"], delivery_candidate.pr_body(task))
-                state = _pr_receipt(store, task_id, pr)
-    if state.get("push_previous"):
-        with _active_work(store, task_id) as (_, poll):
+            self.client.verify_pr(rows[0], state)
+            _pr_receipt(self.store, self.task_id, rows[0])
+            return "observe"
+        if self.cancelling():
+            _save(self.store, self.task_id, state="cancelled", message="已取消；未创建 PR")
+            return "cleanup_done"
+        return "checks"
+
+    def checks(self):
+        with _active_work(self.store, self.task_id) as (_, poll):
+            self.root()
+            publication_checks(self.store, self.task_id, poll)
+        return "push"
+
+    def push(self):
+        with _active_work(self.store, self.task_id) as (_, poll):
+            root = self.root()
+            _, directory, _, branch = self.paths()
             poll()
-            if not root.exists():
-                root = delivery_archive.restore(store, task_id)
-            publication_checks(store, task_id, poll)
-            client.push(root, directory, branch, state["commit_sha"], previous=state["push_previous"])
-            state = _save(store, task_id, push_previous=None, disabling_for_update=False)
-    pr = client.pull(state["pr_number"])
-    client.verify_pr(pr, state)
-    if pr.get("merged") or pr["state"] == "closed":
-        merged = bool(pr.get("merged"))
-        state = _save(store, task_id, state="merged" if merged else "closed", auto_merge=False,
-                      merge_sha=pr.get("merge_commit_sha") if merged else None, message="已合并到远端 main" if merged else "PR 已关闭")
-        client.delete_branch(state, repository, directory)
-        current = store.get(task_id)
-        store.update(task_id, cleanup={**current.get("cleanup", {}), "remote": "cleaned"})
-        return
-    if cancelled:
+            state = self.state
+            kwargs = {"previous": state["push_previous"]} if state.get("push_previous") else {}
+            self.remote().push(root, directory, branch, state["commit_sha"], **kwargs)
+            _save(self.store, self.task_id, state="pr_open" if state.get("pr_number") else "pushed",
+                  push_previous=None, disabling_for_update=False)
+        return ("cleanup_update" if self.state.get("update_cleanup_pending") else "observe") if self.state.get("pr_number") else "create_pr"
+
+    def create_pr(self):
+        # Re-entry after response loss always observes the deterministic branch first.
+        if self.locate_pr() == "observe":
+            return "observe"
+        with _active_work(self.store, self.task_id):
+            task = self.task
+            pr = self.remote().ensure_pr(task["delivery"], task["publication_candidate"]["title"],
+                                         delivery_candidate.pr_body(task))
+            _pr_receipt(self.store, self.task_id, pr)
+        return "observe"
+
+    def observe(self):
+        state = self.state
+        pr = self.remote().pull(state["pr_number"])
+        self.client.verify_pr(pr, state)
+        if pr.get("merged") or pr["state"] == "closed":
+            merged = bool(pr.get("merged"))
+            _save(self.store, self.task_id, state="merged" if merged else "closed", auto_merge=False,
+                merge_sha=pr.get("merge_commit_sha") if merged else None,
+                message="已合并到远端 main" if merged else "PR 已关闭")
+            return "retire"
+        if self.cancelling():
+            return "cancel"
+        if state.get("auto_merge") and not pr.get("auto_merge") and not state.get("disabling_for_update"):
+            _save(self.store, self.task_id, state="paused", auto_merge=False, message="自动合并已被外部关闭，等待人工处理")
+            return "cleanup_done"
+        main = self.client.request("GET", self.client.repo + "/branches/main")["commit"]["sha"]
+        if main != state["base_sha"]:
+            if self.coder is None or self.verifier is None:
+                raise HarnessError("delivery_validator_unavailable", "主干更新需要冻结验证与独立审核器")
+            _save(self.store, self.task_id, update_base_sha=main)
+            return "prepare_update"
+        if not pr.get("auto_merge"):
+            return "enable"
+        checks = self.client.check_summary(state)
+        _save(self.store, self.task_id, state="checks_failed" if checks["failed"] else "waiting_checks",
+            checks=checks["rows"], auto_merge=bool(pr.get("auto_merge")), enabling_auto_merge=False,
+            error_code=None, message="CI 未通过，自动合并受阻；保留 PR 等待检查恢复" if checks["failed"]
+            else "等待 GitHub 检查、审查及自动合并")
+        return "cleanup_wait"
+
+    def prepare_update(self):
+        task, state = self.task, self.state
+        main = state["update_base_sha"]
+        inflight = bool(task.get("delivery_evaluation"))
+        if inflight and state.get("update_base_sha") != main:
+            raise HarnessError("delivery_update_in_flight", "原主干复测仍在执行，先完成或取消该测评")
+        _save(self.store, self.task_id, state="updating", disabling_for_update=True)
+        client = self.remote()
+        pr = client.pull(state["pr_number"])
         if pr.get("auto_merge"):
             client.disable(state)
-        _save(store, task_id, state="cancelled", auto_merge=False, message="自动合并已关闭，PR 保留")
-        return
-    if state.get("auto_merge") and not pr.get("auto_merge") and not state.get("disabling_for_update"):
-        _save(store, task_id, state="paused", auto_merge=False, message="自动合并已被外部关闭，等待人工处理")
-        return
-    main = client.request("GET", client.repo + "/branches/main")["commit"]["sha"]
-    if main != state["base_sha"]:
-        if coder is None or verifier is None:
-            raise HarnessError("delivery_validator_unavailable", "主干更新需要冻结验证与独立审核器")
-        _update_main(store, task_id, client, main, coder, verifier)
-        state = store.get(task_id)["delivery"]
-        pr = client.pull(state["pr_number"])
-        client.verify_pr(pr, state)
-    _poll_cancel(store, task_id)
-    if not pr.get("auto_merge"):
-        with _active_work(store, task_id):
-            # Record the desired action before the request; response-loss recovery observes the PR itself.
-            _save(store, task_id, enabling_auto_merge=True)
+        _poll_cancel(self.store, self.task_id)
+        _save(self.store, self.task_id, auto_merge=False)
+        with _active_work(self.store, self.task_id):
+            root = delivery_archive.restore(self.store, self.task_id)
+            repository, directory, _, _ = self.paths()
+            client.fetch(repository, directory, main)
+            if not inflight and git(root, "diff", "--cached", "--name-only").strip():
+                raise HarnessError("index_changed", "主干更新前暂存区出现外部修改")
+            if not inflight and (git(root, "diff", "HEAD", "--name-only").strip()
+                                 or git(root, "ls-files", "--others", "--exclude-standard").strip()):
+                delivery_archive.archive(self.store, self.task_id)
+                extras = git(root, "ls-files", "--others", "--exclude-standard", "-z").split(b"\0")
+                git(root, "reset", "--hard", state["commit_sha"])
+                for raw in extras:
+                    if raw:
+                        path = root / raw.decode()
+                        if path.exists():
+                            path.unlink()
+                self.store.update(self.task_id, working_digest=manifest_digest(source_manifest(root)))
+            baseline = directory / "revalidation-base"
+            if baseline.exists():
+                if (baseline.resolve() != baseline
+                        or git(baseline, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                        != git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                        or git(baseline, "rev-parse", "HEAD").decode().strip() != main
+                        or git(baseline, "status", "--porcelain").strip()):
+                    raise HarnessError("delivery_update_interrupted", "主干验证工作区变化，保留现场")
+            else:
+                git(repository, "worktree", "add", "--detach", str(baseline), main)
+            environment = github_transport.git_environment(author_name=state["author_name"], author_email=state["author_email"])
+            if not inflight:
+                try:
+                    git(root, "merge", "--no-commit", "--no-ff", main, env=environment)
+                except HarnessError as exc:
+                    self.store.update(self.task_id, working_digest=manifest_digest(source_manifest(root)))
+                    raise HarnessError("delivery_merge_conflict", "最新 main 与任务变更冲突，已停止自动交付") from exc
+            self.store.update(self.task_id, working_digest=manifest_digest(source_manifest(root)))
+            index_path = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
+            index_digest = hashlib.sha256(index_path.read_bytes()).hexdigest()
+            if inflight and index_digest != state.get("update_index_sha256"):
+                raise HarnessError("index_changed", "等待复测期间暂存区变化")
+            _save(self.store, self.task_id, update_index_sha256=index_digest, update_cleanup_pending=True)
+        return "revalidate"
+
+    def revalidate(self):
+        from chatcopilot.harness.delivery_validation import revalidate
+        _, directory, root, _ = self.paths()
+        with _active_work(self.store, self.task_id) as (budget, poll):
+            revalidate(self.store, self.task_id, root, directory / "revalidation-base", self.coder, self.verifier,
+                       poll, remaining=lambda: budget.remaining if budget.enabled else None)
+        return "commit_update"
+
+    def commit_update(self):
+        state = self.state
+        _, _, root, branch = self.paths()
+        with _active_work(self.store, self.task_id) as (_, poll):
+            index_path = Path(git(root, "rev-parse", "--path-format=absolute", "--git-path", "index").decode().strip())
+            if hashlib.sha256(index_path.read_bytes()).hexdigest() != state["update_index_sha256"]:
+                raise HarnessError("index_changed", "主干复验期间暂存区出现外部修改")
+            tree = git(root, "write-tree").decode().strip()
+            sha = state.get("update_commit_sha") if state.get("update_tree_sha") == tree else None
+            if not sha:
+                environment = github_transport.git_environment(author_name=state["author_name"], author_email=state["author_email"])
+                sha = git(root, "commit-tree", tree, "-p", state["commit_sha"], "-p", state["update_base_sha"],
+                          data=b"Sync main and repeat Harness acceptance\n", env=environment).decode().strip()
+                _save(self.store, self.task_id, update_commit_sha=sha, update_tree_sha=tree)
+            head = git(root, "rev-parse", "HEAD").decode().strip()
+            if head == state["commit_sha"]:
+                git(root, "update-ref", "refs/heads/" + branch, sha, state["commit_sha"])
+            elif head != sha:
+                raise HarnessError("workspace_changed", "同步主干提交的分支身份发生变化")
+            git(root, "reset", "--mixed", "--quiet", sha)
+            self.store.update(self.task_id, working_head=sha)
+            poll()
+            approval = self.task["publication_candidate"]
+            _save(self.store, self.task_id, commit_sha=sha, tree_sha=tree, base_sha=state["update_base_sha"],
+                  state="pr_open", auto_merge=False, candidate_digest=approval["digest"],
+                  push_previous=state["commit_sha"], update_base_sha=None)
+        return "checks"
+
+    def cleanup_update(self):
+        state = self.state
+        repository, directory, _, _ = self.paths()
+        baseline = directory / "revalidation-base"
+        if state.get("update_cleanup_pending") and baseline.exists():
+            if (baseline.resolve() != baseline
+                    or git(baseline, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                    != git(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                    or git(baseline, "status", "--porcelain").strip()):
+                raise HarnessError("delivery_update_interrupted", "主干验证工作区变化，保留现场")
+            git(repository, "worktree", "remove", "--force", str(baseline))
+        _save(self.store, self.task_id, update_cleanup_pending=False)
+        return "observe"
+
+    def enable(self):
+        with _active_work(self.store, self.task_id):
+            state = self.state
+            client = self.remote()
+            _save(self.store, self.task_id, enabling_auto_merge=True)
             if client.merge_ready(state):
                 client.merge(state)
             else:
                 client.enable(state)
-    pr = client.pull(state["pr_number"])
-    client.verify_pr(pr, state)
-    checks = client.check_summary(state)
-    _save(store, task_id, state="checks_failed" if checks["failed"] else "waiting_checks", checks=checks["rows"],
-          auto_merge=bool(pr.get("auto_merge")), enabling_auto_merge=False, error_code=None,
-          message="CI 未通过，自动合并受阻；保留 PR 等待检查恢复" if checks["failed"] else "等待 GitHub 检查、审查及自动合并")
-    if pr.get("merged"):
-        _reconcile(store, task_id, client=client, coder=coder, verifier=verifier)
+            pr = client.pull(state["pr_number"])
+            client.verify_pr(pr, state)
+            _save(self.store, self.task_id, auto_merge=bool(pr.get("auto_merge")), enabling_auto_merge=False)
+            if pr.get("merged") or pr["state"] == "closed":
+                return "observe"
+            checks = client.check_summary(state)
+            _save(self.store, self.task_id, state="checks_failed" if checks["failed"] else "waiting_checks",
+                  checks=checks["rows"], error_code=None, message="等待 GitHub 检查、审查及自动合并")
+        return "cleanup_wait"
+
+    def retire(self):
+        repository, directory, _, _ = self.paths()
+        self.remote().delete_branch(self.state, repository, directory)
+        self.store.update(self.task_id, cleanup={**self.task.get("cleanup", {}), "remote": "cleaned"})
+        return "cleanup_done"
+
+    def cancel(self):
+        task = self.task
+        if task.get("delivery_evaluation"):
+            external = external_evaluation_id(task["source"], task["delivery_evaluation"]["id"])
+            if external:
+                if self.verifier is None:
+                    raise HarnessError("delivery_validator_unavailable", "取消复测需要 Evaluation 适配器")
+                self.verifier.evaluator.cancel_confirmed(external)
+            self.store.update(self.task_id, delivery_evaluation=None)
+        if not self.state.get("pr_number"):
+            if not self.state.get("commit_sha"):
+                _save(self.store, self.task_id, state="cancelled", message="已取消交付")
+                return "cleanup_done"
+            self.locate_pr()
+            if not self.state.get("pr_number"):
+                return "cleanup_done"
+        state = self.state
+        pr = self.remote().pull(state["pr_number"])
+        self.client.verify_pr(pr, state)
+        if pr.get("merged") or pr["state"] == "closed":
+            return self.observe()
+        if pr.get("auto_merge"):
+            self.client.disable(state)
+        _save(self.store, self.task_id, state="cancelled", auto_merge=False, message="自动合并已关闭，PR 保留")
+        return "cleanup_done"
+
+    def cleanup_wait(self):
+        _cleanup(self.store, self.task_id)
+        return "wait"
+
+    def cleanup_done(self):
+        _cleanup(self.store, self.task_id)
+        return "__end__"
+
+
+def _reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None, coder: Any, verifier: Any) -> None:
+    from chatcopilot.harness.delivery_graph import build_delivery_graph
+    from chatcopilot.harness.graph_repository import checkpoints
+    from chatcopilot.harness.graph_service import execute_graph
+    identity = "delivery:" + task_id
+    with checkpoints(store.root, identity) as saver:
+        graph = build_delivery_graph(DeliveryOperations(store, task_id, client, coder, verifier), saver)
+        def project(snapshot):
+            store.update(task_id, delivery_graph={"thread_id": identity,
+                "checkpoint_id": snapshot.config.get("configurable", {}).get("checkpoint_id"),
+                "next": list(snapshot.next), "phase": snapshot.values.get("phase"),
+                "waiting": bool(snapshot.interrupts), "version": snapshot.values.get("version")})
+        execute_graph(graph, identity, initial={}, observe=project)

@@ -30,7 +30,7 @@ Harness 源码治理可按需使用[冻结的 Harness Skill](harness.md#code-hea
 已合并的改善会另行判断是否形成可复用教训，Skill 学习任务不计入问题发现数。
 
 code_health 仍是 [Harness](harness.md) 的第三类任务来源。每个问题复用既有角色、工作区、
-尝试记录、验收、取消、日志与 [PR 交付](delivery.md)。批次只保存停止条件、当前任务、累计
+尝试记录、验收、取消、日志与 [PR 交付](delivery.md)。批次由持久化 LangGraph 图推进，只保存停止条件、当前任务、累计
 发现数、合并数、处理失败数、执行时间和停止原因，与任务共用 Harness 状态库。
 
 Main 安排任务，Plan 读取规则、追踪调用者并提交原始片段；Coding 实现候选，Test 按需建立
@@ -63,7 +63,7 @@ Main 安排任务，Plan 读取规则、追踪调用者并提交原始片段；C
 已有活动批次或待完成交付时跳过，不累积排队。关闭定时不取消当前批次。现有分钟级交付
 对账入口推进批次，不依赖 Console 页面在线；创建下一项用稳定请求身份防止重复。
 
-本功能与 Harness 共用 pipeline 10，协议清空规则见 [Harness](harness.md#协议切换)。旧参数不做
+本功能与 Harness 共用当前协议，历史导出与切换规则见 [Harness](harness.md#协议切换)。旧参数不做
 兼容解析；定时配置独立保留。每项仅冻结远端 main，不纳入操作者未提交内容，不修改
 操作者工作区，不自动部署。操作示例见 [Harness 指南](../guides/harness.md#代码熵回收与可选定时)。
 

@@ -12,4 +12,5 @@ deepeval==4.2.2
 openai>=1.40.0
 mcp>=1.27,<2
 langgraph>=1.2,<2
+langgraph-checkpoint-sqlite>=3.1.2,<4
 agent-client-protocol>=0.10.0

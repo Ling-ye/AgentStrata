@@ -61,10 +61,6 @@ class SystemdWorkerControl:
             "CHATCOPILOT_EVALUATION_SOCKET") if os.environ.get(name)}
         self.settings = MappingProxyType({**environment, **settings})
 
-    @staticmethod
-    def delivery_unit(task: dict[str, Any]) -> str:
-        return "agentstrata-harness-delivery-" + task["task_id"][7:]
-
     def _directory(self, task: dict[str, Any]) -> Path:
         return _worker_directory(self.root, task["task_id"])
 
@@ -102,10 +98,7 @@ class SystemdWorkerControl:
                     fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 except BlockingIOError:
                     return WorkerState.ACTIVE
-            states = (self._unit_state(task["unit"]), self._unit_state(self.delivery_unit(task)))
-            if WorkerState.ACTIVE in states:
-                return WorkerState.ACTIVE
-            return WorkerState.UNKNOWN if WorkerState.UNKNOWN in states else WorkerState.INACTIVE
+            return self._unit_state(task["unit"])
         except (OSError, ValueError, subprocess.SubprocessError):
             return WorkerState.UNKNOWN
         finally:
@@ -126,10 +119,10 @@ class SystemdWorkerControl:
             runtime = directory / "runtime"
             if not runtime.exists():
                 copy_sources(self.repository, runtime, source_manifest(self.repository))
-            module = "delivery_runtime" if delivery else "worker"
+            module = "worker"
             if runtime.resolve() != runtime or not (runtime / f"src/chatcopilot/harness/{module}.py").is_file():
                 return DispatchResult("failed", "worker_runtime_missing", "冻结的 Harness 宿主不可用")
-            unit = self.delivery_unit(task) if delivery else task["unit"]
+            unit = task["unit"]
             command = ["systemd-run", "--user", "--quiet", "--collect", "--unit", unit,
                 "--property=Type=exec", "--property=KillMode=control-group", "--property=UMask=0077",
                 "--property=WorkingDirectory=" + str(runtime)]
@@ -139,6 +132,8 @@ class SystemdWorkerControl:
             command.extend("--setenv=" + key + "=" + value for key, value in environment.items())
             command.extend([sys.executable, "-m", "chatcopilot.harness." + module,
                 "--root", str(self.root), "--task", task["task_id"]])
+            if delivery:
+                command.append("--delivery")
             result = subprocess.run(command, capture_output=True, text=True, timeout=30)
             if result.returncode == 0:
                 return DispatchResult("scheduled")

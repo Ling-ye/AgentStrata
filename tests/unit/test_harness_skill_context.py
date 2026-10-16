@@ -73,7 +73,7 @@ def test_role_loads_frozen_body_and_records_receipt_only_for_selected_harness(tm
     ident = "repair-" + "b" * 32
     selected = {"kind": "code_health", "governance_target": {
         "affected_paths": ["src/chatcopilot/harness/worker.py"]}}
-    store.create({"task_id": ident, "pipeline_version": 10, "request_key": "skill-role",
+    store.create({"task_id": ident, "pipeline_version": 11, "request_key": "skill-role",
         "request_digest": "skill-role", "context_key": "skill-role", "match_key": "skill-role",
         "active_key": "skill-role", "repository": str(tmp_path), "source": selected,
         "base_commit": "a" * 40, "acceptance": {"items": []},
@@ -92,7 +92,7 @@ def test_role_loads_frozen_body_and_records_receipt_only_for_selected_harness(tm
                 "needs_replan": False, "gaps": []}, {})
 
     runner = Runner()
-    roles = RoleWorkflow(store, ident, runner, artifacts)
+    roles = RoleWorkflow(store, ident, runner, artifacts, lambda root: "frozen-source-fixture")
     roles.call(Role.CODING, source, 1, "Fix the selected finding", {"source": selected},
                lambda: RepairOptions("fixture"), lambda: None)
     assert runner.calls[0].evidence["harness_skill"]["body"] == "Read the caller.\n"

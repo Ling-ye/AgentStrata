@@ -6,6 +6,7 @@ import json
 import hashlib
 import logging
 import time
+import uuid
 from contextlib import ExitStack, contextmanager
 from dataclasses import asdict
 from pathlib import Path
@@ -20,6 +21,7 @@ from chatcopilot.core.private_sqlite import (
     storage_error_details,
 )
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError
+from chatcopilot.core.source_snapshot import manifest_digest
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS tasks (
@@ -46,6 +48,41 @@ class HarnessStore:
         if (self.root / "archives").exists():
             repair_owned_private_directory(self.root / "archives")
         self.database = PrivateDatabase(self.root / "harness.sqlite3", _SCHEMA)
+
+    def protocol_version(self):
+        with self.database.connect() as connection:
+            exists = connection.execute("SELECT 1 FROM sqlite_master WHERE name='harness_protocol'").fetchone()
+            return connection.execute("SELECT version FROM harness_protocol").fetchone()[0] if exists else None
+
+    def replace_active_database(self, history_directory: Path):
+        """Caller holds maintenance; preserve the retired DB and every task resource."""
+        from chatcopilot.harness.models import PIPELINE_VERSION
+        directory = private_directory(history_directory)
+        retired = directory / "retired-harness.sqlite3"
+        pending = self.root / (".next-harness-" + uuid.uuid4().hex + ".sqlite3")
+        fresh = PrivateDatabase(pending, _SCHEMA)
+        with fresh.connect(write=True) as connection:
+            connection.execute("CREATE TABLE harness_protocol (version INTEGER NOT NULL)")
+            connection.execute("INSERT INTO harness_protocol VALUES (?)", (PIPELINE_VERSION,))
+            connection.execute(f"CREATE TRIGGER harness_pipeline_admission BEFORE INSERT ON tasks WHEN COALESCE(json_extract(NEW.payload, '$.pipeline_version'), 0) != {PIPELINE_VERSION} BEGIN SELECT RAISE(ABORT, 'Harness protocol changed; restart the upgraded host'); END")
+        with self.database.connect() as connection:
+            if connection.execute("PRAGMA journal_mode").fetchone()[0] != "delete":
+                raise HarnessError("cutover_database_busy", "活动数据库需要先完成 SQLite 日志收尾")
+        if retired.exists():
+            raise HarnessError("history_export_invalid", "历史导出目录已包含退役数据库")
+        self.database.path.replace(retired)
+        try:
+            from chatcopilot.harness.history_repository import _sync_directory
+            _sync_directory(directory)
+            _sync_directory(self.root)
+            pending.replace(self.database.path)
+            _sync_directory(self.root)
+        except BaseException:
+            if self.database.path.exists():
+                self.database.path.replace(pending)
+            retired.replace(self.database.path)
+            raise
+        return str(retired)
 
     def _dump(self, task: dict[str, Any]) -> str:
         """Keep searchable identities in SQLite; immutable bodies live in task artifacts."""
@@ -127,7 +164,7 @@ class HarnessStore:
         with self.creation_guard(), self.database.connect(write=True) as connection:
             from chatcopilot.harness.models import PIPELINE_VERSION
             if connection.execute("SELECT 1 FROM tasks WHERE COALESCE(json_extract(payload, '$.pipeline_version'), 0) != ? LIMIT 1", (PIPELINE_VERSION,)).fetchone():
-                raise HarnessError("cutover_required", "旧 Harness 记录需要先执行维护清空与协议切换")
+                raise HarnessError("cutover_required", "旧 Harness 记录需要先执行历史导出与协议切换")
             if task.get("source", {}).get("kind") == "code_health":
                 for row in connection.execute("SELECT payload FROM tasks WHERE json_extract(payload, '$.source.kind')='code_health'"):
                     value = json.loads(row[0])
@@ -439,13 +476,15 @@ class HarnessStore:
             )
             return task, True
 
-    def finish_verified(self, task_id: str, number: int, attempt: dict[str, Any]) -> None:
+    def finish_verified(self, task_id: str, number: int, attempt: dict[str, Any], *, manifest: dict[str, Any]) -> None:
         if (
             attempt.get("status") != "accepted"
             or not attempt.get("candidate_digest")
             or attempt.get("regressions")
         ):
             raise ValueError("a complete accepted verification is required")
+        if manifest_digest(manifest) != attempt.get("delivered_digest", attempt["candidate_digest"]):
+            raise HarnessError("workspace_changed", "验收源码清单与候选摘要不符")
         with self.database.connect(write=True) as connection:
             row = connection.execute(
                 "SELECT payload FROM tasks WHERE task_id=?", (task_id,)
@@ -467,6 +506,7 @@ class HarnessStore:
                 stage="done",
                 verified_at=time.time(),
                 verified_digest=attempt.get("delivered_digest", attempt["candidate_digest"]),
+                verified_manifest=manifest,
                 verification_evaluation_id=attempt["verification"]["evaluation_id"],
                 updated_at=time.time(),
                 message="AI 审核与验证通过，已创建本地提交"

@@ -80,7 +80,7 @@ def publish_verified(controller, task_id, publisher):
     controller.store.update(task_id, review_and_commit=True, status="running")
     receipt = publisher.publish(controller.store, task_id, attempt, lambda: None)
     attempt.update(local_commit=receipt, delivered_digest=receipt["content_digest"])
-    controller.store.finish_verified(task_id, attempt["number"], attempt)
+    controller.store.finish_verified(task_id, attempt["number"], attempt, manifest=source_manifest(Path(task["worktree"])))
     return controller.store.get(task_id)
 
 
@@ -169,7 +169,7 @@ def test_database_failure_after_git_commit_recovers_without_review_or_second_com
     attempt = controller.store.attempts(task_id)[-1]
     receipt = publisher.publish(controller.store, task_id, attempt, lambda: None)
     attempt.update(local_commit=receipt, delivered_digest=receipt["content_digest"])
-    controller.store.finish_verified(task_id, attempt["number"], attempt)
+    controller.store.finish_verified(task_id, attempt["number"], attempt, manifest=source_manifest(Path(first["worktree"])))
     second = controller.store.get(task_id)
     assert second["status"] == "fixed" and second["local_commit"]["sha"] == sha
     assert coder.reviews == 1 and coder.calls == 1 and publisher.checks.call_count == 1
