@@ -36,7 +36,7 @@ def test_full_test_dependencies_are_installed_and_bound_to_receipt(tmp_path, mon
     state = task_environment.prepare_environment(directory, source, lambda: None)
     command = calls[0]
     extras = [command[i + 1] for i, arg in enumerate(command) if arg == "--extra"]
-    assert extras == ["agent", "acp", "dev", "evaluation"]
+    assert extras == ["agent", "acp", "dev", "evaluation", "weixin"]
     assert "--frozen" in command and "--no-install-project" in command
     assert task_environment.prepare_environment(directory, source, lambda: None) == state
     assert len(calls) == 1

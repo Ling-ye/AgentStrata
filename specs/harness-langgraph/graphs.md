@@ -25,11 +25,9 @@ graph TD;
 	failure(failure)
 	acceptance(acceptance)
 	choose(choose)
-	delivery(delivery)
 	__end__([<p>__end__</p>]):::last
 	__start__ --> environment;
 	acceptance -.-> __end__;
-	acceptance -.-> delivery;
 	acceptance -.-> failure;
 	assemble -.-> __end__;
 	assemble -.-> acceptance;
@@ -72,7 +70,6 @@ graph TD;
 	test -.-> __end__;
 	test -.-> choose;
 	test -.-> failure;
-	delivery --> __end__;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc

@@ -123,6 +123,65 @@ def test_agent_only_replay_keeps_one_publishable_frozen_case(tmp_path):
     assert len(refs) == 1 and refs[0]["kind"] == "agent_case"
 
 
+@pytest.mark.parametrize("original_repetitions", [1, 5])
+def test_reused_agent_case_executes_once_with_original_binding_and_protection(tmp_path, original_repetitions):
+    from chatcopilot.harness.preparation import acceptance
+    from chatcopilot.harness.verification import CaseVerification
+
+    case = declaration(runtime_replay=True)
+    ident = case_identity(case)
+    conditions = {"frozen": "original grading and execution"}
+    source = {"kind": "evaluation", "bot_id": "fixture", "case_id": ident,
+        "case_ids": [ident, "protected"], "passed_cases": ["protected"],
+        "case_snapshot_id": ident, "case_definition": case,
+        "target_id": "main", "conditions": conditions, "repetitions": original_repetitions}
+    output = private_directory(tmp_path / "output")
+    draft = private_directory(output / "draft")
+    (draft / "agent_case.json").write_text(json.dumps(case))
+    (draft / "agent_case.json").chmod(0o600)
+    calls = []
+    class Evaluator(FakeEvaluator):
+        def run(self, task, candidate, run_id, checks, cancel):
+            current = task["source"]
+            calls.append((checks, current["conditions"], current["target_id"]))
+            return {"evaluation_id": run_id, "target_id": "main", "result": {"trials": [
+                {"case_id": name, "target_id": "main", "attempt": repeat, "outcome": "passed",
+                 "execution": {"metadata": {"runtime_replay": {"layers": ["gateway", "application", "agent"]}}}}
+                for name in checks for repeat in range(1, current["repetitions"] + 1)]}}
+    store = SimpleNamespace(get=lambda _: {}, update=lambda *args, **kwargs: None)
+    verifier = CaseVerification(Evaluator(), LocalVerifier(tmp_path), store)
+    candidate = CandidateRef(tmp_path, "candidate", "base")
+    task = {"task_id": "repair-fixture", "source": source, "acceptance": acceptance(source)}
+    prepared, plan = verifier.prepare(task, candidate, output,
+        {"verification_kind": "agent", "summary": "reuse frozen Case",
+         "coverage": [{"requirement": "expected_behavior", "checks": ["agent_case"]}]}, lambda: None)
+    result = verifier.run({**task, "source": prepared, "verification_plan": plan.to_payload()},
+                          candidate, "verify", list(plan.checks), lambda: None)
+    result.require_valid(list(plan.checks), plan.check_repetitions)
+    assert len(result.checks) == max(3, original_repetitions) + original_repetitions
+    assert calls == [(["protected"], conditions, "main"), ([ident], conditions, "main")]
+    assert prepared["agent_source"]["conditions"] == conditions
+    assert plan.check_repetitions[ident] == max(3, original_repetitions)
+
+
+@pytest.mark.parametrize("checks", [None, ["protected"]])
+def test_baseline_collection_failure_is_environment_not_a_candidate_defect(tmp_path, checks):
+    from chatcopilot.harness.verification import CaseVerification
+
+    failure = HarnessError("test_collection_error", "collection failed")
+    failure.evidence = {"phase": "collection", "result": {"errors": ["missing installed dependency"]}}
+    def regressions(*_args):
+        raise failure
+    verifier = CaseVerification(SimpleNamespace(), SimpleNamespace(regressions=regressions), None)
+    with pytest.raises(HarnessError) as caught:
+        verifier.regressions({}, CandidateRef(tmp_path, "candidate", "base"), lambda: None, checks)
+    if checks is None:
+        assert caught.value.code == "verification_environment"
+        assert caught.value.evidence == failure.evidence
+    else:
+        assert caught.value is failure
+
+
 def test_case_registration_is_content_addressed_and_survives_restart(tmp_path):
     case = declaration()
     store = EvaluationResultStore(tmp_path)

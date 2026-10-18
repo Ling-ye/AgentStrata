@@ -11,18 +11,18 @@ sys.path.insert(0, str(ROOT / "src"))
 
 
 def render():
-    from chatcopilot.harness.acceptance_graph import build_acceptance_graph
+    from chatcopilot.harness.engine.acceptance_graph import build_acceptance_graph
     from chatcopilot.harness.batch_graph import build_batch_graph
     from chatcopilot.harness.delivery_graph import build_delivery_graph
-    from chatcopilot.harness.task_graph import build_task_graph
+    from chatcopilot.harness.engine.repair_graph import build_task_graph
 
     # The builders register these functions but rendering never invokes them.
     def node(_name):
         return lambda state: {}
 
     ports = SimpleNamespace(node=node, graph_node=node, delivery=True, deliver=lambda state: {})
-    graphs = (("任务", build_task_graph(ports, None)),
-              ("共用验收", build_acceptance_graph(ports)),
+    graphs = (("任务", build_task_graph(None)),
+              ("共用验收", build_acceptance_graph()),
               ("交付", build_delivery_graph(ports, None)),
               ("代码熵回收批次", build_batch_graph(ports, None)))
     parts = ["# Harness 编译图\n\n由 `.venv/bin/python scripts/render_harness_graphs.py` 从实际 StateGraph 生成；"

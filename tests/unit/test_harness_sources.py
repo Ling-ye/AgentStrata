@@ -435,6 +435,42 @@ def test_behavior():
     assert test.read_text() == content
 
 
+def test_pytest_assertions_keep_environment_and_setup_failures_separate(local_test):
+    from chatcopilot.harness.preparation import classify
+
+    verifier, task, worktree = local_test
+    (worktree / "tests/unit/test_assertions.py").write_text('''import pytest
+from pathlib import Path
+def test_expected_exception():
+    with pytest.raises(ValueError):
+        int("1")
+def test_explicit_failure():
+    pytest.fail("wrong product result")
+def test_file_failure():
+    try:
+        Path("/missing-fixture-file").read_text()
+    except FileNotFoundError:
+        pytest.fail("missing fixture")
+def test_import_failure():
+    import missing_harness_fixture_dependency
+def test_wrapped_import_failure():
+    try:
+        import missing_harness_fixture_dependency
+    except ModuleNotFoundError:
+        pytest.fail("missing dependency")
+@pytest.fixture
+def unavailable():
+    pytest.fail("fixture setup failed")
+def test_setup_failure(unavailable):
+    pass
+''')
+    result = verifier._pytest(task, worktree, ["tests/unit"], lambda: None)
+    classifications = {name.rsplit("::", 1)[-1]: classify(row) for name, row in result["rows"].items()}
+    assert classifications == {"test_expected_exception": "product", "test_explicit_failure": "product",
+        "test_file_failure": "environment", "test_import_failure": "environment",
+        "test_wrapped_import_failure": "environment", "test_setup_failure": "test_definition"}
+
+
 def test_isolated_pytest_uses_host_storage_and_cleans_temporary_fixtures(local_test):
     verifier, task, worktree = local_test
     test = worktree / "tests/unit/test_storage.py"

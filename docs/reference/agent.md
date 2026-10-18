@@ -21,6 +21,8 @@ Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约
 
 主 Codex 使用 actor 级懒启动、可复用的 App Server stdio；一个原生 thread 只有一个活动写入者。同 conversation 继续串行，独立 conversation 可以并发。Application 绑定 PromptPlan、ExecutionScope 和 HostRuntimePolicy，主 lane 在宿主刷新凭据，锁只覆盖读取、刷新和原子写回，不覆盖 turn；只 handoff access token，不复制 refresh token 到 actor home。
 
+原生 Codex 安装需保留配套的 `codex-code-mode-host`；隔离进程将该辅助程序与主程序分别只读挂载，供原生工具执行使用。
+
 公开消息、摘要和命令输出通过 AgentContentDelta 进入既有观测索引，Console SSE 只读续传；过程不进入渠道最终回复，不采集 raw/encrypted reasoning，不重放已开始但结果未知的 turn。独立 worker 保持单独认证 lineage。取消发出原生 interrupt，再关闭连接。
 
 ## Agent 层禁止 import

@@ -67,6 +67,12 @@ class CaseVerification:
         else:
             source["kind"] = original.get("kind", "evaluation") if original else "robot_task"
             agent_source = self.evaluator.prepare_agent_case(source, check_cancel)
+            if original and agent_source["case_snapshot_id"] == original.get("case_snapshot_id"):
+                # Reusing a frozen Case preserves its original execution binding.
+                # The Agent replay also supplies the original check, once.
+                agent_source = {**agent_source, "conditions": original["conditions"],
+                    "target_id": original["target_id"],
+                    "repetitions": max(3, original["repetitions"])}
             source = {**source, "agent_source": agent_source} if original or source.get("test_sha256") else agent_source
             if original:
                 source["original_case_source"] = original
@@ -78,8 +84,8 @@ class CaseVerification:
         local_checks = source.get("case_ids", ()) if source.get("test_sha256") else ()
         checks = tuple(dict.fromkeys((*primary, *protected, *local_checks, *((original or {}).get("case_ids", ())))))
         real_agent = not governance
-        repetitions = 3 if real_agent else 1
-        repeat_map = {name: 3 if name in agent_ids else
+        repetitions = agent_source["repetitions"] if real_agent else 1
+        repeat_map = {name: repetitions if name in agent_ids else
                       int(original["repetitions"]) if original and name in original["case_ids"] else 1 for name in checks}
         coverage = {}
         declared = {row["requirement"]: row["checks"] for row in proposal["coverage"]}
@@ -103,7 +109,8 @@ class CaseVerification:
         if not governance:
             coverage["expected_behavior"] = sorted(set(coverage.get("expected_behavior", [])) | set(agent_ids) | set(original_ids))
         plan = VerificationPlan(primary, checks, protected,
-                                repetitions, real_agent, source.get("agent_source", source).get("case_snapshot_id", ""), repeat_map, coverage)
+                                repetitions, real_agent, source.get("agent_source", source).get("case_snapshot_id", ""), repeat_map, coverage,
+                                gaps=tuple(source.get("verification_gaps", ())))
         if source.get("kind", "evaluation") == "evaluation":
             source = {key: value for key, value in source.items() if key not in {"diagnosis", "preparation"}}
         return source, plan
@@ -115,7 +122,8 @@ class CaseVerification:
             agent_source = source["agent_source"]
             agent_ids = [name for name in checks if name in agent_source["case_ids"]]
             original = source.get("original_case_source")
-            original_ids = [name for name in checks if original and name in original["case_ids"]]
+            original_ids = [name for name in checks if original and name in original["case_ids"]
+                            and name not in agent_ids]
             local_ids = [name for name in checks if name not in agent_ids and name not in original_ids]
             results = []
             if local_ids:
@@ -174,7 +182,14 @@ class CaseVerification:
 
     def regressions(self, task: VerificationRequest, candidate: CandidateRef,
                     check_cancel: Callable[[], None], checks: list[str] | None = None) -> dict[str, Any]:
-        value = self.local_verifier.regressions(task, candidate.path, check_cancel, checks)
+        try:
+            value = self.local_verifier.regressions(task, candidate.path, check_cancel, checks)
+        except HarnessError as exc:
+            if checks is not None or exc.code != "test_collection_error":
+                raise
+            error = HarnessError("verification_environment", "冻结仓库基线未能收集测试；先修复验证环境")
+            error.evidence = getattr(exc, "evidence", {})
+            raise error from exc
         for name, row in value.get("rows", {}).items():
             if row["outcome"] == "error":
                 raise HarnessError("verification_environment", "仓库回归发生执行环境错误")

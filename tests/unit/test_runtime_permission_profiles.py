@@ -95,6 +95,33 @@ def test_member_scope_grants_native_write_only_in_workspace(tmp_path):
     assert not scope.permits(project / "file", write=True)
 
 
+def test_isolated_codex_can_execute_its_readonly_code_mode_helper(tmp_path):
+    from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
+
+    work, binaries, home = (tmp_path / name for name in ("work", "bin", "runtime-home"))
+    for path in (work, binaries, home):
+        path.mkdir(mode=0o700)
+    binary = binaries / "codex"
+    binary.write_text('#!/bin/sh\nset -eu\n'
+                      'helper="$(dirname "$0")/codex-code-mode-host"\n'
+                      'test "$("$helper")" = code-mode-ready\n'
+                      'test ! -w "$helper"\n'
+                      'test ! -e "$(dirname "$0")/unrelated"\n'
+                      'test ! -e "$1"\n')
+    binary.chmod(0o700)
+    helper = binaries / "codex-code-mode-host"
+    helper.write_text("#!/bin/sh\nprintf code-mode-ready\n")
+    helper.chmod(0o700)
+    private = binaries / "unrelated"
+    private.write_text("not part of the executable bundle")
+    state = SimpleNamespace(workdir=work, codex_home=home,
+        execution_scope=execution_scope(Role.USER, work), extensions="", extension_env={})
+    CodexRuntimeAdapter._prepare_app_server_home(state)
+    command = CodexRuntimeAdapter._wrap_isolated_command(state, [str(binary), str(private)])
+    result = subprocess.run(command, capture_output=True, text=True, timeout=10)
+    assert result.returncode == 0, result.stderr
+
+
 @pytest.mark.parametrize("backend", ["command", "codex"])
 @pytest.mark.parametrize("link_target", ["project", "external_cache"])
 def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, link_target):

@@ -165,6 +165,8 @@ class DeliveryOperations:
         if self.cancelling():
             return "cancel"
         if not state.get("commit_sha") and not delivery_candidate.accepted(self.store, self.task):
+            if self.task["status"] == "fixed" and self.task.get("accepted_candidate"):
+                raise HarnessError("incomplete_verification", "已记录验收凭据与当前证据不符，停止交付")
             _save(self.store, self.task_id, state="no_changes", message="没有可交付的验收成果")
             return "cleanup_done"
         self.remote()

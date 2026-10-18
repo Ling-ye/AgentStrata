@@ -47,6 +47,21 @@ def test_step_input_is_persisted_before_execution_and_finish_does_not_rewrite_it
     assert step_binding() == {}
 
 
+@pytest.mark.parametrize("regressions, status", [([], "completed"), (["kept"], "failed")])
+def test_repository_flow_distinguishes_regressions_from_existing_failures(store, regressions, status):
+    result = {"case_ids": ["kept", "existing"], "passed_cases": [] if regressions else ["kept"],
+              "failed_cases": ["kept", "existing"] if regressions else ["existing"]}
+    attempts = [{"number": 1, "status": "rejected" if regressions else "accepted",
+                 "repository_regressions": result, "regressions": regressions}]
+    before = copy.deepcopy(attempts)
+    flow = project_flow(store.get("repair-example"), attempts)
+    row = next(item for item in flow["steps"] if item["phase"] == "repository_regressions")
+    assert row["status"] == status
+    assert f"新增回归 {len(regressions)} 项" in row["conclusion"]
+    assert f"候选未通过或跳过 {len(result['failed_cases'])} 项" in row["conclusion"]
+    assert attempts == before
+
+
 def test_retry_has_its_own_record_and_cancelled_task_cannot_gain_success(store):
     for code in ("environment", "cancelled"):
         with pytest.raises(HarnessError):
@@ -158,7 +173,7 @@ def test_step_detail_projects_context_metrics_without_private_source_index(store
 
 
 def test_flow_detail_reads_same_failure_brief_as_next_role(store):
-    from chatcopilot.harness.context_briefs import build_failure_brief
+    from chatcopilot.harness.integrations.briefs import build_failure_brief
     artifacts = ArtifactRepository(store.root / "jobs/repair-example")
     previous = {"number": 1, "status": "rejected", "verification": {"checks": [
         {"check_id": "image", "outcome": outcome} for outcome in ("passed", "passed", "failed")]}}
@@ -328,6 +343,48 @@ def test_coder_archive_is_bound_to_the_active_business_step(store, monkeypatch, 
     detail = step_detail(store.get("repair-example"), [], ident)
     assert len(detail["traces"]) == 1
     assert detail["traces"][0]["source"]["flow_step_id"] == ident
+
+
+@pytest.mark.parametrize("linked", [None, "symlink", "hardlink"])
+def test_coder_seals_owned_drafts_without_changing_linked_files(tmp_path, monkeypatch, linked):
+    import os
+    import stat
+    from chatcopilot.core.private_sqlite import private_directory
+    from chatcopilot.harness.codex_adapter import CodexCoder
+    from chatcopilot.harness.agent_types import AgentCall, Role
+    from chatcopilot.harness.models import RepairOptions
+    from chatcopilot.harness.repair_repository import RepairArtifacts
+
+    output = private_directory(tmp_path / "role")
+    draft = private_directory(output / "draft")
+    outside = tmp_path / "outside"
+    outside.write_text("unchanged")
+    outside.chmod(0o644)
+    path = draft / "agent_case.json"
+    def execute(*_args):
+        if linked == "symlink":
+            path.symlink_to(outside)
+        elif linked == "hardlink":
+            os.link(outside, path)
+        else:
+            path.write_text('{"fixture": true}')
+            path.chmod(0o644)
+        return {"final_text": json.dumps({"decision": "candidate", "summary": "test draft",
+            "verification_kind": "agent", "goal_capabilities": [], "coverage": [], "gaps": [], "notes": []})}
+    coder = CodexCoder()
+    monkeypatch.setattr(coder, "_execute_impl", execute)
+    call = AgentCall("fixture", Role.TEST, 1, "fixture", {"source": {}})
+    if linked:
+        with pytest.raises(HarnessError) as caught:
+            coder.execute(tmp_path, call, RepairOptions("fixture"), output, lambda: None)
+        assert caught.value.code == "test_definition"
+    else:
+        coder.execute(tmp_path, call, RepairOptions("fixture"), output, lambda: None)
+        assert stat.S_IMODE(path.stat().st_mode) == 0o600
+        adopted = tmp_path / "adopted"
+        RepairArtifacts.copy_draft(draft, adopted)
+        assert (adopted / path.name).read_text() == '{"fixture": true}'
+    assert outside.read_text() == "unchanged" and stat.S_IMODE(outside.stat().st_mode) == 0o644
 
 
 def test_commands_skip_oversized_line_explicitly_and_continue_paging(store, monkeypatch):

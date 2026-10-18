@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any, Callable, Protocol
 
 
-PIPELINE_VERSION = 11
+PIPELINE_VERSION = 12
 
 ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "needs_review", "no_changes", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
@@ -134,6 +134,7 @@ class VerificationPlan:
     check_repetitions: dict[str, int] = field(default_factory=dict)
     coverage: dict[str, list[str]] = field(default_factory=dict)
     purpose: str = "repair"
+    gaps: tuple[dict[str, Any], ...] = ()
 
     def to_payload(self) -> dict[str, Any]:
         return asdict(self)
@@ -159,6 +160,12 @@ class VerificationResult:
     candidate_digest: str
     checks: tuple[VerificationCheck, ...]
     evidence_refs: tuple[str, ...] = ()
+
+    def require_bound(self, candidate: CandidateRef, run_id: str) -> None:
+        if self.run_id != run_id:
+            raise HarnessError("verification_evidence", "验证结果不属于当前执行身份")
+        if self.candidate_digest != candidate.digest:
+            raise HarnessError("workspace_changed", "验证结果不属于当前候选快照")
 
     def require_valid(self, check_ids: list[str], repetitions: int | dict[str, int]) -> None:
         expected = {(name, n) for name in check_ids for n in range(1, (repetitions[name] if isinstance(repetitions, dict) else repetitions) + 1)}
@@ -207,17 +214,12 @@ class VerificationRequest(Mapping[str, Any]):
 
 def acceptance_digest(task: dict[str, Any], attempt: dict[str, Any]) -> str:
     """Bind the receipt to the exact goal, test definition, environment and results."""
-    source = task["source"]
-    agent = source.get("agent_source", source)
     value = {"candidate": attempt["candidate_digest"], "goal": task.get("acceptance"),
         "plan": task.get("verification_plan"), "problem": task.get("problem_ref"),
         "principles": task.get("principles"), "environment": task.get("environment"),
-        "test": source.get("test_sha256"), "case": agent.get("case_snapshot_id"),
-        "conditions": agent.get("conditions"), "verification": attempt.get("verification"),
-        "confirmation": attempt.get("confirmation"), "regressions": attempt.get("repository_regressions")}
-    if source.get("kind") == "code_health":
-        value["governance"] = {"target": source.get("governance_target"), "report": task.get("governance_report"),
-                               "review": attempt.get("review")}
+        "binding": task.get("verification_binding"), "verification": attempt.get("verification"),
+        "confirmation": attempt.get("confirmation"), "regressions": attempt.get("repository_regressions"),
+        "review": attempt.get("review")}
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

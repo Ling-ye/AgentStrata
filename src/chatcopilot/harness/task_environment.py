@@ -14,7 +14,7 @@ import time
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.harness.models import HarnessError
 
-EXTRAS = ("agent", "acp", "dev", "evaluation")
+EXTRAS = ("agent", "acp", "dev", "evaluation", "weixin")
 
 
 def prepare_environment(directory: Path, source: Path, cancel) -> dict[str, str]:

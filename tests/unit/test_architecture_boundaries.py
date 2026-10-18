@@ -85,8 +85,8 @@ def test_harness_control_gate_allows_ports_and_public_ui(checker, tmp_path, monk
 
 @pytest.mark.parametrize("name,source", [
     ("workflow", "from .codex_adapter import CodexCoder\n"),
-    ("role_service", "from .worker_runtime import SystemdWorkerControl\n"),
-    ("artifact_repository", "from .role_service import RoleWorkflow\n"),
+    ("integrations.roles", "from ..worker_runtime import SystemdWorkerControl\n"),
+    ("artifact_repository", "from .integrations.roles import RoleWorkflow\n"),
     ("agent_types", "from .store import HarnessStore\n"),
     ("__init__", "from .codex_adapter import CodexCoder\n"),
     ("unknown_module", ""),
@@ -94,12 +94,17 @@ def test_harness_control_gate_allows_ports_and_public_ui(checker, tmp_path, monk
 def test_harness_complete_layer_gate_rejects_reverse_dependencies_and_hidden_exports(checker, tmp_path, monkeypatch, name, source):
     folder = tmp_path / "src/chatcopilot/harness"
     folder.mkdir(parents=True)
-    for module in ("__init__", "codex_adapter", "worker_runtime", "role_service", "store"):
-        (folder / (module + ".py")).write_text("")
-    (folder / (name + ".py")).write_text(source)
+    for module in ("__init__", "codex_adapter", "worker_runtime", "integrations", "integrations.roles", "store"):
+        path = folder.joinpath(*module.split(".")).with_suffix(".py")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    path = folder.joinpath(*name.split(".")).with_suffix(".py")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(source)
     monkeypatch.setattr(checker, "ROOT", tmp_path)
     monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
-    assert checker._harness_layer_checks()["harness_layer_boundaries"]
+    violations = checker._harness_layer_checks()["harness_layer_boundaries"]
+    assert path.relative_to(tmp_path).as_posix() in violations
 
 
 def test_harness_dependency_direction_and_private_evaluator_imports(checker, tmp_path, monkeypatch):
@@ -442,3 +447,34 @@ def test_task_record_gate_allows_pure_projection_and_storage_dependencies(checke
     monkeypatch.setattr(checker, "ROOT", tmp_path)
     monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
     assert checker._task_record_checks() == {}
+
+
+@pytest.mark.parametrize("via_helper", [False, True])
+def test_repair_core_gate_rejects_direct_and_transitive_project_dependencies(checker, tmp_path, monkeypatch, via_helper):
+    base = tmp_path / "src/chatcopilot/harness"
+    files = {"__init__.py": "", "engine/__init__.py": "", "integrations/__init__.py": "",
+        "integrations/scenarios.py": "class RepairScenario: pass\n",
+        "models.py": "from .integrations.scenarios import RepairScenario\n",
+        "engine/repair.py": "from ..models import RepairScenario\n" if via_helper else
+            "from ..integrations.scenarios import RepairScenario\n"}
+    for name, source in files.items():
+        path = base / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    violations = checker._harness_engine_checks()["harness_engine_boundaries"]
+    assert "src/chatcopilot/harness/engine/repair.py" in violations
+
+
+def test_repair_core_gate_allows_injected_contracts_and_plain_state(checker, tmp_path, monkeypatch):
+    base = tmp_path / "src/chatcopilot/harness"
+    files = {"__init__.py": "", "engine/__init__.py": "", "engine/contracts.py": "from typing import Protocol\n",
+        "engine/repair.py": "from .contracts import Protocol\n"}
+    for name, source in files.items():
+        path = base / name
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(source)
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", tmp_path / "src/chatcopilot")
+    assert checker._harness_engine_checks() == {}

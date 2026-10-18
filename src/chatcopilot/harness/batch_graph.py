@@ -3,11 +3,11 @@
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from chatcopilot.harness.graph_types import GraphState
+from chatcopilot.harness.engine.state import BatchState
 
 
 def build_batch_graph(service, checkpointer):
-    builder = StateGraph(GraphState)
+    builder = StateGraph(BatchState)
     for name in ("observe", "cancel", "settle", "learning", "limits", "create", "launch"):
         builder.add_node(name, service.graph_node(name))
 

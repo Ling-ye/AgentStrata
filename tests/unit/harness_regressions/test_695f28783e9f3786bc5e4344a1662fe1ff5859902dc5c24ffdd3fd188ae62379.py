@@ -18,7 +18,7 @@ from chatcopilot.harness.governance_run_repository import GovernanceRunRepositor
 from chatcopilot.harness.governance_run_service import GovernanceRuns
 from chatcopilot.harness.governance_runtime import reconcile_runs
 from chatcopilot.harness.governance_types import GovernanceOptions
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.store import HarnessStore
 
 
@@ -183,7 +183,7 @@ class _Tasks:
         request = f"{run['run_id']}-{sequence}"
         task, created = self.store.create({
             "task_id": "repair-" + request,
-            "pipeline_version": 11,
+            "pipeline_version": PIPELINE_VERSION,
             "request_key": request,
             "request_digest": request,
             "match_key": request,

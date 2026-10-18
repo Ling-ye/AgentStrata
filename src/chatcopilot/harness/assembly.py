@@ -1,21 +1,55 @@
 """Worker composition; orchestration itself knows no concrete execution backends."""
 from chatcopilot.harness.local_verifier import LocalVerifier
-from chatcopilot.harness.verification import CaseVerification
 from chatcopilot.harness.repair_runtime import run_task as execute
 
 
-def run_task(store, task_id, evaluator, coder, *, local_verifier=None, committer=None):
+def controller_dependencies(repository, root, settings, *, evaluator=None, workers=None,
+                            task_reader=None, gateway_state_root=None):
+    """The public controller's default adapters are composed in one place."""
+    from pathlib import Path
+    from chatcopilot.harness.store import HarnessStore
+    from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
+    from chatcopilot.harness.worker_runtime import SystemdWorkerControl
+    from chatcopilot.harness.control_service import HarnessLifecycle
+    store = HarnessStore(root)
+    socket_path = settings.get("CHATCOPILOT_EVALUATION_SOCKET")
+    evaluator = evaluator or ServiceEvaluator(socket_path=Path(socket_path) if socket_path else None)
+    if gateway_state_root is not None and task_reader is None:
+        from chatcopilot.harness.gateway_adapter import read_task
+        def task_reader(bot, run):
+            return read_task(gateway_state_root, bot, run)
+    workers = workers or SystemdWorkerControl(repository, store.root, settings)
+    return store, evaluator, task_reader, HarnessLifecycle(store, workers, evaluator)
+
+
+def execution_dependencies(store, task_id, evaluator=None, coder=None, local=None):
+    """Repair and delivery workers select the same adapters and frozen interpreter."""
+    if evaluator is None:
+        from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
+        evaluator = ServiceEvaluator()
+    if coder is None:
+        from chatcopilot.harness.codex_adapter import CodexCoder
+        coder = CodexCoder(lambda root, ref: store.register_trace(task_id, root, ref))
+    local = local or LocalVerifier(store.root)
+    task = store.get(task_id)
+    if task.get("environment", {}).get("python"):
+        local.python = task["environment"]["python"]
+    if task["source"].get("kind") == "code_health":
+        from chatcopilot.harness.governance_verification import GovernanceVerification
+        verifier = GovernanceVerification(evaluator, local, store)
+    else:
+        from chatcopilot.harness.verification import CaseVerification
+        verifier = CaseVerification(evaluator, local, store)
+    return coder, local, verifier
+
+
+def run_task(store, task_id, evaluator=None, coder=None, *, local_verifier=None, committer=None):
     from chatcopilot.harness.delivery import initialize, reconcile
     from chatcopilot.harness.models import PIPELINE_VERSION
     if store.get(task_id).get("pipeline_version") != PIPELINE_VERSION:
         return store.get(task_id)
-    local = local_verifier or LocalVerifier(store.root)
     governance = store.get(task_id)["source"].get("kind") == "code_health"
-    verifier_type = CaseVerification
-    if governance:
-        from chatcopilot.harness.governance_verification import GovernanceVerification
-        verifier_type = GovernanceVerification
-    verifier = verifier_type(evaluator, local, store)
+    coder, local, verifier = execution_dependencies(store, task_id, evaluator, coder, local_verifier)
     def prepare(budget):
         from pathlib import Path
         from chatcopilot.harness.artifact_repository import ArtifactRepository

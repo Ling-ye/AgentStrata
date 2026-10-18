@@ -50,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
     maintenance = sub.add_parser("maintenance", help="证明 Harness 空闲并在命令期间阻止创建和恢复任务")
     maintenance.add_argument("argv", nargs=argparse.REMAINDER)
     reset = sub.add_parser("cutover", help="确认旧任务空闲，导出历史后启用新状态库；默认只检查")
-    reset.add_argument("--apply", action="store_true", help="删除旧 Harness 任务、批次、产物和专属 worktree，不保留归档")
+    reset.add_argument("--apply", action="store_true", help="校验并归档旧状态库，启用新协议；保留任务产物、worktree 和分支")
     gc = sub.add_parser("start-gc", help="依据 SDD 与黄金原则启动代码熵回收")
     gc.add_argument("--profile", default="")
     gc.add_argument("--max-attempts", type=int, default=3)

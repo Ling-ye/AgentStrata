@@ -683,6 +683,11 @@ class EvaluationApplication:
             try:
                 self._create_claim(bot.instance_id, evaluation_id)
                 directory.mkdir(parents=True, mode=0o700)
+                # Source preparation can fail before a worker exists. Retain the
+                # request identity so that terminal failures remain queryable and
+                # maintenance can prove that their released claim is idle.
+                _write_json(directory / "request.json", stored_request)
+                _write_json(directory / "state.json", state)
                 if code_source is not None:
                     source_root = self.root / ".sources"
                     source_root.mkdir(mode=0o700, exist_ok=True)

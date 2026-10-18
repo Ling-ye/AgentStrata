@@ -8,7 +8,7 @@ import pytest
 from chatcopilot.harness.agent_types import AgentResult, Role
 from chatcopilot.harness.artifact_repository import ArtifactRepository
 from chatcopilot.harness.governance_repository import GOAL, freeze_context
-from chatcopilot.harness.models import RepairOptions, VerificationCheck, VerificationPlan, VerificationResult
+from chatcopilot.harness.models import PIPELINE_VERSION, RepairOptions, VerificationCheck, VerificationPlan, VerificationResult
 from chatcopilot.harness.repair_runtime import run_task
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.workspace import permitted_change
@@ -36,7 +36,7 @@ def governance(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "code_health", "repository": str(repo), "original_input": GOAL}
-    store.create({"task_id": ident, "pipeline_version": 11, "request_key": "gc", "request_digest": "gc",
+    store.create({"task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": "gc", "request_digest": "gc",
                   "context_key": "repo", "match_key": "repo", "active_key": "gc", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"),
                   "options": asdict(RepairOptions("fixture"))})

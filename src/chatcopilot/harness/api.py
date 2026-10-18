@@ -20,12 +20,10 @@ from chatcopilot.core.source_snapshot import (
 )
 from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.config import configuration, default_root
-from chatcopilot.harness.control_service import HarnessLifecycle
 from chatcopilot.harness.control_types import WorkerControlPort
 from chatcopilot.harness.worker_runtime import SystemdWorkerControl
 from chatcopilot.harness.models import HarnessError, RepairFeedback, RepairOptions
 from chatcopilot.harness.config import safe_error
-from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.sources import RepairSources
 from chatcopilot.harness.models import PIPELINE_VERSION, ProblemEvidence, SourceReader
 from chatcopilot.harness.workspace import context_key
@@ -50,21 +48,13 @@ class HarnessController:
     ) -> None:
         self.repository = repository.resolve(strict=True)
         self.settings = configuration()
-        if gateway_state_root is not None and task_reader is None:
-            from chatcopilot.harness.gateway_adapter import read_task
-            def read_gateway_task(bot: str, run: str) -> dict[str, Any]:
-                return read_task(gateway_state_root, bot, run)
-            task_reader = read_gateway_task
-        self.task_reader = task_reader
+        from chatcopilot.harness.assembly import controller_dependencies
+        self.store, self.evaluator, self.task_reader, self.lifecycle = controller_dependencies(
+            self.repository, root or default_root(self.repository, self.settings), self.settings,
+            evaluator=evaluator, workers=worker_control, task_reader=task_reader,
+            gateway_state_root=gateway_state_root)
         self.image_reader = image_reader
-        self.store = HarnessStore(root or default_root(self.repository, self.settings))
-        socket_path = self.settings.get("CHATCOPILOT_EVALUATION_SOCKET")
-        self.evaluator = evaluator or ServiceEvaluator(
-            socket_path=Path(socket_path) if socket_path else None
-        )
-        self.sources: SourceReader = RepairSources(self.evaluator, task_reader)
-        self.lifecycle = HarnessLifecycle(self.store, worker_control or SystemdWorkerControl(
-            self.repository, self.store.root, self.settings), self.evaluator)
+        self.sources: SourceReader = RepairSources(self.evaluator, self.task_reader)
 
     @property
     def default_model(self) -> str:
@@ -483,7 +473,7 @@ class HarnessController:
         attempt = next((row for row in attempts if row["number"] == number), {})
         if attempt:
             from chatcopilot.harness.artifact_repository import ArtifactRepository
-            from chatcopilot.harness.context_briefs import verification_comparison
+            from chatcopilot.harness.integrations.briefs import verification_comparison
             previous = next((row for row in reversed(attempts) if row["number"] < number), None)
             result["verification_comparison"] = verification_comparison(attempt, previous)
             if attempt.get("failure_brief"):
@@ -794,6 +784,9 @@ class HarnessController:
                 "flow_steps",
                 "evaluation_history",
                 "artifact_fields",
+                "operations",
+                "verification_binding",
+                # Historical records remain readable, but their private receipts do not.
                 "role_executions",
                 "delivery_acceptance_receipts",
             }

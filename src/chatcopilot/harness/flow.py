@@ -46,6 +46,10 @@ def _outcome(value: dict[str, Any], phase: str) -> tuple[str, str]:
         return ("completed" if value["decision"] == "approved" else "failed",
                 value.get("reason") or value.get("problem") or "审核结论已记录")
     failed, passed = value.get("failed_cases", []), value.get("passed_cases", [])
+    if phase == "repository_regressions" and "regressions" in value:
+        regressions = value["regressions"]
+        return ("failed" if regressions else "completed",
+                f"新增回归 {len(regressions)} 项；候选未通过或跳过 {len(failed)} 项，明细见依据")
     if "passed_cases" in value or "failed_cases" in value:
         if phase.startswith("reproduce"):
             return "completed", "已复现原问题：目标检查出现预期失败" if failed else "当前版本未复现原问题"
@@ -121,7 +125,10 @@ def flow_rows(task: dict[str, Any], attempts: list[dict[str, Any]]) -> list[dict
                 locator={"section": "attempts", "number": n, "field": field}, attempt=n)
         for field, title in (("repository_regressions", "仓库回归"), ("review", "AI 修复审核")):
             if field in attempt:
-                add(f"attempt-{n}-{field}", title, f"attempt-{n}", field, attempt[field],
+                value = attempt[field]
+                if field == "repository_regressions" and "regressions" in attempt:
+                    value = {**value, "regressions": attempt["regressions"]}
+                add(f"attempt-{n}-{field}", title, f"attempt-{n}", field, value,
                     locator={"section": "attempts", "number": n, "field": field}, attempt=n,
                     source_id=f"review-{n}" if field == "review" else None)
         if attempt.get("verification") is not None:

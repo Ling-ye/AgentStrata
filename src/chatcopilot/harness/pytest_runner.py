@@ -40,7 +40,7 @@ def main() -> int:
                 error = error.__cause__ or (None if error.__suppress_context__ else error.__context__)
             report.harness_exception_chain = chain
             report.harness_assertion_failure = bool(
-                call.excinfo and call.excinfo.errisinstance(AssertionError)
+                call.excinfo and call.excinfo.errisinstance((AssertionError, pytest.fail.Exception))
             )
 
         def pytest_collection_modifyitems(self, items):

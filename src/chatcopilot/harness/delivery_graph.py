@@ -3,11 +3,11 @@
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import interrupt
 
-from chatcopilot.harness.graph_types import GraphState
+from chatcopilot.harness.engine.state import DeliveryState
 
 
 def build_delivery_graph(operations, checkpointer):
-    builder = StateGraph(GraphState)
+    builder = StateGraph(DeliveryState)
     routes = {
         "inspect": ("commit", "locate_pr", "cancel", "cleanup_done"),
         "commit": ("locate_pr", "cancel"),

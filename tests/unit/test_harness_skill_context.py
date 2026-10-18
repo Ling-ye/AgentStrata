@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from chatcopilot.harness.artifact_repository import ArtifactRepository
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import PIPELINE_VERSION, HarnessError
 from chatcopilot.harness.skill_context import LESSONS_PATH, SKILL_PATH, applies, freeze_skill, learning_source, role_context
 from chatcopilot.harness.workspace import permitted_change, protected_paths, writable_paths
 
@@ -66,14 +66,14 @@ def test_learning_requires_accepted_merged_harness_task():
 def test_role_loads_frozen_body_and_records_receipt_only_for_selected_harness(tmp_path):
     from chatcopilot.harness.agent_types import AgentResult, Role
     from chatcopilot.harness.models import RepairOptions
-    from chatcopilot.harness.role_service import RoleWorkflow
+    from chatcopilot.harness.integrations.roles import RoleWorkflow
     from chatcopilot.harness.store import HarnessStore
 
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "b" * 32
     selected = {"kind": "code_health", "governance_target": {
         "affected_paths": ["src/chatcopilot/harness/worker.py"]}}
-    store.create({"task_id": ident, "pipeline_version": 11, "request_key": "skill-role",
+    store.create({"task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": "skill-role",
         "request_digest": "skill-role", "context_key": "skill-role", "match_key": "skill-role",
         "active_key": "skill-role", "repository": str(tmp_path), "source": selected,
         "base_commit": "a" * 40, "acceptance": {"items": []},

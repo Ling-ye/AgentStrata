@@ -9,8 +9,6 @@ import sqlite3
 from pathlib import Path
 
 from chatcopilot.core.private_sqlite import storage_error_details
-from chatcopilot.harness.codex_adapter import CodexCoder
-from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
 from chatcopilot.harness.models import ACTIVE, HarnessError
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.assembly import run_task
@@ -41,8 +39,7 @@ def main(argv: list[str] | None = None) -> int:
             if task is None:
                 return 0
             try:
-                result = run_task(store, args.task, ServiceEvaluator(), CodexCoder(
-                    lambda root, ref: store.register_trace(args.task, root, ref)))
+                result = run_task(store, args.task)
                 return 0 if result["status"] in {"fixed", "not_reproduced", "cancelled"} else 1
             except (sqlite3.Error, OSError) as error:
                 if not isinstance(error, sqlite3.Error) and not storage_error_details(error):

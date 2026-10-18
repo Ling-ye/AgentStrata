@@ -2,11 +2,11 @@
 
 from langgraph.types import Command
 
-from chatcopilot.harness.graph_types import GRAPH_VERSION
+from chatcopilot.harness.engine.state import GRAPH_VERSION
 from chatcopilot.harness.models import HarnessError
 
 
-def execute_graph(graph, identity, *, initial=None, wake=None, step_limit=1000, observe=None):
+def execute_graph(graph, identity, *, initial=None, wake=None, step_limit=1000, observe=None, context=None):
     config = {"configurable": {"thread_id": identity}, "recursion_limit": step_limit}
     snapshot = graph.get_state(config)
     if snapshot.values and snapshot.values.get("version") != GRAPH_VERSION:
@@ -19,23 +19,10 @@ def execute_graph(graph, identity, *, initial=None, wake=None, step_limit=1000, 
     elif snapshot.values and initial is None:
         return snapshot.values
     else:
-        value = {
-            "identity": identity,
-            "version": GRAPH_VERSION,
-            "attempt": 0,
-            "phase": "",
-            "route": "",
-            "context_ref": None,
-            "submission_ref": None,
-            "error_ref": None,
-            "deferred_error_ref": None,
-            "pending_roles": [],
-            "outcome": "",
-            "replaying": False,
-            **(initial or {}),
-        }
+        value = {"identity": identity, "version": GRAPH_VERSION,
+                 "phase": "", "error_ref": None, "outcome": "", **(initial or {})}
     # updates are projections, not a second stage scheduler. Drain even without a subscriber.
-    for _update in graph.stream(value, config, durability="sync", stream_mode="updates"):
+    for _update in graph.stream(value, config, durability="sync", stream_mode="updates", context=context):
         if observe is not None:
             observe(graph.get_state(config))
     final = graph.get_state(config)

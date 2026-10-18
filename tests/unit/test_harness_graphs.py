@@ -14,10 +14,10 @@ from langgraph.graph import END, START, StateGraph
 from chatcopilot.harness.agent_types import Role
 from chatcopilot.harness.graph_repository import checkpoints
 from chatcopilot.harness.graph_service import execute_graph
-from chatcopilot.harness.graph_types import GraphState
+from chatcopilot.harness.engine.state import RepairState
 from chatcopilot.harness.models import HarnessError
 from chatcopilot.harness.repair_runtime import run_task
-from chatcopilot.harness.role_service import RoleWorkflow
+from chatcopilot.harness.integrations.roles import RoleWorkflow
 from test_harness_multi_agent import Roles
 from test_harness_repair_v2 import Verifier, repair as repair_fixture
 
@@ -49,7 +49,7 @@ def test_confirmed_role_result_survives_loss_of_the_node_checkpoint(repair, monk
     monkeypatch.setattr(RoleWorkflow, "call", stop_after_result)
     with pytest.raises(ProcessStopped):
         run_task(store, ident, Verifier(), runner)
-    assert store.get(ident)["role_executions"][f"{role.value}-1"]["state"] == "complete"
+    assert store.get(ident)["operations"][f"role:{role.value}-1"]["state"] == "completed"
     with checkpoints(store.root, "task:" + ident) as saver:
         snapshot = saver.get_tuple({"configurable": {"thread_id": "task:" + ident}})
         assert snapshot is not None
@@ -75,7 +75,7 @@ def test_unconfirmed_coding_is_not_replayed_or_accepted(repair):
     runner = Interrupted()
     with pytest.raises(ProcessStopped):
         run_task(store, ident, Verifier(), runner)
-    assert store.get(ident)["role_executions"]["coding-1"]["state"] == "running"
+    assert store.get(ident)["operations"]["role:coding-1"]["state"] == "started"
     store.update(ident, status="queued")
     result = run_task(store, ident, Verifier(), runner)
     assert result["error_code"] == "session_unconfirmed"
@@ -89,7 +89,7 @@ def test_repeated_resume_cannot_bypass_an_unknown_role_session(repair):
     from chatcopilot.harness.control_types import WorkerState
 
     store, ident, _ = repair
-    store.update(ident, status="blocked", role_executions={"coding-1": {"state": "uncertain"}})
+    store.update(ident, status="blocked", operations={"role:coding-1": {"kind": "role", "state": "unknown"}})
     lifecycle = HarnessLifecycle(
         store, SimpleNamespace(observe=lambda task: WorkerState.INACTIVE), object()
     )
@@ -111,8 +111,8 @@ def test_checkpoint_failure_after_plan_does_not_repeat_the_model(repair, monkeyp
         nonlocal broken
         if (
             not broken
-            and "plan-1" in store.get(ident).get("role_executions", {})
-            and store.get(ident)["role_executions"]["plan-1"]["state"] == "complete"
+            and "role:plan-1" in store.get(ident).get("operations", {})
+            and store.get(ident)["operations"]["role:plan-1"]["state"] == "completed"
         ):
             broken = True
             raise sqlite3.OperationalError("controlled checkpoint failure")
@@ -212,7 +212,7 @@ def test_incompatible_graph_version_stops_before_any_node(tmp_path):
 
     root = private_directory(tmp_path / "private")
     calls = []
-    builder = StateGraph(GraphState)
+    builder = StateGraph(RepairState)
     builder.add_node("work", lambda state: calls.append(True) or {})
     builder.add_edge(START, "work")
     builder.add_edge("work", END)

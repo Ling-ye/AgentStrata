@@ -10,7 +10,7 @@ from chatcopilot.harness.control_service import HarnessLifecycle
 from chatcopilot.harness.control_types import DispatchResult, WorkerState
 from chatcopilot.harness.governance_run_service import GovernanceRuns
 from chatcopilot.harness.governance_types import GovernanceOptions
-from chatcopilot.harness.models import Cancelled, HarnessError
+from chatcopilot.harness.models import PIPELINE_VERSION, Cancelled, HarnessError
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.task_budget import TaskBudget
 
@@ -48,7 +48,7 @@ class Tasks:
 
     def start(self, run, sequence, options):
         request = f"{run['run_id']}-{sequence}"
-        task, created = self.store.create({"task_id": "repair-" + request, "pipeline_version": 11,
+        task, created = self.store.create({"task_id": "repair-" + request, "pipeline_version": PIPELINE_VERSION,
             "request_key": request, "request_digest": request, "context_key": "repository", "match_key": request,
             "active_key": request, "source": {"kind": "code_health"}, "options": asdict(options),
             "repository": run["repository"], "base_commit": self.main, "unit": request,

@@ -22,6 +22,7 @@ Provider 连接使用冻结 fixture；模拟回执不等于真实 QQ 送达。�
 
 首轮直接进入 Plan；Main 只处理根因变化和分歧；Plan 追踪调用链并提出最小方案；Coding 只写产品；
 Test 只写独立测试草案；Review 只读审查。所有角色共用运行器，使用独立会话与权限。
+宿主收录草案前核对普通文件、当前用户归属和单链接，再将权限收紧为 `0600`；不依赖模型设置文件权限。
 角色不得自行创建嵌套委派。正常阶段由宿主推进，明确代码或测试错误只返工相关角色。
 Plan 用 proceed/blocked 区分待验证假设与必要条件缺失。Coding/Test 的局部工具说明放 notes，
 gaps 只记录绑定实际验收目标的缺口；检查通过不能直接抹去明确的证据或外部交付缺口。
@@ -30,9 +31,12 @@ Coding/Test 结构化产物只允许材料、fixture 或权限缺失；待宿主
 根因假设来自 Plan，验证器只产出验证定义与执行结果。无进展按实际通过的检查项比较，
 目标内部分检查改善仍可继续下一轮。
 草案阶段从执行错误修正为有效行为断言，也属于新增验证证据；仅更换草案文件摘要不算进展。
+pytest 的标准断言失败与普通 `assert` 一样分类；资源、导入及 fixture setup 错误不能因此变成产品失败。
 
 现成 Case 直接复用，允许先形成候选后补验证。正式验收在独立冻结快照运行相同测试；
 原始目标、保护集与独立审核全部满足才可 fixed。评分、环境和材料错误不是产品失败；
+原 Case 与 Agent 回放使用同一冻结快照时只执行一次，保留原执行条件并采用较高的重复次数要求。
+冻结仓库基线无法收集测试时阻断验证环境，不让 Coding 修改产品来掩盖基线问题。
 参考答案不进入被测 Agent 输入。图片输入物化、后端传图和输出交付分别验证。
 真实模型、模拟外部回执与真实 QQ 交付分别记录。
 
@@ -101,16 +105,27 @@ App Server 父进程仍可维护自己的状态。角色命令网络保持关闭
 
 ### LangGraph 编排与恢复
 
-任务、代码熵回收批次与交付分别使用 StateGraph，首次验收与主干复验复用同一验收图。
+修复核心位于 `engine`：节点接收状态与 `Runtime[HarnessContext]`，通过注入接口使用角色、
+验证器和候选工作区。AgentStrata 的来源布局、角色材料、执行条件和治理规则归入 `integrations`；
+核心不直接或通过重导出加载 Codex、Gateway、Evaluation client、systemd 或 GitHub 实现。
+默认后端集中在运行装配中创建，`HarnessController` 保持现有公开集成入口。
+
+修复、验收、代码熵回收批次和交付使用各自的状态定义；首次验收与主干复验复用同一验收图。
+验收子图按调用隔离状态并继承父图检查点，修复结束后由宿主驱动独立交付图。
 任务图显式安排环境、冻结快照、原 Case 复现、Plan、目标绑定、Coding/Test、候选收录和验收。
 按 test_first、code_first、existing 选择角色顺序；明确代码或测试失败定向返工，预算和无进展
 判定仍由宿主负责。交付图拆分提交、推送、PR、远端对账、主干整合、复验与清理。
 批次与交付等待使用 interrupt，由现有定时入口唤醒，不占用常驻等待进程。
 
 checkpoint 位于私有根目录的独立 SQLite 文件，按稳定 thread_id 隔离并同步写入；图保存执行
-位置、轮次和不可变产物引用。框架恢复未完成节点及已持久化的 pending writes，完整角色结果
-还以宿主回执核对，避免节点结果保存后、检查点提交前故障导致重复模型调用。角色终态未知
-时停止并核对；测评恢复使用同一个外部执行 ID。checkpoint 不代替工作区、外部执行及 PR 事实。
+位置、轮次和不可变产物引用；运行依赖、凭据与完整日志不写入状态。框架恢复未完成节点及
+已持久化的 pending writes。角色、验证与交付复验统一记录 `operations` 回执，状态为
+started/completed/failed/unknown，绑定任务、节点、轮次、输入摘要、外部 ID 和结果引用。
+操作前先登记，完成后保存结果；完成回执不能被覆盖，也不改变任务生命周期终态。
+
+已确认的角色与验证结果可在 checkpoint 丢失时复用；角色或本地验证终态未知时阻断，外部
+Evaluation 按原 ID 对账。验证结果必须匹配本次执行 ID、候选摘要和完整检查矩阵。图检查点
+不代替工作区、外部执行及 PR 事实；GitHub 操作仍核对已有远端身份与交付意图。
 
 `graph` 与 `delivery_graph` 是公开的可重建位置投影，含检查点身份、下一节点和等待标记；
 Console 展示恢复位置，查询不执行图。原始证据和命令日志继续按下述产物接口读取。
@@ -125,7 +140,7 @@ Console 展示恢复位置，查询不执行图。原始证据和命令日志继
 ## 隔离与交付
 
 每任务冻结远端 main，创建独立 worktree、分支、依赖环境与临时目录。宿主使用 uv 和
-冻结依赖声明准备 agent、acp、dev、evaluation 依赖，覆盖全仓单元回归，所有角色只读依赖；Coding 是产品唯一写入者，Test 只写草案。
+冻结依赖声明准备 agent、acp、dev、evaluation、weixin 依赖，覆盖全仓单元回归及 Console 路由的导入，所有角色只读依赖；Coding 是产品唯一写入者，Test 只写草案。
 隔离 pytest 使用每次执行独立的磁盘临时目录，执行结束或取消后清理，避免完整回归耗尽小型 tmpfs。
 正在执行的宿主、既有测试、评分、权限和黄金原则固定；候选 Harness 代码不能接管本次验收。
 
@@ -167,7 +182,7 @@ CLI 的 `reconcile` 可主动核对，取消、恢复和接续也会立即检查
 
 ## 协议切换
 
-当前协议为 pipeline 11。旧记录阻止创建新任务。显式切换在维护锁和 Evaluation 租约内
+当前协议为 pipeline 12，图版本为 2。旧记录阻止创建新任务。显式切换在维护锁和 Evaluation 租约内
 确认旧 worker、外部测评与 PR 均已结束，使用 SQLite backup API 导出数据库，复制证据、
 源码、补丁、日志和检查点并核验摘要，再替换活动数据库。原数据库保存在导出目录，旧任务
 目录、归档、检查点、worktree 和分支均保留；临时运行环境和凭据不复制进导出。
@@ -176,11 +191,12 @@ CLI 的 `reconcile` 可主动核对，取消、恢复和接续也会立即检查
 
 ## 源码入口
 
-- [任务图](../../src/chatcopilot/harness/task_graph.py)、[任务节点](../../src/chatcopilot/harness/task_operations.py)
-- [验收图](../../src/chatcopilot/harness/acceptance_graph.py)、[交付图](../../src/chatcopilot/harness/delivery_graph.py)、[批次图](../../src/chatcopilot/harness/batch_graph.py)
+- [任务图](../../src/chatcopilot/harness/engine/repair_graph.py)、[任务节点](../../src/chatcopilot/harness/engine/repair.py)
+- [验收图](../../src/chatcopilot/harness/engine/acceptance_graph.py)、[交付图](../../src/chatcopilot/harness/delivery_graph.py)、[批次图](../../src/chatcopilot/harness/batch_graph.py)
 - [图恢复](../../src/chatcopilot/harness/graph_service.py)、[检查点](../../src/chatcopilot/harness/graph_repository.py)、[历史导出](../../src/chatcopilot/harness/history_repository.py)
-- [角色调度](../../src/chatcopilot/harness/role_service.py)
-- [源码索引与失败摘要](../../src/chatcopilot/harness/context_briefs.py)
+- [角色调度](../../src/chatcopilot/harness/integrations/roles.py)
+- [源码索引与失败摘要](../../src/chatcopilot/harness/integrations/briefs.py)
+- [场景规则](../../src/chatcopilot/harness/integrations/scenarios.py)、[运行依赖](../../src/chatcopilot/harness/engine/context.py)、[执行回执](../../src/chatcopilot/harness/operation_repository.py)
 - [修复服务](../../src/chatcopilot/harness/workflow.py)
 - [运行装配](../../src/chatcopilot/harness/assembly.py)
 - [维护切换](../../src/chatcopilot/harness/cutover_runtime.py)

@@ -194,6 +194,41 @@ def test_case_instance_lookup_uses_public_service_and_http_route(tmp_path, monke
             assert client.get("/api/evals/case-instances/case-" + "0" * 32).status_code == 404
 
 
+def test_rejected_candidate_retains_request_and_does_not_block_maintenance(tmp_path):
+    with _running_service(tmp_path) as service:
+        snapshot = service.client.register_case({
+            "schema": "agentstrata.agent-case/v1",
+            "title": "Candidate identity check",
+            "input": "Return the fixture value",
+            "expected_behavior": "Return the fixture value",
+            "assertions": [{"kind": "final_contains", "value": "fixture"}],
+        })
+        arguments = {
+            "bot_id": "lingye-copilot-qq",
+            "evaluation_id": "eval-rejected-source",
+            "request": {"kind": "suite", "suite_id": "agentstrata-regression-v1",
+                        "case_snapshot_id": snapshot["snapshot_id"], "dry_run": True,
+                        "repetitions": 1, "preset": "custom"},
+            "code_source": {"path": str(REPOSITORY_ROOT), "sha256": "0" * 64},
+        }
+        with pytest.raises(EvaluationServiceError):
+            service.client.start(**arguments)
+        record = service.client.get(arguments["evaluation_id"])
+        assert record["status"] == "error" and record["pid"] is None
+        assert record["request"]["start_request_fingerprint"]
+        assert not record.get("archived")
+        assert service.client.start(**arguments)["status"] == "error"
+        assert service.client.health()["idle_proven"] is True
+        lease = "d" * 32
+        service.client.enter_maintenance(lease)
+        service.client.leave_maintenance(lease)
+        recovered = EvaluationServiceRuntime(
+            repository_root=REPOSITORY_ROOT, artifact_root=service.artifact_root,
+        )
+        assert recovered.application.get(arguments["evaluation_id"])["status"] == "error"
+        assert recovered.application.update_readiness() == {"active_count": 0, "idle_proven": True}
+
+
 def test_harness_case_instance_resolves_saved_evidence_before_creating_task(tmp_path):
     from tests.unit.test_evaluation_read_models import seed
     from chatcopilot.harness.api import HarnessController

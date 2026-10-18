@@ -9,13 +9,14 @@ import uuid
 
 from chatcopilot.core.private_sqlite import json_text, private_directory
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, source_manifest, verify_copy
-from chatcopilot.harness.acceptance_graph import build_acceptance_graph
+from chatcopilot.harness.engine.acceptance_graph import build_acceptance_graph
 from chatcopilot.harness.artifact_repository import ArtifactRepository
 from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.graph_repository import checkpoints
 from chatcopilot.harness.graph_service import execute_graph
 from chatcopilot.harness.models import CandidateRef, CodingOptions, HarnessError, VerificationCheck, VerificationPlan, VerificationRequest, VerificationResult, review_decision
 from chatcopilot.harness.patches import save_patch
+from chatcopilot.harness.operation_repository import OperationRepository
 from chatcopilot.harness.preparation import require_purpose
 from chatcopilot.harness.repository_checks import RepositoryChecks, compare_verification
 from chatcopilot.harness.verification_ledger import SourceLedger
@@ -37,35 +38,36 @@ class RevalidationOperations:
         self.directory = private_directory(store.root / "jobs" / task_id / "revalidation" / self.identity.rsplit(":", 1)[1])
         self.frozen = self.directory / "baseline"
         self.artifacts = ArtifactRepository(store.root / "jobs" / task_id)
+        self.operations = OperationRepository(store, task_id)
 
     def memo(self, name, operation=None, *, uncertain=False, external_id=None):
         key = self.identity + ":" + name
+        binding = hashlib.sha256(key.encode()).hexdigest()
         current = self.store.get(self.task_id)
-        receipt = current.get("delivery_acceptance_receipts", {}).get(key)
+        receipt = self.operations.get(key, binding)
         if receipt:
-            if receipt["state"] == "complete":
-                return self.artifacts.read(receipt["ref"])
-            if not (external_id and name.startswith("trial")
-                    and current.get("delivery_evaluation", {}).get("id") == external_id):
+            if receipt["state"] == "completed":
+                return self.artifacts.read(receipt["result_ref"])
+            if receipt["state"] == "failed":
+                raise HarnessError(receipt["error"]["code"], receipt["error"]["message"])
+            if uncertain and not (external_id and name.startswith("trial")
+                    and (current.get("delivery_evaluation") or {}).get("id") == external_id):
                 raise HarnessError("result_pending" if name.startswith("trial") else "session_unconfirmed",
                                    "交付验收节点终态未知，先核对原执行")
         if operation is None:
             raise HarnessError("verification_evidence", "交付验收缺少已确认的阶段回执：" + name)
-        if uncertain:
-            self.store.update(self.task_id, delivery_acceptance_receipts={**current.get("delivery_acceptance_receipts", {}),
-                key: {"state": "running"}})
+        self.operations.start(key, kind="delivery_validation", node=name, attempt=0,
+            binding=binding, external_id=external_id)
         value = operation()
         ref = asdict(self.artifacts.put("delivery_" + name, 1, value))
-        current = self.store.get(self.task_id)
-        self.store.update(self.task_id, delivery_acceptance_receipts={**current.get("delivery_acceptance_receipts", {}),
-            key: {"state": "complete", "ref": ref}})
+        self.operations.complete(key, binding, ref)
         return value
 
-    def node(self, name):
+    def node(self, name, operation):
         def node(state):
             try:
                 self.cancel()
-                value = getattr(self, name)(state) or {}
+                value = operation(state) or {}
                 return {"phase": name, **value}
             except HarnessError as exc:
                 ref = asdict(self.artifacts.put("delivery_error", 1, {"code": exc.code, "message": safe_error(exc)}))
@@ -140,9 +142,9 @@ class RevalidationOperations:
         self.store.update(self.task_id, delivery_evaluation=None)
         result = VerificationResult(raw["run_id"], raw["candidate_digest"],
                                     tuple(VerificationCheck(**row) for row in raw["checks"]), tuple(raw["evidence_refs"]))
+        result.require_bound(CandidateRef(self.root, manifest_digest(self.manifest), self.task["base_commit"]), ident)
         result.require_valid(list(self.plan.checks), self.plan.check_repetitions or self.plan.repetitions)
-        if (result.candidate_digest != manifest_digest(self.manifest)
-                or not (set(self.plan.primary_checks) | set(self.task.get("protected_cases", []))).issubset(result.passed)):
+        if not (set(self.plan.primary_checks) | set(self.task.get("protected_cases", []))).issubset(result.passed):
             raise HarnessError("delivery_revalidation_failed", "同步主干后的目标复测未通过")
         return raw
 
@@ -216,11 +218,14 @@ def revalidate(store: Any, task_id: str, root: Path, base: Path, coder: Any, ver
                check_cancel: Callable[[], None], *, remaining: Callable[[], float | None] = lambda: None) -> dict[str, Any]:
     operations = RevalidationOperations(store, task_id, root, base, coder, verifier, check_cancel, remaining)
     with checkpoints(store.root, operations.identity) as saver:
-        graph = build_acceptance_graph(operations)
+        graph = build_acceptance_graph(tuple(operations.node(name, operation) for name, operation in (
+            ("definition", operations.definition), ("baseline", operations.baseline),
+            ("verification", operations.verification), ("regressions", operations.regressions),
+            ("confirmation", operations.confirmation), ("review", operations.review), ("seal", operations.seal))))
         # A standalone acceptance invocation needs its own persistent root.
         from langgraph.graph import END, START, StateGraph
-        from chatcopilot.harness.graph_types import GraphState
-        builder = StateGraph(GraphState)
+        from chatcopilot.harness.engine.state import AcceptanceState
+        builder = StateGraph(AcceptanceState)
         builder.add_node("acceptance", graph)
         builder.add_edge(START, "acceptance")
         builder.add_edge("acceptance", END)

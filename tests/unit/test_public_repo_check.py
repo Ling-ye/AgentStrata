@@ -24,6 +24,20 @@ def _load_checker():
     return module
 
 
+def test_harness_comparison_sources_do_not_allow_other_vendor_repositories():
+    checker = _load_checker()
+    for url in (
+        "https://docs.langchain.com/langsmith/engine-self-hosted",
+        "https://github.com/langchain-ai/langgraph/blob/main/LICENSE",
+        "https://github.com/langchain-ai/langsmith-sdk",
+    ):
+        assert checker.scan_text(url, path="README.md") == []
+    unreviewed = "https://github.com/langchain-ai/" + "unreviewed-project"
+    assert "unexpected-code-repository" in {
+        finding.rule for finding in checker.scan_text(unreviewed, path="README.md")
+    }
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ("git", *args),

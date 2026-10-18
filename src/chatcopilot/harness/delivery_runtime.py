@@ -51,24 +51,13 @@ def pending(store: HarnessStore) -> list[str]:
 
 
 def run_one(store: HarnessStore, task_id: str) -> dict[str, Any]:
-    from chatcopilot.harness.codex_adapter import CodexCoder
-    from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
-    from chatcopilot.harness.local_verifier import LocalVerifier
-    from chatcopilot.harness.verification import CaseVerification
+    from chatcopilot.harness.assembly import execution_dependencies
     try:
         with worker_execution(store, task_id, delivery=True) as task:
             if task is None:
                 return store.get(task_id)
             action = task.get("delivery_request")
-            coder = CodexCoder(lambda root, ref: store.register_trace(task_id, root, ref))
-            local = LocalVerifier(store.root)
-            if task.get("environment", {}).get("python"):
-                local.python = task["environment"]["python"]
-            verifier_type = CaseVerification
-            if task["source"].get("kind") == "code_health":
-                from chatcopilot.harness.governance_verification import GovernanceVerification
-                verifier_type = GovernanceVerification
-            verifier = verifier_type(ServiceEvaluator(), local, store)
+            coder, _local, verifier = execution_dependencies(store, task_id)
             result = reconcile(store, task_id, coder=coder, verifier=verifier,
                                retry=action == "retry" or task["delivery"]["state"] in {"merged", "closed"},
                                cleanup_only=action == "cleanup" or (not action and task["delivery"]["state"] not in PENDING

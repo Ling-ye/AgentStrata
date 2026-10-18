@@ -13,13 +13,15 @@ from chatcopilot.harness.agent_types import AgentCall, AgentRunner, Role, retry_
 from chatcopilot.harness.artifact_repository import ArtifactRepository
 from chatcopilot.harness.flow_records import record_step
 from chatcopilot.harness.models import HarnessError, RepairHypothesis
-from chatcopilot.harness.context_briefs import build_failure_brief, build_source_index, build_target_context
+from chatcopilot.harness.operation_repository import OperationRepository
+from chatcopilot.harness.integrations.briefs import build_failure_brief, build_source_index, build_target_context
 
 
 class RoleWorkflow:
     def __init__(self, store, task_id: str, runner: AgentRunner, artifacts: ArtifactRepository, workspace_digest):
         self.store, self.task_id, self.runner, self.artifacts = store, task_id, runner, artifacts
         self.workspace_digest = workspace_digest
+        self.operations = OperationRepository(store, task_id)
 
     def _read(self, key: str) -> Any:
         ref = self.store.get(self.task_id).get("role_artifacts", {}).get(key)
@@ -32,10 +34,8 @@ class RoleWorkflow:
             return
         from chatcopilot.harness.config import safe_error
         code = getattr(error, "code", "coding_environment")
-        current = self.store.get(self.task_id)
-        self.store.update(self.task_id, role_executions={**current.get("role_executions", {}),
-            operation: {"state": "uncertain" if code in {"session_unconfirmed", "session_changed"} else "failed",
-                        "binding": binding, "code": code, "message": safe_error(error)}})
+        self.operations.fail(operation, binding, code, safe_error(error),
+            unknown=code in {"session_unconfirmed", "session_changed"})
 
     def call(self, role, root, number, goal, evidence, options, cancel):
         cancel()
@@ -79,20 +79,19 @@ class RoleWorkflow:
             "root": str(root), "goal": goal, "context": stable, "model": configured.model,
             "effort": configured.reasoning_effort, "settings": configured.model_settings,
             "profile": configured.model_profile}).encode()).hexdigest()
-        operation = f"{role.value}-{number}"
-        receipt = task.get("role_executions", {}).get(operation)
+        operation = f"role:{role.value}-{number}"
+        receipt = self.operations.get(operation)
         if receipt:
             if receipt["binding"] != binding:
                 raise HarnessError("session_changed", "角色节点的输入或执行身份发生变化")
-            if receipt["state"] == "complete":
+            if receipt["state"] == "completed":
                 if self.workspace_digest(root) != receipt["workspace_digest"]:
                     raise HarnessError("workspace_changed", "已完成角色节点的源码工作区发生变化")
-                return self.artifacts.read(receipt["output"])
+                return self.artifacts.read(receipt["result_ref"])
             if receipt["state"] == "failed":
-                raise HarnessError(receipt["code"], receipt["message"])
+                raise HarnessError(receipt["error"]["code"], receipt["error"]["message"])
             raise HarnessError("session_unconfirmed", "角色节点终态未知，保留现场并先核对原会话")
-        self.store.update(self.task_id, role_executions={**task.get("role_executions", {}),
-            operation: {"state": "running", "binding": binding}})
+        self.operations.start(operation, kind="role", node=role.value, attempt=number, binding=binding)
         output = self.artifacts.directory / f"attempt-{number}" / role.value
         source_id = f"{role.value}-{number}"
         self.store.update(self.task_id, stage=role.value, current_role=role.value)
@@ -135,10 +134,9 @@ class RoleWorkflow:
             refs = {**self.store.get(self.task_id).get("role_artifacts", {}), role.value: asdict(reference)}
             digest = self.workspace_digest(root)
             self.store.update(self.task_id, role_artifacts=refs, current_role=None,
-                **({"working_digest": digest} if role == Role.CODING else {}),
-                role_executions={**self.store.get(self.task_id).get("role_executions", {}),
-                    operation: {"state": "complete", "binding": binding, "output": asdict(reference),
-                                "execution": asdict(execution), "workspace_digest": digest}})
+                **({"working_digest": digest} if role == Role.CODING else {}))
+            self.operations.complete(operation, binding, asdict(reference),
+                execution_ref=asdict(execution), workspace_digest=digest)
             step.conclusion = value.get("summary", value.get("reason", ""))
             step.evidence = {"role": role.value, "output": asdict(reference), "execution": asdict(execution),
                              **({"skill_load": result.execution["skill_load"]} if result.execution.get("skill_load") else {})}

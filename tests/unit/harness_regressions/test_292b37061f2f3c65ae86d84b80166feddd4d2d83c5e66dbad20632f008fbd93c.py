@@ -9,7 +9,7 @@ import pytest
 from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.control_types import DispatchResult, WorkerState
 from chatcopilot.harness.governance_types import GovernanceOptions
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
 
 
 class ObservedWorkers:
@@ -47,7 +47,7 @@ class RecordedTaskOperations:
         key = f"{run['run_id']}-{sequence}"
         task, created = self.store.create({
             "task_id": "repair-" + key,
-            "pipeline_version": 11,
+            "pipeline_version": PIPELINE_VERSION,
             "request_key": key,
             "request_digest": key,
             "context_key": "repository",

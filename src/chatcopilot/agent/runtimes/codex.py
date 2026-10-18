@@ -1153,6 +1153,11 @@ class CodexRuntimeAdapter:
                  "--ro-bind", str(state.codex_home / "config.toml"), _ISOLATED_CODEX_HOME + "/config.toml",
                  "--setenv", "CODEX_HOME", _ISOLATED_CODEX_HOME,
                  "--setenv", "CODEX_SQLITE_HOME", _ISOLATED_CODEX_HOME]
+        code_mode_host = executable.with_name("codex-code-mode-host")
+        if code_mode_host.is_file():
+            # Codex resolves its code-mode helper beside the relocated executable.
+            extra.extend(["--ro-bind", str(code_mode_host.resolve()),
+                          "/opt/chatcopilot-codex/codex-code-mode-host"])
         for root in set((*scope.readable_roots, *scope.writable_roots)):
             project_config = root / ".codex"
             if project_config.exists():

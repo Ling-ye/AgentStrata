@@ -18,6 +18,7 @@ class RepairArtifacts:
         self.directory = private_directory(root / "jobs" / task["task_id"])
         self.task = task
         self.worktree = workspace.prepare(Path(task["repository"]), root, task["task_id"], task["base_commit"])
+        self.branch = "feat/harness-" + task["task_id"][7:]
 
     @staticmethod
     def manifest(root: Path):

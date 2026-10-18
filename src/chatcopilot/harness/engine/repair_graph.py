@@ -2,31 +2,36 @@
 
 from langgraph.graph import END, START, StateGraph
 
-from chatcopilot.harness.acceptance_graph import build_acceptance_graph
-from chatcopilot.harness.graph_types import GraphState
+from chatcopilot.harness.engine.acceptance_graph import build_acceptance_graph
+from chatcopilot.harness.engine.state import RepairState, RepairInput, RepairOutput
+from chatcopilot.harness.engine.context import HarnessContext
+from chatcopilot.harness.engine import repair
+from chatcopilot.harness.engine.failure import failure
 
 
-def build_task_graph(operations, checkpointer):
-    builder = StateGraph(GraphState)
-    for name in (
-        "environment",
-        "prepare",
-        "reproduce",
-        "begin_attempt",
-        "main",
-        "plan",
-        "bind",
-        "coding",
-        "test",
-        "assemble",
-        "failure",
+def build_task_graph(checkpointer):
+    builder = StateGraph(
+        RepairState,
+        context_schema=HarnessContext,
+        input_schema=RepairInput,
+        output_schema=RepairOutput,
+    )
+    for name, operation in (
+        ("environment", repair.environment),
+        ("prepare", repair.prepare),
+        ("reproduce", repair.reproduce),
+        ("begin_attempt", repair.begin_attempt),
+        ("main", repair.main),
+        ("plan", repair.plan),
+        ("bind", repair.bind),
+        ("coding", repair.coding),
+        ("test", repair.test),
+        ("assemble", repair.assemble),
+        ("failure", failure),
     ):
-        builder.add_node(name, operations.node(name))
-    builder.add_node("acceptance", build_acceptance_graph(operations))
+        builder.add_node(name, operation)
+    builder.add_node("acceptance", build_acceptance_graph())
     builder.add_node("choose", lambda state: {})
-    if operations.delivery is not None:
-        builder.add_node("delivery", operations.deliver)
-        builder.add_edge("delivery", END)
 
     def after(state, following):
         return "failure" if state.get("error_ref") else END if state.get("outcome") else following
@@ -77,26 +82,10 @@ def build_task_graph(operations, checkpointer):
         {name: name for name in ("coding", "test", "assemble", "failure", END)},
     )
 
-    def accepted(state):
-        if state.get("error_ref"):
-            return "failure"
-        return (
-            "delivery"
-            if state.get("outcome") == "fixed" and operations.delivery is not None
-            else END
-        )
-
     builder.add_conditional_edges(
         "acceptance",
-        accepted,
-        {
-            name: name
-            for name in (
-                "failure",
-                END,
-                *(("delivery",) if operations.delivery is not None else ()),
-            )
-        },
+        lambda state: "failure" if state.get("error_ref") else END,
+        {"failure": "failure", END: END},
     )
     builder.add_conditional_edges(
         "failure",

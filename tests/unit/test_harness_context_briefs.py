@@ -6,7 +6,7 @@ from pathlib import Path
 
 from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.harness.artifact_repository import ArtifactRepository
-from chatcopilot.harness.context_briefs import (
+from chatcopilot.harness.integrations.briefs import (
     FAILURE_BRIEF_BYTES,
     SOURCE_INDEX_BYTES,
     build_failure_brief,

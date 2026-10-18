@@ -918,11 +918,12 @@ def _harness_control_checks() -> dict[str, dict[str, list[str]]]:
 
 # Classify the actual Harness modules; adding a module requires choosing its responsibility.
 HARNESS_LAYERS = {
-    "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "governance_types", "preparation", "evidence_context", "graph_types"},
+    "types": {"__init__", "models", "agent_types", "repair_types", "control_types", "governance_types", "preparation", "evidence_context", "engine", "engine.state", "engine.contracts", "integrations"},
     "config": {"config", "role_prompts"},
-    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository", "governance_run_repository", "skill_context", "agent_session_state", "graph_repository", "history_repository"},
-    "service": {"workflow", "role_service", "control_service", "context_briefs", "governance_run_service", "task_budget",
-                "graph_service", "task_graph", "task_operations", "acceptance_graph", "batch_graph", "delivery_graph"},
+    "repo": {"store", "artifact_repository", "flow_records", "flow_receipts", "flow", "progress", "command_logs", "verification_policy", "patches", "governance_repository", "schedule_repository", "governance_run_repository", "skill_context", "agent_session_state", "graph_repository", "history_repository", "operation_repository"},
+    "service": {"workflow", "integrations.roles", "integrations.briefs", "integrations.scenarios", "control_service", "governance_run_service", "task_budget",
+                "graph_service", "engine.context", "engine.nodes", "engine.repair", "engine.acceptance",
+                "engine.failure", "engine.evaluation", "engine.repair_graph", "engine.acceptance_graph", "batch_graph", "delivery_graph"},
     "runtime": {"api", "assembly", "agent_execution", "codex_adapter", "codex_environment", "cutover_runtime", "delivery", "delivery_archive",
                 "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",
                 "gateway_adapter", "github_delivery", "local_commit", "local_verifier", "pytest_runner", "quality",
@@ -964,6 +965,41 @@ def _harness_layer_checks() -> dict[str, dict[str, list[str]]]:
     return {"harness_layer_boundaries": violations} if violations else {}
 
 
+def _harness_engine_checks() -> dict[str, dict[str, list[str]]]:
+    """Core dependencies cannot reach a concrete runtime, even via a helper."""
+    modules = _production_modules()
+    prefix = "chatcopilot.harness."
+    roots = {name for name in modules if name.startswith(prefix + "engine.")} | {prefix + "workflow"}
+    forbidden = (prefix + "integrations", "chatcopilot.agent", "chatcopilot.gateway",
+        "chatcopilot.application", "chatcopilot.evals", "chatcopilot.external_tools")
+    concrete = {prefix + name for name in HARNESS_LAYERS["runtime"]}
+    violations = {}
+    for name in roots & modules.keys():
+        seen, pending, errors = set(), [name], set()
+        for reference in _import_references(modules[name], modules):
+            target = reference.target or reference.imported
+            if target.split(".")[0] in {"os", "sys", "subprocess", "multiprocessing", "signal", "fcntl"}:
+                errors.add("Repair nodes require an injected execution port: " + target)
+        while pending:
+            current = pending.pop()
+            if current in seen:
+                continue
+            seen.add(current)
+            for reference in _import_references(modules[current], modules):
+                target = reference.target or reference.imported
+                if _matches(target, forbidden) or target in concrete:
+                    errors.add("Repair core reaches project/runtime implementation: " + target)
+                elif target in modules:
+                    pending.append(target)
+        tree = ast.parse(modules[name].path.read_text(encoding="utf-8-sig"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "import_module":
+                errors.add("Dynamic imports cannot bypass the repair core boundary")
+        if errors:
+            violations[modules[name].path.relative_to(ROOT).as_posix()] = sorted(errors)
+    return {"harness_engine_boundaries": violations} if violations else {}
+
+
 def check_architecture() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, dict[str, list[str]]] = {}
     _merge(violations, check_rules())
@@ -974,6 +1010,7 @@ def check_architecture() -> dict[str, dict[str, list[str]]]:
     _merge(violations, _evaluation_worker_checks())
     _merge(violations, _task_record_checks())
     _merge(violations, _harness_layer_checks())
+    _merge(violations, _harness_engine_checks())
     return violations
 
 

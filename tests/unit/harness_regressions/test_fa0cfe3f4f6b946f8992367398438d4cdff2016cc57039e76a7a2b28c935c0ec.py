@@ -10,7 +10,7 @@ from chatcopilot.harness.api import HarnessController
 from chatcopilot.harness.control_types import WorkerState
 from chatcopilot.harness.governance_run_service import GovernanceRuns
 from chatcopilot.harness.governance_types import GovernanceOptions
-from chatcopilot.harness.models import HarnessError
+from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
 from chatcopilot.harness.task_budget import TaskBudget
 
 
@@ -42,7 +42,7 @@ def _task(controller, run_id, sequence, *, finding=None, delivery="merged", elap
     task_id = f"repair-{run_id}-{sequence}"
     task, created = controller.store.create({
         "task_id": task_id,
-        "pipeline_version": 11,
+        "pipeline_version": PIPELINE_VERSION,
         "request_key": task_id,
         "request_digest": task_id,
         "match_key": task_id,

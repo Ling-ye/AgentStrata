@@ -69,7 +69,8 @@ def classify(row: dict[str, Any]) -> str:
     if any(p["outcome"] == "failed" and p["when"] != "call" for p in row.get("phases", [])):
         return "test_definition"
     chain = row.get("exception_chain", [])
-    if any(e["type"] in {"PermissionError", "FileNotFoundError", "ConnectionError", "TimeoutError", "OSError"}
+    if any(e["type"] in {"PermissionError", "FileNotFoundError", "ConnectionError", "TimeoutError", "OSError",
+                         "ImportError", "ModuleNotFoundError"}
            for e in chain):
         return "environment"
     if row.get("assertion_failure"):

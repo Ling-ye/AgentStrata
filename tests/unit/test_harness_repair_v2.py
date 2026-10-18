@@ -11,7 +11,7 @@ import pytest
 
 from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.harness.artifact_repository import ArtifactRepository
-from chatcopilot.harness.models import RepairOptions, VerificationPlan, VerificationResult, VerificationCheck, HarnessError
+from chatcopilot.harness.models import PIPELINE_VERSION, RepairOptions, VerificationPlan, VerificationResult, VerificationCheck, HarnessError
 from chatcopilot.harness.store import HarnessStore
 from chatcopilot.harness.repair_runtime import run_task
 from chatcopilot.harness.preparation import acceptance
@@ -40,7 +40,7 @@ def repair(tmp_path):
     store = HarnessStore(tmp_path / "private")
     ident = "repair-" + "a" * 32
     source = {"kind": "robot_task", "original_input": "Return one", "bot_id": "fixture"}
-    store.create({"task_id": ident, "pipeline_version": 11, "request_key": "request", "request_digest": "req",
+    store.create({"task_id": ident, "pipeline_version": PIPELINE_VERSION, "request_key": "request", "request_digest": "req",
                   "match_key": "match", "context_key": "context", "active_key": "active", "source": source,
                   "repository": str(repo), "base_commit": git("rev-parse", "HEAD"), "options": asdict(RepairOptions("fixture"))})
     from chatcopilot.harness.artifact_repository import ArtifactRepository
