@@ -1,244 +1,207 @@
-# Harness 错误修复
+# 运行 Harness 修复与代码熵治理
 
-先选择失败来源，核对冻结基线、预算和交付条件，再启动受控任务。机制见 [Harness](../reference/harness.md)。
+先配置执行环境与交付，再选择问题来源。正式任务冻结远端 main，在独立 worktree 修复；
+完整验收后由宿主提交、推送、创建正式 PR 并启用 squash 自动合并。未提交修改不进入基线，
+任务不会自动部署机器人。机制与限制见[修复契约](../reference/harness.md)。
 
-## 单 Case AI Harness
+## 前置条件
 
-[代码熵回收](../reference/code-health.md)可自主调查全仓，质量约束统一见[黄金原则](../reference/harness-principles.md)。
+| 条件 | 准备方式 |
+| --- | --- |
+| 源码与隔离环境 | 带 Git 元数据的源码仓库、Linux/WSL user systemd、bubblewrap；开发依赖见[开发指南](development.md) |
+| 编程执行器 | 原生 Linux Codex 二进制、已有专用凭据根及已登录的 worker lane |
+| Evaluation | 同 UID 的 Evaluation 服务可用，按[测评指南](evaluation.md)检查健康状态 |
+| 模型方案 | 在 Console「模型配置」保存 worker Codex 方案，绑定 `harness` 和 `code_health` 用途 |
+| GitHub 交付 | 完成下文[交付配置](#harness-pr-交付配置与恢复)，具备目标仓库授权 |
 
-Harness 是可选的独立模块，通过同 UID Evaluation 客户端读取结果和提交复测，
-按需创建 systemd transient worker，没有常驻 Harness 服务。Console 关闭不取消任务。
-需要带 Git 元数据的源码仓库、Linux/WSL user systemd、bubblewrap 和原生 Codex 二进制。
+Harness 按需创建 systemd transient worker，没有常驻 Harness 服务。关闭 Console 不取消任务；
+CLI 可直接操作同一用户的 Harness。前端写操作只接受同源、本机连接，远程维护使用 SSH 隧道。
+模型、工具与第三方服务调用可能产生费用。
 
-首次使用可把 `deploy/wsl/harness.env.example` 复制到操作者的
-`~/.config/agentstrata/harness.env`，将目录设为 `0700`、文件设为 `0600`。配置
-`CHATCOPILOT_CODEX_BIN` 和已有专用凭据根 `CHATCOPILOT_CODEX_BOT_HOME`；后者的
-`worker` lane 必须已经登录。凭据操作沿用本文的 Codex 凭据命令，不使用个人桌面
-认证目录。配置文件不执行 shell，仅展开值开头的 `~`、`$HOME`、`${HOME}`；
-进程环境优先。`CHATCOPILOT_HARNESS_ENV` 可指定另一份私有配置文件。
-Console 在启动时装载 Harness 配置快照；修改后重启 Console，现有 worker 仍使用其冻结运行环境。
+### 配置 worker 与模型方案
 
-默认修复数据库位于用户状态目录的 `agentstrata/harness/<repository-hash>/`，
-可通过 `CHATCOPILOT_HARNESS_ROOT` 指定；任务、runtime 快照、补丁和工作区都属于
-该目录。Harness 启动时会把当前用户拥有的根目录、`jobs` 和已有 `archives` 收紧为 `0700`；
-符号链接或其他用户拥有的路径仍直接拒绝。当前 Codex 不在系统临时目录下创建原生辅助程序。
-在统一模型配置中设置 `harness` 用途的方案；CLI 使用 `--profile` 选择已保存方案。模型参数不再通过独立环境变量覆盖。
+将 [harness.env.example](../../deploy/wsl/harness.env.example)复制到操作者私有的
+`~/.config/agentstrata/harness.env`，目录权限为 `0700`，文件为 `0600`。填写原生二进制路径
+`CHATCOPILOT_CODEX_BIN` 与专用凭据根 `CHATCOPILOT_CODEX_BOT_HOME`；worker 登录与查询沿用
+[Codex 认证指南](services.md#codex-main--worker-认证)，选择 `worker` lane，不借用个人桌面认证目录。
 
-在源码仓库运行：
+模型、推理强度及认证引用统一在[模型配置](../reference/configuration.md#llm)维护。
+CLI 的 `--profile` 选择已保存方案；省略时，普通修复使用 `harness` 绑定，代码熵任务与定时使用
+`code_health` 绑定。模型参数不再通过旧环境变量或独立 CLI 参数覆盖。
+
+Harness 配置文件不执行 shell，仅展开值开头的 `~`、`$HOME`、`${HOME}`，进程环境优先。
+`CHATCOPILOT_HARNESS_ENV` 可指定另一份私有配置文件。worker 不自动继承机器人的 `local.env`；
+Console 启动时读取配置快照，修改后重启 Console，已有 worker 继续使用自己的冻结配置。
+
+默认状态根位于用户状态目录的 `agentstrata/harness/<repository-hash>/`，可用
+`CHATCOPILOT_HARNESS_ROOT` 指定私有持久目录。根目录、`jobs` 与已有 `archives` 会收紧为 `0700`；
+符号链接或其他用户拥有的路径会被拒绝。Codex 的 home 不应置于系统临时目录。
+worker 按冻结依赖创建专用环境；uv 不在 PATH 且存在多个安装版本时，用
+`CHATCOPILOT_HARNESS_UV_BIN` 指定已安装的绝对路径。
+
+## 发起任务
+
+以下命令在已准备环境的源码仓库运行，占位标识须替换为实际值。可先查看：
 
 ```bash
 python -m chatcopilot.harness --help
-python -m chatcopilot.harness start --evaluation <evaluation-id> --case <case-ref> --target <target-id> --model <codex-model>
-python -m chatcopilot.harness list
-python -m chatcopilot.harness get <repair-id>
-python -m chatcopilot.harness reconcile <repair-id>
-python -m chatcopilot.harness cancel <repair-id>
-python -m chatcopilot.harness resume <repair-id>
 ```
 
-`get/list` 只读取已记录的状态，不再顺带把失联任务改成中断。正常进度由 worker 持续写入，
-异常退出由现有每分钟 Harness 定时任务核对；没有运行定时器时，执行 `reconcile` 主动核对。
-取消显示「取消中」时，不代表进程已经停止；存活未知或外部测评尚未确认结束时保留任务占用，
-排除运行环境故障后再次取消或核对即可。恢复与接续会先确认原执行停止。
-交付复测中的取消显示在交付状态中，保留原修复结果；外部测评确认结束前，不释放占用或清理工作区。
-升级到当前协议时通过现有维护流程导出历史并切换宿主，之后创建新任务；旧数据库和任务资源保留，不迁移或恢复旧冻结 worker。
+### 修复测评失败 Case
 
-创建时可设置 `--max-attempts`（默认三个完整修复轮次）、`--timeout-seconds`（默认 3600）、
-`--reasoning-effort` 和稳定 `--request-id`。继续使用原冻结代码和剩余预算；编程阶段
-中断不重放同一 Agent 回合，保留尝试记录。模型与工具调用可能产生 Provider 费用。
+1. 在 Console「测评中心」打开运行记录，找到失败测试点，复制该行的「Case 实例 ID」。
+2. 在「AI Harness 修复」选择「测评 Case 实例」，粘贴 ID 并加载来源，核对测评、Case、Target、重复次数及失败结果。
+3. 选择修复方案、预算与可选修复提示，启动任务。测评原答案不能被人工提示替换。
 
-在 Console 的「测评中心」打开一次测评，详情顶部可直接复制「测评实例 ID」。
-在「测试点结果」中找到失败记录，点击该行的「复制 Case 实例 ID」；无需展开原始
-JSON 或手工拼接标识。相同题目在不同测评、不同 Target、不同重复执行下各有独立
-的 `case-` 开头实例 ID。复制不可用时，页面提供可选中文本供手动复制。
+Case 实例 ID 以 `case-` 开头，同题不同测评、Target 和重复执行分别定位。不要填测评 ID、题库
+Case ID 或旧 Trial ID。页面复制失败时可选择文本复制；显示「Case 实例 ID 未记录」时先检查原始执行材料。
+通过、跳过、已删除或不满足[来源条件](../reference/harness.md#问题冻结与来源)的实例不能启动修复。
 
-进入「AI Harness 修复」，选择「测评 Case 实例」，将复制的 ID 粘贴到「Case 实例 ID」
-并点击「加载来源」。页面显示所属测评、Case、Target、第几次执行及结果，再设置
-参数启动修复。Harness 后端凭此 ID 查询原始记录；前端不能额外指定测评或 Target。
-测评 ID、题库 Case ID、旧 Trial ID 和手工 `evalcase:` 引用均不作为此输入。
-不存在、已删除、通过或跳过的实例，以及不符合现有条件的来源不能启动修复。
-
-已有完整结果在读取时补齐定位索引，ID 刷新或服务重启后保持；原始成绩、证据和
-结果文件不改写，也不批量导入旧文件。缺失执行身份时显示「Case 实例 ID 未记录」。
-HTTP API 可通过 `GET /api/evals/case-instances/<case-instance-id>` 查询单个实例；
-`POST /api/harness/tasks` 的测评来源只提交 `case_instance_id` 及修复参数。
-现有 CLI 仍可显式提供 Evaluation、Case 和 Target 参数。
-
-查看进行中的修复时，打开「AI Harness 修复」中的任务详情，顶部「修复进度」会每两秒更新
-当前阶段、完整轮次、验收覆盖与缺口、剩余预算和公开执行动态；准备版本仅在旧任务中展示。命令输出默认折叠，点击
-「命令输出」展开；「刷新进度」同时重新读取状态和动态。任务结束后保留最后一次输出并停止轮询。
-心跳超过 30 秒未更新只表示暂未收到心跳，不代表任务已卡死；任务是否停止以其实际状态为准。
-
-公开消息及命令在完成后写入日志，长命令等待期间可能只有心跳更新。动态来源标注准备、修复
-或审核轮次；显示「其他阶段的最近记录」时，内容不是当前动作。日志更新时间不是单条动作时间。
-页面最多展示最近 20 条事件及有界正文，截断会提示；完整执行归档在执行单元结束后查看。
-「尚无公开执行输出」不代表没有执行，读取失败时保留已经展示的内容并可手动重试。
-只读 API 为 `GET /api/harness/tasks/<repair-id>/progress`，不创建或恢复任务，也不修改既有日志。
-
-修复绑定被选中的失败实例；模型验证每组至少三次，原重复数更高时沿用。其他已通过
-Case 继续作为回归保护集，其他失败 Case 不要求一起修好。先按原条件确认最新远端 main 仍失败；未提交
-修改不进入基线，当前通过则标记「当前未复现」。
-仅支持具有完整定义快照、实际执行 AgentStrata 的隔离 Suite；Profile comparison、
-dry-run 与 direct-LLM 测评不进入修复流程。旧定义缺失时重新运行测评。
-
-机器人任务来源在页面选择实例并输入 Gateway `run_id`。自检读取只读观测索引及有界
-详情，不能从业务状态库补造丢失证据。点击「开始修复」后自动保存材料并启动诊断；缺归档或
-部分观测不可用只显示证据缺口。Plan 调查根因，Coding 在独立 worktree 中修复产品，
-Test 在独立草案目录建立验证；既有测试与评分只读。角色调度见[修复契约](../reference/harness.md)。确定性缺陷使用 pytest；涉及模型行为时生成由 Evaluation 登记并冻结的声明式 Case。
-宿主对冻结基线与候选运行同一测试；完整复现不是开始编码的前置条件，但没有基线失败证据不能完整验收。
-两种来源都运行仓库 `tests/unit` 和架构／配置检查，保护基线中每个通过项。
-测试收集、导入、运行环境错误或跳过不能冒充目标失败或成功。需要已安装开发测试
-依赖的 Python 环境；缺失依赖应按测试进程错误处理，不能绕过回归验证。
-pytest 在无网络、无实例状态或凭据的隔离副本中执行。Agent Case 实际调用模型和产品
-工具，冻结输入、相关上下文与合成文件，不注入评分预期。当前声明式环境支持
-`read_text_head`、`write_workspace_file`、`list_workspace`、`unzip_attachment` 和
-`read_bot_skill`，图片工具在声明 HTTP/OneBot 依赖 fixture 后可用；联网查询和全局状态仍需对应的
-受信能力，不能用假回答替代。Codex 验证及编程会话禁用账号连接器与原生图像生成，编程也禁用联网搜索。
-宿主在编码前提供当前能力清单。测试修订消耗完整轮次；缺少必要 fixture 时结束自动循环，
-重复失败或预算耗尽时保留候选及失败证据，不产生独立准备版本。
-图片任务先查找同一来源绑定的留存材料，没有可用原图时显示「等待原图」；在详情选择
-原图后自动继续当前任务。此要求只适用于输入图片，要求机器人发送图片不需要上传原图。
-图片在私有存储中保存，通过真实 Agent 资源入口执行，
-下载成功、实际传图和参考答案语义全部通过才可验收。
-
-页面加载机器人任务后，可填写「修复提示」和「参考答案／预期行为」。前者提供待验证
-的调查线索，后者记录你希望得到的答案或行为，可附解释与来源线索，默认允许语义等价。
-两项均可留空；切换来源会清空，提交失败保留。内容在修复详情及来源证据中可查，
-启动后固定；更正时重新发起任务，不沿用旧参考答案下的候选验收结论。当前协议的
-「接续修复（累计预算）」沿用来源与剩余额度，恢复前核对会话、源码、环境与外部执行身份；
-未知执行不重复派发。旧 pipeline 记录在维护切换时导出保留，使用原来源重新发起任务。
-补图 API 为 `POST /api/harness/tasks/{task_id}/image`（原始图片字节），接续入口为
-`POST /api/harness/tasks/{task_id}/continue`；均沿用本机同源操作边界。
-API 的机器人任务请求可携带 `feedback.repair_hint`、`feedback.expected_behavior`，
-测评来源允许 `feedback.repair_hint`，不允许覆盖原参考答案。CLI `start` 也支持 `--repair-hint`。CLI 可以直接指定操作者已确认的实例观测目录，不依赖
-Console，并使用下面两个可选参数：
+CLI 继续显式指定测评、Case 与 Target：
 
 ```bash
-python -m chatcopilot.harness start-task --bot <instance-id> --run <run-id> --gateway-state-root <instance-state-root> --model <codex-model> --repair-hint '调查输入处理步骤' --expected-behavior '保留输入中的换行'
-python -m chatcopilot.harness list --page 2 --search <source-id> --status blocked
+python -m chatcopilot.harness start --evaluation EVALUATION_ID --case CASE_REF --target TARGET_ID --profile HARNESS_PROFILE
 ```
 
-补充信息用于准备复现、修复与已启用的 AI 审核，不修改原始观测或被测任务输入。
-回答质量可使用真实 Agent 与独立语义评分；缺少必要外部状态时明确受阻。
-填写参考答案不等于已修复，也不会自动写入机器人知识或记忆。
+两种修复入口均支持 `--max-attempts`、`--timeout-seconds`、`--request-id` 与 `--repair-hint`。
+预算含所有角色返工，恢复不重置；具体默认值与停止规则见[修复预算](../reference/harness.md#预算取消与生命周期)。
 
-每个任务创建 `feat/harness-<id>` 分支和专属 worktree。允许修改运行时产品源码、Bot 提示词及受约束声明；
-模型／backend、凭据位置、资源授权、测试、评分与控制实现固定。候选进行 Python 语法与 Git diff 检查，并
-复测原题单；模型候选还需同条件独立确认。目标和保护集通过才记录「已修复」，其他原失败项可保持失败。此结论仅指
-该 worktree 在指定条件下验证通过，远端交付进度另行展示。
+### 修复机器人任务
 
-新任务统一进行独立审核、公开边界与秘密检查，然后提交和普通推送任务分支、创建目标为 main 的
-正式 PR，启用 squash 自动合并。旧 `--review-and-commit` / `review_and_commit` 不再接受。
-当前协议的历史证据按交付归档规则保留，不自动续跑或发布；旧协议的历史导出与状态切换见下文[一次性维护切换](#一次性维护切换)。
+在页面选择机器人实例与 Gateway `run_id`，加载观测后可填写「修复提示」和「参考答案／预期行为」。
+两项均可空；提示提供待验证线索，预期说明目标行为，不能补造已丢失的观测。切换来源会清空反馈，
+提交失败会保留。启动后来源与反馈冻结，更正时重新发起。
 
-机器人复现测试从生成时就采用离线合成数据，在隔离副本按最终回归路径执行，并在
-审核批准后原样收录到 `tests/unit/harness_regressions/`；完整 pytest / CI 和后续
-Harness 修复会执行其基线版本中的该集合。已有打包 Case 继续关联原定义；登记的
-可公开的 Agent Case 原样收录为 `tests/agent_regressions/<digest>/case.json`；包含私有图片的
-Case 留在 Evaluation 私有登记中；组合任务同时收录可公开的 pytest 与 Agent Case。普通单元测试不隐式
-调用模型。通过显式 `evals run --suite agentstrata-regression-v1 --bot <bot-id>` 运行已收录
-回归，或用 `evals run --request <request.json>` 执行包含 `case_snapshot` 的冻结请求。
-公开服务客户端提供 `register_case(case)`、`frozen_case(snapshot_id)`；启动 Suite 的请求
-使用 `case_snapshot_id`，服务读取自己的不可变登记数据，不接受客户端替换冻结内容。
-原始机器人/测评标识、日志和账号只保存在私有数据库；Git 只使用本次修复 ID 和可公开回归标识关联。
+CLI 可以直接指定操作者已确认的观测目录：
 
-### Harness PR 交付配置与恢复
+```bash
+python -m chatcopilot.harness start-task --bot BOT_ID --run RUN_ID --gateway-state-root INSTANCE_STATE_ROOT --profile HARNESS_PROFILE --repair-hint '调查输入处理步骤' --expected-behavior '保留输入中的换行'
+```
 
-在操作者私有 `harness.env` 中配置 `CHATCOPILOT_HARNESS_GITHUB_REPOSITORY`、
-`CHATCOPILOT_HARNESS_GITHUB_ACTOR`、`CHATCOPILOT_HARNESS_GITHUB_TOKEN_FILE`、
-`CHATCOPILOT_HARNESS_GIT_AUTHOR_NAME` 和 `CHATCOPILOT_HARNESS_GIT_AUTHOR_EMAIL`。
-无秘密示例见 `deploy/wsl/harness.env.example`。token 另存为当前用户拥有、非符号链接、单链接、
-0600 文件；需要目标仓库 Contents/Pull requests 读写，以及读取检查结果和分支保护的权限。
-宿主在启动前及交付前核对实际 GitHub actor，不继承 Bot 的凭据。
+输入图片缺失时，详情显示「等待原图」；选择与原任务对应的图片后继续当前任务。
+要求机器人发送图片不需要为此额外上传输入原图。填写预期不代表已修复，也不会写入机器人知识或记忆。
 
-仓库应启用 squash、auto-merge，并配置 main 的必需检查。管理员只在设置阶段开启仓库 auto-merge，
-交付身份不绕过保护。安装每分钟一次的短时对账任务（先查看渲染结果）：
+### 代码熵回收与可选定时
+
+在「代码熵回收」页选择按执行时间或问题发现数停止，再选择已保存的回收方案和每项修复尝试上限。
+方案中的模型与推理强度随任务冻结；不可用时先修正模型配置或 worker 环境。每次发现一项后立即修复、
+验证与交付，安全收尾后才调查下一项。没有额外的人工选题提示入口。
+
+```bash
+python -m chatcopilot.harness start-gc --profile CODE_HEALTH_PROFILE --timeout-seconds 3600
+python -m chatcopilot.harness start-gc --profile CODE_HEALTH_PROFILE --findings 3 --max-attempts 3
+python -m chatcopilot.harness get-gc GC_RUN_ID
+python -m chatcopilot.harness cancel-gc GC_RUN_ID
+python -m chatcopilot.harness resume-gc GC_RUN_ID
+python -m chatcopilot.harness gc-schedule
+python -m chatcopilot.harness gc-schedule --enable --profile CODE_HEALTH_PROFILE --interval-hours 24 --findings 2
+python -m chatcopilot.harness gc-schedule --disable
+```
+
+定时默认关闭。启用后有活动批次或未完成交付时跳过，不排队；关闭不取消已开始批次。
+旧参数与旧定时设置不转换，需重新保存。计时、发现数、失败收尾和 Skill 学习规则见[代码熵正文](../reference/code-health.md)。
+
+## 查看修复结果与证据
+
+```bash
+python -m chatcopilot.harness list
+python -m chatcopilot.harness list --page 2 --search SOURCE_ID --status blocked
+python -m chatcopilot.harness get REPAIR_ID
+```
+
+任务详情先看当前阶段、轮次、剩余预算、目标覆盖与缺口，再展开角色输入、候选补丁、对照结果、审核及命令日志。
+修复、交付和清理分别显示；「已修复」只证明精确候选在指定条件下通过验收，不表示已经合并或部署。
+其他原失败项可保持失败，仓库结果应同时查看新增回归和已有失败。
+
+进行中的公开进度每两秒更新，终态补取最后结果后停止轮询。命令输出默认折叠，刷新会同时读取状态与动态。
+长命令执行中可能只有心跳，超过 30 秒没有新心跳也不能单独判定卡死。
+
+页面展示最近 20 条事件及有界正文，截断会提示，完整归档在执行单元结束后读取。
+「其他阶段的最近记录」不是当前动作；日志更新时间不是单条动作时间。「尚无公开执行输出」不表示未执行，
+读取失败可保留现有内容并手动重试。数据与 API 语义见[修复流程记录](../reference/harness.md#修复流程记录)。
+
+### 再次执行已收录回归
+
+审核后收录的 pytest 回归会随仓库检查运行；Agent Case 需要显式执行，可能调用真实模型。
+运行已收录的 Agent 回归 Suite，或执行包含 `case_snapshot` 的冻结请求文件：
+
+```bash
+python -m chatcopilot evals run --suite agentstrata-regression-v1 --bot BOT_ID
+python -m chatcopilot evals run --request REQUEST_JSON
+```
+
+这些命令使用 standalone Evaluation 入口，结果查看与评分解释见[测评指南](evaluation.md)。
+
+## 处理失败、取消与恢复
+
+| 现象 | 判断与处理 |
+| --- | --- |
+| 当前未复现 | 冻结的最新远端 main 已满足目标；检查来源与执行条件，不将其计为一次成功修复 |
+| 候选待审阅或证据不足 | 查看具体缺口与原始证据；局部检查通过不足以获得交付资格 |
+| 评分、导入或验证环境错误 | 修正评分、依赖、fixture 或权限条件，不要求 Coding 用产品改动掩盖环境失败 |
+| 执行状态未知 | 先核对原 worker 与外部执行，不重复启动相同操作 |
+| 取消中 | 取消意图已登记，仍需等待角色、外部评测与交付收尾；不能手工清除占用 |
+| 中断或预算耗尽 | 查看剩余预算、恢复资格及候选；恢复不会获得新预算，重新发起才创建新任务 |
+
+```bash
+python -m chatcopilot.harness reconcile REPAIR_ID
+python -m chatcopilot.harness cancel REPAIR_ID
+python -m chatcopilot.harness resume REPAIR_ID
+```
+
+`get/list` 只读；定时任务核对异常退出，没有运行定时器时可主动 `reconcile`。
+恢复和页面的「接续修复（累计预算）」都先确认原执行停止，并核对会话、源码、环境与外部执行身份。
+交付复验期间取消保留原修复结论，外部评测未结束前不能释放占用或清理工作区。
+
+systemd 调度失败时先查详情中的 worker unit，再看该 unit 的 journal；不会自动降级到后台进程。
+任务活动期间不要手工改动工作区。准备阶段中断且无草案时，可通过「重新发起修复」带入原来源、反馈和选项；
+保留旧记录与标记，不删除 `reproducer/started` 强行继续。
+
+若旧 worker 报 SQLite journal 文件不存在，先核对服务版本与冻结环境；journal 由 SQLite 事务管理，
+不要手工创建或删除。更新服务不会替换已冻结 worker，旧协议任务须按维护流程保留历史后重新发起。
+
+## Harness PR 交付配置与恢复
+
+私有 `harness.env` 需要配置仓库、actor、token 文件与 Git 作者信息：
+`CHATCOPILOT_HARNESS_GITHUB_REPOSITORY`、`CHATCOPILOT_HARNESS_GITHUB_ACTOR`、
+`CHATCOPILOT_HARNESS_GITHUB_TOKEN_FILE`、`CHATCOPILOT_HARNESS_GIT_AUTHOR_NAME`、
+`CHATCOPILOT_HARNESS_GIT_AUTHOR_EMAIL`。无秘密示例见 [harness.env.example](../../deploy/wsl/harness.env.example)。
+
+token 单独保存为当前用户拥有、非符号链接、单链接的 `0600` 文件，需要目标仓库 Contents/Pull requests
+读写及检查结果、分支保护读取权限。宿主核对实际 actor，不继承 Bot 凭据。仓库需启用 squash、
+auto-merge 并配置 main 必需检查；交付身份不能绕过保护。
+
+先预览再安装每分钟短时对账任务：
 
 ```bash
 .venv/bin/python scripts/install_harness_delivery_timer.py --dry-run
 .venv/bin/python scripts/install_harness_delivery_timer.py
-python -m chatcopilot.harness get <repair-id>
-python -m chatcopilot.harness retry-delivery <repair-id>
-python -m chatcopilot.harness retry-cleanup <repair-id>
+systemctl --user status agentstrata-harness-delivery.timer --no-pager
+journalctl --user -u agentstrata-harness-delivery.timer -u agentstrata-harness-delivery.service -n 80 --no-pager
 ```
 
-Console 安装会在定时器启动成功后才显示完成。若仅对账定时器启动失败，可单独重跑上面的
-`install_harness_delivery_timer.py` 安装命令，无需重启 Console 或 Evaluation。用
-`systemctl --user status agentstrata-harness-delivery.timer --no-pager` 查看定时器状态，
-用 `journalctl --user -u agentstrata-harness-delivery.timer -u agentstrata-harness-delivery.service -n 80 --no-pager` 查看加载和执行错误。
+Console 安装在定时器启动成功后才显示完成；仅定时器失败时可单独重跑安装命令。
+处理交付或清理受阻时，先查看记录和证据，再按实际原因重试：
 
-PR 创建并核实提交后，本地工作区与任务分支会清理；日志、源码快照、回归证据和 Git 恢复档案保留。
-失败任务也先归档再清理，归档损坏、现场外部改动或仍在执行时停止删除。主干前进时自动恢复任务
-工作区、合入最新 main、复验和审核，通过后普通推送；冲突时保留 PR 并报告受阻。
-PR 合并或关闭后，只删除仍指向登记提交的任务远端分支。对账在 Console 关闭后仍可工作。
+```bash
+python -m chatcopilot.harness get REPAIR_ID
+python -m chatcopilot.harness retry-delivery REPAIR_ID
+python -m chatcopilot.harness retry-cleanup REPAIR_ID
+```
 
-取消在发布前阻止外部交付，已有 PR 时关闭自动合并并保留 PR；与合并竞争时以 GitHub 回执为准。
-界面分别显示修复、交付和清理结果。“修复成功”不等于“已合并”；CI 失败不能绕过，也不自动扩大
-产品修复范围。新流程不会执行 Git hooks、改写远端历史、更新操作者本地 main 或部署机器人。
-
-测评中心和机器人任务流只展示原始运行事实，修复状态统一显示在 AI Harness 页面。
-新增平台测评由 Evaluation 保存到自己的 `results.sqlite3`；
-Harness 的 `harness.sqlite3` 只保存任务和尝试，两者不跨库写表。原始日志与附件仍是
-文件产物，历史测评不批量入库。数据库故障保留原始执行事实，不能据此确认修复。
-
-前端修复写操作仅接受同源、本机连接；远程维护使用 SSH 隧道。CLI 可直接操作同一
-用户的 Harness，不需要打开 Console。systemd 调度失败会记录受阻，不使用 nohup
-或进程内后台任务降级。详情含 worker unit、工作区、候选摘要和逐轮验收引用；
-先检查任务详情，再检查对应 unit 的 journal。不要在任务活动期间手工改动其工作区。
-
-若旧任务报 `harness.sqlite3-journal` 不存在，应先更新修复了 SQLite 辅助文件检查竞态的
-服务；这个文件由 SQLite 随事务创建和删除，不应手工创建或删除。更新不会替换旧任务的
-冻结 worker。准备阶段已中断且没有生成草案时，用「重新发起修复」带入原来源、反馈和选项，
-确认后启动新任务；保留旧记录、日志和 `reproducer/started`，不要删除标记强行继续。
-
-独立 worker 从私有 `~/.config/agentstrata/harness.env` 读取执行器配置，示例为
-`deploy/wsl/harness.env.example`；引用已配置的原生 Linux Codex 可执行文件和专用
-worker 凭据目录，不自动继承机器人的 `local.env`。Console 安装包含现有 `dev` 依赖组，
-供 Harness 的冻结测试和受信本地提交检查使用；机器人实例仍只安装 `agent + acp`。
-
+正式 PR、主干前进复验、取消自动合并、归档与资源清理的完整规则见[交付契约](../reference/delivery.md#harness)。
+CI 失败不能绕过；对账可在 Console 关闭后工作，不更新操作者本地 main 或部署机器人。
 
 ## 一次性维护切换
 
-先安装新代码，停止旧任务并完成旧 PR 的合并或关闭；不会自动停止任务或关闭 PR。
-先检查执行与资源清单，再显式导出历史并启用新状态库：
+先安装新代码，停止旧任务并完成旧 PR 的合并或关闭；切换命令不会自动代做这些操作。
+先检查执行与资源清单，再显式导出历史并启用新活动库：
 
 ```bash
 python -m chatcopilot.harness cutover
 python -m chatcopilot.harness cutover --apply
 ```
 
-切换结果返回 `history_export.path` 和清单摘要。导出包含 SQLite 一致备份、证据、源码、
-补丁和日志；临时运行环境及凭据不复制。原活动数据库退役保留，旧任务目录、归档、检查点、
-worktree 和分支继续保留。新活动库仅运行新任务，旧任务不续跑。
-
-
-命令在 Harness 维护锁内确认 worker 与外部执行已停止，实际切换期间持有 Evaluation
-维护租约。核验导出后替换活动数据库，原始数据库和旧任务资源保留。原始机器人观测、独立 Evaluation 数据和人工工作区保持独立。
-任何存活、PR 或来源身份未知都会停止切换。已切换或存在新任务时拒绝再次切换。
-
-worker 使用冻结 uv.lock 创建任务专用依赖环境。uv 不在 PATH 且 WSL 安装目录存在
-多个版本时，用 CHATCOPILOT_HARNESS_UV_BIN 指定已安装的绝对路径。依赖缺失报告环境错误，
-不会让 Agent 修改宿主依赖。角色分工、预算与验收规则以[修复契约](../reference/harness.md)为准。
-
-## 代码熵回收与可选定时
-
-Console 的「代码熵回收」页先选择按时间或按问题发现数停止，再选择模型、推理强度和
-每个问题的修复尝试上限。模型下拉列表读取 Harness worker 的原生 Codex 模型目录；启动时再次
-核对模型和推理强度，结果取决于配置的 Linux Codex 二进制与 worker 凭据。两种模式都发现一项后立即尝试修复、验证和交付；合并或处理失败且安全收尾后再调查下一项。
-时间累计实际执行，等待 GitHub 不计时；数量模式无隐含时限。发现数包含处理失败的问题，页面分别显示发现、合并和处理失败数。worker 或远端交付状态无法确认时，批次以运行失败结束。
-
-```bash
-python -m chatcopilot.harness start-gc --model MODEL --timeout-seconds 3600
-python -m chatcopilot.harness start-gc --model MODEL --findings 3 --max-attempts 3
-python -m chatcopilot.harness get-gc GC_RUN_ID
-python -m chatcopilot.harness cancel-gc GC_RUN_ID
-python -m chatcopilot.harness resume-gc GC_RUN_ID
-python -m chatcopilot.harness gc-schedule
-python -m chatcopilot.harness gc-schedule --enable --model MODEL --interval-hours 24 --findings 2
-python -m chatcopilot.harness gc-schedule --disable
-```
-
-定时默认关闭，启用约一分钟后首次触发。已有活动回收或待完成 PR 时跳过，不排队；
-关闭只影响后续创建，不取消已开始批次。恢复保留原有消耗，重新发起才创建新预算。
-旧的单问题与回收提示参数已移除，旧定时设置需在页面重新保存。完整行为见
-[代码熵回收契约](../reference/code-health.md)。
+成功结果包含 `history_export.path` 与清单摘要。旧任务、候选、工作区和退役数据库保留，旧任务不续跑。
+worker、外部评测、PR 或来源身份仍未知时先处理阻断；导出校验失败不能切换，已切换或已有新任务时拒绝再次切换。
+归档内容、维护锁与隔离边界以[协议切换契约](../reference/harness.md#协议切换)为准。

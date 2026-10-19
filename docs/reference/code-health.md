@@ -7,7 +7,8 @@
 
 ## 停止条件与预算
 
-Console 第一项选择停止条件，模型与推理强度共用于整次回收。宿主在创建批次和合并后创建下一项前，
+Console 选择停止条件与已保存的 `code_health` 模型方案，方案中的模型与推理强度共用于整次回收。
+配置以[统一模型配置](configuration.md#llm)为准。宿主在创建批次和合并后创建下一项前，
 用 Harness worker 的 Codex 二进制与凭据查询原生模型目录；指定模型或推理强度不可用时不创建子任务，
 也不自动换模。首次创建失败不留下批次；定时触发保留失败记录供下次重试。
 
@@ -26,15 +27,15 @@ Console 第一项选择停止条件，模型与推理强度共用于整次回收
 
 ## 共用 Harness
 
-Harness 源码治理可按需使用[冻结的 Harness Skill](harness.md#code-health-skill)；
+Harness 源码治理可按需使用[冻结的 Harness Skill](#code-health-skill)；
 已合并的改善会另行判断是否形成可复用教训，Skill 学习任务不计入问题发现数。
 
 code_health 仍是 [Harness](harness.md) 的第三类任务来源。每个问题复用既有角色、工作区、
 尝试记录、验收、取消、日志与 [PR 交付](delivery.md)。批次由持久化 LangGraph 图推进，只保存停止条件、当前任务、累计
 发现数、合并数、处理失败数、执行时间和停止原因，与任务共用 Harness 状态库。
 
-Main 安排任务，Plan 读取规则、追踪调用者并提交原始片段；Coding 实现候选，Test 按需建立
-验证，Review 独立审查。单次报告最多一个 finding；宿主冻结问题身份、规则、源码证据、
+首轮由 Plan 读取规则、追踪调用者并提交原始片段；Main 仅在根因变化或分歧时参与，
+Coding 实现候选，Test 按需建立验证，Review 独立审查。单次报告最多一个 finding；宿主冻结问题身份、规则、源码证据、
 修改范围和验收目标。返工不得换题；真实调用链遗漏的普通源码文件可追加到范围末尾，并附同一冻结基线的源码证据与修订记录，原证据和验收目标不变。人工提示与人工预期不作为代码熵回收输入。
 
 宿主按文件与行引用提取原文并绑定冻结源码身份。Agent 报告的阅读路径须结合命令日志核对，
@@ -56,8 +57,9 @@ Main 安排任务，Plan 读取规则、追踪调用者并提交原始片段；C
 
 批次 API 位于 `/api/harness/code-health/runs`，支持创建、分页、详情及 `/{run_id}/cancel`、
 `/{run_id}/resume`。停止条件为 `{mode: "time", seconds}` 或 `{mode: "findings", count}`，
-手动、CLI 和定时共用。Console 模型下拉项由 /api/harness/code-health/models 查询 worker 的原生模型目录，
-并附带每个模型支持的推理强度；批次详情增加 failed_count，每项给出 outcome；子任务证据、日志和 PR 详情继续使用普通任务入口。
+手动、CLI 和定时共用。创建参数 `profile` 引用已保存方案，省略时使用 `code_health` 用途绑定。
+Console 从统一模型配置读取 worker 方案，原生模型与推理能力由启动预检核对。批次详情中的
+`failed_count` 记录处理失败数，每项给出 `outcome`；子任务证据、日志与 PR 详情继续使用普通任务入口。
 
 定时默认关闭、间隔 24 小时；启用约一分钟后首次触发。systemd timer 只创建普通回收批次，
 已有活动批次或待完成交付时跳过，不累积排队。关闭定时不取消当前批次。现有分钟级交付
@@ -67,9 +69,25 @@ Main 安排任务，Plan 读取规则、追踪调用者并提交原始片段；C
 兼容解析；定时配置独立保留。每项仅冻结远端 main，不纳入操作者未提交内容，不修改
 操作者工作区，不自动部署。操作示例见 [Harness 指南](../guides/harness.md#代码熵回收与可选定时)。
 
+## Code Health Skill
+
+Code Health 首轮 Plan 仍自主调查全仓。选定 finding 涉及 Harness 源码后，宿主从任务冻结主干
+载入 `.agents/skills/harness-code-health/` 中的 Skill，冻结正文与 SHA-256，向后续相关角色提供内容、摘要和加载回执。
+Skill 只指导调查和验证方法，不能更改冻结目标、权限、黄金原则或宿主验收。普通候选无权
+修改 Skill；当前任务也不会读取候选改写的 Skill。
+
+Harness 相关治理项完成验收并合入 PR 后，批次启动一次受限的 Skill 学习子任务。
+该任务可判定 `no_changes`；确有可推广的新方法时，Coding 只写私有草案，宿主核对冻结目标后
+收录到唯一的 `.agents/skills/harness-code-health/references/evidence.md`，复用独立审核、仓库检查和
+PR 交付。触发与交付保持幂等，重试不能重复创建学习 PR。
+
+学习项最多一次修订、执行 1800 秒，计入批次时长但不计入治理问题数；失败不撤销原修复。
+新任务只从已合入的主干读取新版，待验收条件见[Harness Skill 学习规格](../../specs/harness-skill-learning/spec.md)。
+
 ## 源码入口
 
 - [批次契约](../../src/chatcopilot/harness/governance_types.py)、[批次推进](../../src/chatcopilot/harness/governance_run_service.py)
 - [批次记录](../../src/chatcopilot/harness/governance_run_repository.py)、[执行预算](../../src/chatcopilot/harness/task_budget.py)
 - [问题证据](../../src/chatcopilot/harness/governance_repository.py)、[验收](../../src/chatcopilot/harness/governance_verification.py)
 - [定时触发](../../src/chatcopilot/harness/schedule_runtime.py)、[Console 页面](../../console/web/src/pages/CodeHealthPage.tsx)
+- [Skill 冻结与触发](../../src/chatcopilot/harness/skill_context.py)

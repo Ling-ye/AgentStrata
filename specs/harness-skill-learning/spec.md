@@ -9,23 +9,19 @@ created: 2026-09-25
 
 ## Summary
 
-仅当 Code Health 已选定 Harness 源码为本项治理目标时，后续角色读取冻结主干中的
-`harness-code-health` Skill。它提供流程经验，不参与权限、评分和验收决策。
+Harness Skill 将已合入治理证据中的可复用方法提供给后续任务，不参与权限、评分和验收决策。
+当前加载、学习、预算与写入范围由[代码熵正文](../../docs/reference/code-health.md#code-health-skill)维护。
+本 accepted 规格保留真实 worker 中 Skill 发现、显式调用及学习交付的验收条件。
 
 ## Design
 
-Skill 存放在仓库 `.agents/skills/harness-code-health/`，禁止隐式触发。宿主从任务冻结源码
-保存内容和 SHA-256，并在相关角色输入中按需提供正文及加载回执；Plan 首次全仓发现不加载。
-普通候选无权修改 Skill。同一任务始终使用其冻结版本，候选文件不能覆盖它。
+选题与经验加载分开：初始 Plan 自主调查，只有已冻结目标涉及 Harness 源码时才向后续角色提供冻结 Skill。
+当前候选不能改写当前任务使用的经验或验收规则。
 
-仅在 Harness 相关的 Code Health 任务经完整验收且 PR 合入后，宿主检查最终 finding 与审核
-证据是否形成可复用的流程教训。无教训记录 `no_change`。有教训时启动独立、幂等的受限
-学习任务。Coding 仅写任务私有草案；宿主核对冻结目标并将草案收录到该 Skill 唯一的参考文件，
-经独立审核、相关检查和现有 PR 交付契约合入。
-学习子任务最多一次修订、累计执行 1800 秒，计入批次执行时长但不计入问题发现数。
-学习失败保留记录，不撤销已合并的产品修复；新任务只从新主干读取新 Skill。
-
-不改变机器人 BotSpec Skill、黄金原则、测试、权限、代码治理选题及发布授权。
+学习必须从已合入的治理证据提炼；没有可推广方法时不制造修改。有新方法时使用独立受限子任务、审核及
+既有 PR 交付，失败不撤销产品修复。新版本只在后续任务从主干加载，不热替换当前宿主材料。
+路径、摘要、收录及预算规则见[现行契约](../../docs/reference/code-health.md#code-health-skill)。
+不改变 BotSpec Skill、黄金原则、测试、权限、治理选题与发布授权。
 
 ## Acceptance
 
@@ -36,5 +32,6 @@ Skill 存放在仓库 `.agents/skills/harness-code-health/`，禁止隐式触发
 
 ## Verification
 
-先以实际 worker 与嵌套沙箱验证 Codex Skill 发现及显式调用，再启用角色接线。
+真实 worker 与嵌套沙箱中的 Codex Skill 发现及显式调用须单独验证，不能用已有角色接线证明完成。
+已合入治理证据到受限学习任务及交付的链路同样需要独立证据。
 定向测试覆盖冻结、触发、权限、幂等、取消和学习失败；之后运行项目规定的 full 检查。

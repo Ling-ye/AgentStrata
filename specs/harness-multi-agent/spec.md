@@ -9,52 +9,22 @@ created: 2026-09-18
 
 ## Summary
 
-Harness 接受测评 Case、机器人任务与代码熵回收。代码熵回收按[GC 规格](../harness-code-health/spec.md)
-自主发现偏离，复用统一修复闭环、黄金原则和固定验收。
-Main、Plan、Coding、Test、Review 共用运行器，按需协作；只有宿主能验收与交付。
-本规格取代隔离修复 v2 的作者职责分配，保留其隔离、取消、证据和 PR 交付边界。
+修复按需使用 Plan、Coding、Test、Review 与 Main，角色共享运行器，宿主拥有最终验收与交付权。
+现行行为由[Harness 正文](../../docs/reference/harness.md)维护；本 accepted 规格保留角色协作的验收条件，
+不能仅凭文档整理或受控测试宣布真实模型对照验证完成。
 
 ## Design
 
-遵循[四层运行时](../runtime-four-layer-definition/spec.md)、
-[六层依赖](../domain-layered-dependencies/spec.md)和
-[生命周期契约](../harness-control-lifecycle/spec.md)。Harness 是消息链外的独立 worker。
-Types 定义角色和交接；Repo 保存不可变产物；Service 决定调度和验收；Runtime 注入
-角色、工作区、验证与交付端口；Console 只使用公开入口。来源、执行适配不反向决定权限。
+分工以[角色契约](../../docs/reference/harness.md#按需角色协作)为准：首轮直接 Plan，Main 按需处理变化与分歧，
+Coding 与 Test 分离产品和验证草案写权限，Review 独立只读。核心决定调度，角色不能嵌套委派或绕过验收。
 
-首轮直接进入 Plan，Main 只在根因变化或分歧时调度；Plan 调查根因与最小改动；Coding 只写产品；
-Test 只写测试草案；Review 独立只读。每任务一套工作区与依赖环境，各角色独立会话。
-现成 Case 可复用，允许先形成候选后补验证。宿主执行相同冻结测试验证基线和候选，
-环境、评分、证据故障不算产品失败；缺口候选不可发布。只有独立审核通过且验收完整
-才能生成绑定候选、目标、测试与证据的 AcceptedCandidate。PR 交付继续遵循
-[交付契约](../../docs/reference/delivery.md)，模型没有 Git 写权限或发布凭据。
+来源冻结、三层产品回放、失败分类、预算与重诊断、SourceIndex/FailureBrief 及证据引用均以
+[修复正文](../../docs/reference/harness.md)为唯一现行说明。治理复用同一闭环，额外要求由
+[代码熵正文](../../docs/reference/code-health.md)维护。
 
-任务预算默认三轮、累计 3600 秒，所有角色返工共用轮次。普通步骤由宿主推进，
-角色不能创建嵌套委派或自己执行无界返工。连续两轮无新增有效证据时停止。
-交接使用摘要和不可变产物引用，完整正文按需读取；任务不复制所有角色历史。
-
-故障修复的基本作用域是 Gateway、Application、Agent 及与目标调用链直接相关的支撑模块；
-GC 继续按全仓治理规则执行。正式故障验收必须包含目标相关的三层产品回放，复用生产 Gateway
-装配，仅替换外部资源和 Provider 连接；合法准入拒绝检查后续未执行。原测评 Case 与评分仍保留，
-局部测试和直接 Agent 测评不能替代三层验收。回放材料不足时明确缺口，不缩小原任务目标。
-
-失败摘要从宿主原始验证结果提取逐次结果、失败断言、实际阶段、工具与交付事实，并保留精确引用。
-角色和 Console 使用同一份摘要，摘要不参与成功判定。沿用现有存储和流程树，不增加诊断状态机。
-连续两轮无进展且剩余预算允许时，Plan 只读重诊断一次；引用具体证据且给出不同修正行动才继续。
-重诊断使用原预算，记录在现有反馈和角色产物中，恢复不重复获得机会；随机通过率变化不算进展。
-基线仅在源码、冻结验证定义和执行条件一致时复用，验证定义变化后重新执行。
-
-编排遵循 [LangGraph 规格](../harness-langgraph/spec.md)，当前协议及导出切换规则以
-[Harness 正文](../../docs/reference/harness.md#协议切换)为准。旧数据库与任务资源保留，
-新活动库不迁移或续跑旧任务。
-
-宿主为 Plan 生成绑定基线的有界 SourceIndex，并为返修生成 FailureBrief。完整源码与原始回执仍按引用读取，
-Coding、Test、Review 只接收选定目标需要的源码与规则片段。跨 attempt 的角色启动新会话，避免把上一轮
-命令输出当作隐式状态；任务事实仍以持久化产物为准。索引和摘要的裁剪必须记录遗漏数量，不能制造完整覆盖。
-
-原始观测、人工线索和预期分别冻结。测评禁止人工答案；机器人反馈可空。黄金原则
-以[统一索引](../../docs/reference/harness-principles.md)及冻结源码为准，不提升不可信材料。
-新协议只运行新任务；旧数据经导出核验和维护核对后切换，不迁移、不续跑。
+设计遵循[LangGraph 编排](../harness-langgraph/spec.md)、[控制生命周期](../harness-control-lifecycle/spec.md)、
+[四层运行时](../runtime-four-layer-definition/spec.md)与[六层依赖](../domain-layered-dependencies/spec.md)。
+原始观测与人工材料不能提升为宿主规则；[交付](../../docs/reference/delivery.md)始终绑定独立验收的精确候选。
 
 ## Acceptance
 

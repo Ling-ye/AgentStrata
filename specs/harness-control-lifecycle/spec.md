@@ -9,41 +9,31 @@ created: 2026-09-17
 
 ## Summary
 
-Harness 的调度结果 unknown 不代表 worker 已停止。控制入口不能据此完成取消或释放任务占用，
-查询也不能隐式写入中断状态。本次只整理任务控制闭环，不迁移数据库或扩展自动交付权限。
+worker 的 unknown 状态不能当作停止，查询不能隐式推进生命周期。本规格保留并发控制与事实归属的
+长期约束；操作和当前字段语义见[Harness 生命周期](../../docs/reference/harness.md#控制与生命周期)。
 
 ## Design
 
-遵循[六层依赖基线](../domain-layered-dependencies/spec.md)与
-[四层运行时基线](../runtime-four-layer-definition/spec.md)。Harness 是配套宿主，不增加消息运行层。
-纯 Types 定义 worker 三态和调度结果；Service 通过端口决定生命周期状态；Repo 提供事务与条件更新；
-Runtime 持有配置快照、systemd 与执行锁探测、冻结运行目录及进程启动；CLI/Console 只调用公开入口。
+遵循[六层依赖](../domain-layered-dependencies/spec.md)与[四层运行时](../runtime-four-layer-definition/spec.md)。
+Types 定义 worker 三态和调度结果；Service 通过端口决定控制动作；Repo 提供事务条件更新；
+Runtime 持有配置、systemd、进程锁和冻结目录；CLI/Console 只使用公开入口。
 
-启动、取消、恢复、接续和核对共用每任务控制锁，并保留全局维护锁和 worker 执行锁。
-只有无待执行 systemd job、执行锁空闲且进程已停止时，才能完成外部取消；未知状态保留取消请求与占用。
-worker 收尾可以自行确认取消。迟到写入不能复活已取消任务，较早的探测不能覆盖新的完成结果。
-测评与交付保留独立事实，外部取消失败或尚未结束时保留关联和重试资格。
+启动、取消、恢复、接续与核对必须共享任务控制锁，并保留维护锁与 worker 执行锁。
+锁顺序与字段归属由[当前控制协议](../../docs/reference/harness.md#控制与生命周期)维护。
+控制锁串行化资格判断，执行锁证明真实执行占用，维护锁阻止活动执行期间切换数据。
+不能因探测短暂持锁就拒绝正常 worker，也不能持控制锁等待 worker 完成初始化。
 
-修复与交付使用同一 worker 入口和任务 systemd unit，共用启动辅助函数，按维护共享锁、任务控制锁、执行锁的顺序取得资格。
-worker 等待短期控制锁，不能因探测正在进行而被视为重复执行；执行锁仍非阻塞，只有真正重复的
-worker 被拒绝。锁内复读当前版本与启动条件，已取消或失去资格的任务不进入业务。取得执行锁后
-释放控制锁，执行结束才释放执行锁和维护锁。宿主按 systemd Type=exec 确认进程启动，不持控制锁
-等待 worker 初始化完成。
+只有无待执行 systemd job、执行锁空闲且进程停止时，外部控制才可完成取消；worker 也可自行确认收尾。
+事务条件更新防止旧探测覆盖新结果，以及迟到结果复活已取消任务。外部测评取消请求与执行终态分开确认。
 
-`current_evaluation_id` 只属于修复阶段，`delivery_evaluation` 只属于交付复测，交付流程不再双写
-修复引用。交付复测存在时取消只记录交付意图，保留修复已有终态；交付流程确认外部终态后才清除
-自己的引用。显式取消可处理 blocked 交付，失败或未知保留 cancel_pending 和待处理请求，由定时器
-重试。混合验证按实际 Agent 测评 ID 取消，纯本地验证不发送外部请求。占用、恢复、接续和工作区清理
-均检查两种引用，不能在交付复测尚未收尾时释放资源。
+修复与交付复验各自拥有测评引用、取消意图与结论。混合验证按实际 Agent 测评 ID 取消，纯本地验证
+不发送外部请求。占用、恢复、接续及清理同时检查两类引用，不从本地 worker 状态推断外部执行结束。
 
-get/list/progress 只读；装配负责存储初始化。现有每分钟定时入口先核对活动任务再处理待交付，
-单项失败不阻止其他任务。公开 reconcile 与同名 CLI 命令用于主动核对；取消、恢复和接续即时核对。
-现有 HTTP 路径与状态格式不变。异常退出在定时器正常工作时由下一轮核对反映。
+查询与核对分开：get/list/progress 只读，装配负责存储初始化；后台对账与显式 reconcile 读取真实执行事实。
+单项对账错误不能中止整个调度批次。HTTP 路径与业务语义保持稳定，初始化失败只隔离 Harness 入口。
 
-现有架构检查器只为本次控制模块及直接 UI 入口增加依赖门禁，不宣称整个 Harness 已完成六层迁移。
-不覆盖已冻结运行目录；部署切换通过现有 maintenance 入口确认执行空闲，不自动部署或迁移历史。
-编排遵循 [LangGraph 规格](../harness-langgraph/spec.md)，当前协议和导出切换规则以
-[Harness 正文](../../docs/reference/harness.md#协议切换)为准。旧记录不迁移或续跑，任务资源保留。
+执行位置由[LangGraph](../harness-langgraph/spec.md)管理；本控制层负责外部事实与操作资格。
+不覆盖已冻结运行目录，协议切换与资源保留遵循[维护契约](../../docs/reference/harness.md#协议切换)。
 
 ## Acceptance
 

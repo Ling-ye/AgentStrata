@@ -1,8 +1,20 @@
-# 开发任务地图
+# 文档任务地图
 
-先选本次任务，读到足以行动为止。操作指南解释怎么做，领域正文解释为什么和修改边界，再沿源码入口核对实现。
+先选本次任务，读到足以行动为止。初次了解项目先看[首页](../README.md)；操作指南解释怎么做，
+领域正文维护当前机制与修改边界，规格保留长期架构和待验收条件。
 
-## 从任务开始
+## Harness 与 Evaluation
+
+| 想做什么 | 操作入口 | 需要了解机制时 |
+| --- | --- | --- |
+| 运行评测、比较改动效果 | [Evaluation 指南](guides/evaluation.md) | [评分与证据](reference/evaluation.md) / [服务协议](reference/evaluation-service.md) |
+| 修复失败 Case 或机器人任务 | [Harness 指南](guides/harness.md#发起任务) | [冻结来源与独立验收](reference/harness.md) |
+| 查看候选、失败原因与执行记录 | [结果与证据](guides/harness.md#查看修复结果与证据) | [流程记录](reference/harness.md#修复流程记录) / [观测](reference/observability.md) |
+| 治理代码熵或改进 Harness | [治理与定时](guides/harness.md#代码熵回收与可选定时) | [代码熵与 Skill 学习](reference/code-health.md) / [黄金原则](reference/harness-principles.md) |
+| 处理交付、取消或恢复 | [异常处理](guides/harness.md#处理失败取消与恢复) / [交付配置](guides/harness.md#harness-pr-交付配置与恢复) | [生命周期](reference/harness.md#控制与生命周期) / [交付契约](reference/delivery.md) |
+| 修改修复核心与执行适配 | [Harness 职责](reference/harness.md#核心项目集成与-eval) | [LangGraph 架构](../specs/harness-langgraph/spec.md) / [编译图](../specs/harness-langgraph/graphs.md) |
+
+## 其他开发与运维任务
 
 | 本次任务 | 先读 | 需要机制与边界时 |
 | --- | --- | --- |
@@ -13,9 +25,7 @@
 | 修改消息或平台接入 | [运行链](reference/runtime.md) | [身份与资源](reference/identity-resources.md) |
 | 修改 Agent、提示词、记忆 | [Agent](reference/agent.md) | [上下文](reference/context.md) |
 | 新增或修改工具 | [工具](reference/tools.md) | [配置](reference/configuration.md) |
-| 修改评分或运行测评 | [测评操作](guides/evaluation.md) | [Evaluation](reference/evaluation.md) / [服务协议](reference/evaluation-service.md) |
 | 编写题目和验收样本 | [用例指南](guides/evaluation-cases.md) | [题目约束](reference/evaluation-cases.md) / [术语](reference/evaluation-glossary.md) |
-| 修复运行错误 | [Harness 操作](guides/harness.md) | [修复契约](reference/harness.md) / [黄金原则](reference/harness-principles.md)、[代码熵回收](reference/code-health.md) / [交付](reference/delivery.md) |
 | 修改 Console | [Console](reference/console.md) | [观测](reference/observability.md) / [归档](reference/local-traces.md) |
 | 排查运行失败 | [诊断](guides/debugging.md) | [WSL 恢复](guides/wsl-troubleshooting.md) |
 | 维护文档或准备发布 | [文档维护](maintenance.md) / [发布](guides/releasing.md) | [公开边界](reference/publication.md) / [规格](../specs/README.md) |

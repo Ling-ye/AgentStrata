@@ -42,6 +42,16 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Harness repair and acceptance now use separate LangGraph core and AgentStrata
+  integration modules, with injected execution dependencies, operation receipts,
+  and shared acceptance for initial repair and delivery revalidation.
+- Harness protocol upgrades require a verified history export before starting
+  a new active database; retired task resources remain available without resuming
+  old workers.
+- Chinese project and Harness documentation now lead with reproducible evaluation,
+  independent acceptance, and MIT-open repair implementation; CLI examples use
+  saved model profiles.
+
 - Xiaohongshu deployment now uses a pinned official upstream container image
   while retaining the existing login, search, console, and Bot integration.
 - Fuzzy file editing keeps its runtime fallback but no longer advertises a
