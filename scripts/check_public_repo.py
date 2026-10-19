@@ -147,6 +147,8 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/modelcontextprotocol/servers",
         "github.com/newren/git-filter-repo",
         "github.com/onyx-dot-app/onyx",
+        "github.com/open-llm-vtuber/open-llm-vtuber",
+        "github.com/open-llm-vtuber/open-llm-vtuber-web",
         "github.com/other/project",
         "github.com/python/peps",
         "github.com/run-llama/llama_index",

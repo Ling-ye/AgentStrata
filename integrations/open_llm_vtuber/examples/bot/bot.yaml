@@ -1,0 +1,26 @@
+id: live2d-assistant
+display_name: Live2D Assistant
+gateway:
+  port_env: CHATCOPILOT_GATEWAY_PORT
+  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+  clients:
+    - id: avatar-owner
+      token_env: AGENTSTRATA_AVATAR_GATEWAY_TOKEN
+      role: owner
+prompts:
+  schema_version: 2
+  identity: identity.md
+  response_style: response-style.md
+tools:
+  packs:
+    - workspace.read_write
+    - memory.chat
+  mcp:
+    servers: mcp.yaml
+agents:
+  runtime: codex
+workspace:
+  root_env: CHATCOPILOT_WORKSPACE_ROOT
+deploy:
+  target: wsl
+  instance_id: live2d-assistant

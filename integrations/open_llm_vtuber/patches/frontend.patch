@@ -1,0 +1,246 @@
+diff --git a/src/renderer/src/hooks/utils/use-audio-task.ts b/src/renderer/src/hooks/utils/use-audio-task.ts
+--- a/src/renderer/src/hooks/utils/use-audio-task.ts
++++ b/src/renderer/src/hooks/utils/use-audio-task.ts
+@@ -11,6 +11,7 @@
+ import { toaster } from '@/components/ui/toaster';
+ import { useWebSocket } from '@/context/websocket-context';
+ import { DisplayText } from '@/services/websocket-service';
++import { currentAgentStrataRun, reportPlayback } from '@/services/agentstrata-avatar';
+ import { useLive2DExpression } from '@/hooks/canvas/use-live2d-expression';
+ import * as LAppDefine from '../../../WebSDK/src/lappdefine';
+ 
+@@ -25,6 +26,7 @@
+   expressions?: string[] | number[] | null
+   speaker_uid?: string
+   forwarded?: boolean
++  runId?: string
+ }
+ 
+ /**
+@@ -66,6 +68,8 @@
+    * Handle audio playback with Live2D lip sync
+    */
+   const handleAudioPlayback = (options: AudioTaskOptions): Promise<void> => new Promise((resolve) => {
++    const playbackId = crypto.randomUUID();
++    const report = (status: string) => reportPlayback(playbackId, status, options.runId);
+     const {
+       aiState: currentAiState,
+       setSubtitleText: updateSubtitle,
+@@ -75,6 +79,7 @@
+ 
+     // Skip if already interrupted
+     if (currentAiState === 'interrupted') {
++      report('interrupted');
+       console.warn('Audio playback blocked by interruption state.');
+       resolve();
+       return;
+@@ -106,6 +111,7 @@
+         // Get Live2D manager and model
+         const live2dManager = (window as any).getLive2DManager?.();
+         if (!live2dManager) {
++          report('failed');
+           console.error('Live2D manager not found');
+           resolve();
+           return;
+@@ -113,6 +119,7 @@
+ 
+         const model = live2dManager.getModel(0);
+         if (!model) {
++          report('failed');
+           console.error('Live2D model not found at index 0');
+           resolve();
+           return;
+@@ -153,10 +160,11 @@
+         audioManager.setCurrentAudio(audio, model);
+         let isFinished = false;
+ 
+-        const cleanup = () => {
++        const cleanup = (status: string) => {
+           audioManager.clearCurrentAudio(audio);
+           if (!isFinished) {
+             isFinished = true;
++            report(status);
+             resolve();
+           }
+         };
+@@ -168,14 +176,14 @@
+           // Check for interruption before playback
+           if (stateRef.current.aiState === 'interrupted' || !audioManager.hasCurrentAudio()) {
+             console.warn('Audio playback cancelled due to interruption or audio was stopped');
+-            cleanup();
++            cleanup('interrupted');
+             return;
+           }
+ 
+           console.log('Starting audio playback with lip sync');
+-          audio.play().catch((err) => {
++          audio.play().then(() => report('started')).catch((err) => {
+             console.error("Audio play error:", err);
+-            cleanup();
++            cleanup('failed');
+           });
+ 
+           // Setup lip sync
+@@ -203,19 +211,25 @@
+ 
+         audio.addEventListener('ended', () => {
+           console.log("Audio playback completed");
+-          cleanup();
++          cleanup('completed');
+         });
+ 
+         audio.addEventListener('error', (error) => {
+           console.error("Audio playback error:", error);
+-          cleanup();
++          cleanup('failed');
++        });
++
++        audio.addEventListener('emptied', () => {
++          if (audio.getAttribute('src') === '') cleanup('interrupted');
+         });
+ 
+         audio.load();
+       } else {
++        report('text_only');
+         resolve();
+       }
+     } catch (error) {
++      report('failed');
+       console.error('Audio playback setup error:', error);
+       toaster.create({
+         title: `${t('error.audioPlayback')}: ${error}`,
+@@ -258,7 +272,8 @@
+     }
+ 
+     console.log(`Adding audio task ${options.displayText?.text} to queue`);
+-    audioTaskQueue.addTask(() => handleAudioPlayback(options));
++    const bound = { ...options, runId: currentAgentStrataRun() };
++    audioTaskQueue.addTask(() => handleAudioPlayback(bound));
+   };
+ 
+   return {
+diff --git a/src/renderer/src/services/websocket-handler.tsx b/src/renderer/src/services/websocket-handler.tsx
+--- a/src/renderer/src/services/websocket-handler.tsx
++++ b/src/renderer/src/services/websocket-handler.tsx
+@@ -4,6 +4,7 @@
+ import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+ import { useTranslation } from 'react-i18next';
+ import { wsService, MessageEvent } from '@/services/websocket-service';
++import { handleAvatarAction, setAgentStrataRun } from '@/services/agentstrata-avatar';
+ import {
+   WebSocketContext, HistoryInfo, defaultWsUrl, defaultBaseUrl,
+ } from '@/context/websocket-context';
+@@ -28,7 +29,7 @@
+   const [wsUrl, setWsUrl] = useLocalStorage<string>('wsUrl', defaultWsUrl);
+   const [baseUrl, setBaseUrl] = useLocalStorage<string>('baseUrl', defaultBaseUrl);
+   const { aiState, setAiState, backendSynthComplete, setBackendSynthComplete } = useAiState();
+-  const { setModelInfo } = useLive2DConfig();
++  const { modelInfo, setModelInfo } = useLive2DConfig();
+   const { setSubtitleText } = useSubtitle();
+   const { clearResponse, setForceNewMessage, appendHumanMessage, appendOrUpdateToolCallMessage } = useChatHistory();
+   const { addAudioTask } = useAudioTask();
+@@ -36,10 +37,13 @@
+   const { confUid, setConfName, setConfUid, setConfigFiles } = useConfig();
+   const [pendingModelInfo, setPendingModelInfo] = useState<ModelInfo | undefined>(undefined);
+   const { setSelfUid, setGroupMembers, setIsOwner } = useGroup();
+-  const { startMic, stopMic, autoStartMicOnConvEnd } = useVAD();
++  const { startMic, stopMic, autoStartMicOnConvEnd,
++    setAutoStopMic, setAutoStartMicOn, setAutoStartMicOnConvEnd } = useVAD();
+   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
+   const { interrupt } = useInterrupt();
+   const { setBrowserViewData } = useBrowser();
++  const avatarModelNameRef = useRef(modelInfo?.name);
++  avatarModelNameRef.current = modelInfo?.name;
+ 
+   useEffect(() => {
+     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
+@@ -94,6 +98,18 @@
+   const handleWebSocketMessage = useCallback((message: MessageEvent) => {
+     console.log('Received message from server:', message);
+     switch (message.type) {
++      case 'agentstrata-mode':
++        stopMic();
++        setAutoStopMic(true);
++        setAutoStartMicOn(false);
++        setAutoStartMicOnConvEnd(false);
++        break;
++      case 'agentstrata-avatar-action':
++        handleAvatarAction(message, avatarModelNameRef.current);
++        break;
++      case 'agentstrata-reply':
++        setAgentStrataRun(message.run_id);
++        break;
+       case 'control':
+         if (message.text) {
+           handleControlMessage(message.text);
+diff --git a/src/renderer/src/services/websocket-service.tsx b/src/renderer/src/services/websocket-service.tsx
+--- a/src/renderer/src/services/websocket-service.tsx
++++ b/src/renderer/src/services/websocket-service.tsx
+@@ -49,6 +49,11 @@
+ }
+ 
+ export interface MessageEvent {
++  request_id?: string;
++  model_name?: string;
++  kind?: 'expression' | 'motion';
++  value?: string | number | { group: string; index: number };
++  run_id?: string;
+   tool_id: any;
+   tool_name: any;
+   name: any;
+diff --git a/src/renderer/src/services/agentstrata-avatar.ts b/src/renderer/src/services/agentstrata-avatar.ts
+new file mode 100644
+--- /dev/null
++++ b/src/renderer/src/services/agentstrata-avatar.ts
+@@ -0,0 +1,51 @@
++import { wsService, MessageEvent } from './websocket-service';
++
++// Adapter-private presentation state. It never changes Gateway execution state.
++let activeRun: string | undefined;
++
++export function setAgentStrataRun(runId: string | undefined): void {
++  activeRun = runId;
++}
++
++export function reportPlayback(playbackId: string, status: string, runId?: string): void {
++  if (!runId && !activeRun) return;
++  wsService.sendMessage({ type: 'agentstrata-playback', playback_id: playbackId,
++    status, run_id: runId ?? activeRun });
++}
++
++export function currentAgentStrataRun(): string | undefined {
++  return activeRun;
++}
++
++export function handleAvatarAction(message: MessageEvent, modelName?: string): void {
++  const respond = (status: 'executed' | 'failed' | 'unknown') => wsService.sendMessage({
++    type: 'agentstrata-avatar-result', request_id: message.request_id, status,
++  });
++  try {
++    if (!message.request_id || message.model_name !== modelName) throw new Error('Avatar target mismatch');
++    const adapter = (window as any).getLAppAdapter?.();
++    const model = adapter?.getModel();
++    if (!model?._modelSetting) throw new Error('Avatar is not loaded');
++    if (message.kind === 'expression') {
++      const value = message.value;
++      const name = typeof value === 'number' ? adapter.getExpressionName(value) : value;
++      if (typeof name !== 'string' || !model._expressions.getValue(name)) throw new Error('Expression unavailable');
++      adapter.setExpression(name);
++      respond('executed');
++    } else if (message.kind === 'motion') {
++      const value = message.value;
++      if (!value || typeof value !== 'object' || !Number.isInteger(value.index) || value.index < 0
++          || value.index >= adapter.getMotionCount(value.group)) throw new Error('Motion unavailable');
++      const handle = adapter.startMotion(value.group, value.index, 3);
++      // Looping model motions never finish. Confirm that the SDK actually started this entry.
++      requestAnimationFrame(() => {
++        const entry = model._motionManager.getCubismMotionQueueEntry(handle);
++        respond(entry?.isStarted() ? 'executed' : 'unknown');
++      });
++    } else {
++      throw new Error('Unknown avatar action');
++    }
++  } catch {
++    respond('failed');
++  }
++}

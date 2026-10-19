@@ -7,6 +7,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 import logging
 import os
+import re
 from pathlib import Path
 import signal
 import stat
@@ -19,7 +20,7 @@ from chatcopilot.application.file_delivery import create_file_sender
 from chatcopilot.application.agent_runtime import assemble_agent_runtime
 from chatcopilot.application.resources import ResourceMaterializationService
 from chatcopilot.application.sessions import SessionManager
-from chatcopilot.authorization.policy import IdentityPolicy
+from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.botspec.inspection import source_revision, declared_configuration
 from chatcopilot.channels.base import ChannelHealth
@@ -112,13 +113,15 @@ class GatewayRuntimeConfig:
 
     host: str
     port: int
-    gateway_token: str = field(repr=False)
+    gateway_token: str | None = field(repr=False)
     state_root: Path
     state_anchor: Path
     workspace_root: Path
     wiki_root: Path | None
-    channel: OneBotChannelConfig | WeixinChannelConfig
+    channel: OneBotChannelConfig | WeixinChannelConfig | None
     policy_version: str
+    credentials: tuple[GatewayCredentialBinding, ...] = field(default=(), repr=False)
+    client_roles: Mapping[str, Role] = field(default_factory=dict)
     max_concurrent_turns: int = 8
     max_pending_ingress: int = 1024
 
@@ -180,9 +183,11 @@ class _EventPublisherPort(Protocol):
 class _RuntimeReadiness:
     """One readiness gate shared by the host and authenticated RPC dispatcher."""
 
-    def __init__(self, *, generation: int, channels: _ChannelRuntimePort) -> None:
+    def __init__(self, *, generation: int, channels: _ChannelRuntimePort,
+                 require_channel: bool = True) -> None:
         self._generation = generation
         self._channels = channels
+        self._require_channel = require_channel
         self._server: _ServerPort | None = None
         self._enabled = False
 
@@ -204,6 +209,7 @@ class _RuntimeReadiness:
             generation=self._generation,
             server=self._server.health(),
             channels=self._channels.health(),
+            require_channel=self._require_channel,
         )
 
     def __call__(self) -> bool:
@@ -213,6 +219,7 @@ class _RuntimeReadiness:
             generation=self._generation,
             server=self._server.health(),
             channels=self._channels.health(),
+            require_channel=self._require_channel,
         )
 
 
@@ -470,10 +477,11 @@ def parse_gateway_runtime_config(
     gateway = runtime.gateway
     qq = runtime.channels.qq
     weixin = runtime.channels.weixin
-    if gateway is None or (qq is None and weixin is None) or (qq is not None and weixin is not None):
+    if (gateway is None or (qq is not None and weixin is not None)
+            or (qq is None and weixin is None and not gateway.clients)):
         raise GatewayRuntimeConfigurationError(
             "gateway_qq_botspec_required",
-            "Gateway runtime requires gateway and exactly one QQ or Weixin channel",
+            "Gateway runtime requires configured clients or one QQ/Weixin channel",
         )
     for key in _LEGACY_QQ_ENV_KEYS:
         if key in values:
@@ -482,26 +490,37 @@ def parse_gateway_runtime_config(
                 f"Legacy QQ runtime environment variable is not accepted: {key}",
             )
 
-    gateway_token = _required_env(values, gateway.token_env)
     channel_spec = qq if qq is not None else weixin
-    assert channel_spec is not None
-    channel_token = _required_env(values, channel_spec.access_token_env)
-    if gateway_token == channel_token:
+    gateway_token = _required_env(values, gateway.token_env) if channel_spec is not None else None
+    channel_token = _required_env(values, channel_spec.access_token_env) if channel_spec is not None else None
+    if channel_token is not None and gateway_token == channel_token:
         raise GatewayRuntimeConfigurationError(
             "gateway_token_reused",
             "Gateway and Channel credentials must be different",
         )
+    credentials = []
+    client_roles = {}
     try:
-        GatewayCredentialBinding(
-            token=gateway_token,
-            client_id=_ACP_CLIENT_ID,
-            client_mode=_ACP_CLIENT_MODE,
-            scopes=_ACP_SCOPES,
-        )
+        if gateway_token is not None:
+            credentials.append(GatewayCredentialBinding(token=gateway_token,
+                client_id=_ACP_CLIENT_ID, client_mode=_ACP_CLIENT_MODE, scopes=_ACP_SCOPES))
+            client_roles[_ACP_CLIENT_ID] = Role.OWNER
+        for client in gateway.clients:
+            if (client.id == _ACP_CLIENT_ID or client.id in client_roles
+                    or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", client.id)
+                    or client.role not in {"owner", "user"}):
+                raise ValueError("client identity is invalid")
+            token = _required_env(values, client.token_env)
+            if token == channel_token:
+                raise ValueError("client and channel credentials must differ")
+            credentials.append(GatewayCredentialBinding(token=token, client_id=client.id,
+                client_mode="interactive", scopes=_ACP_SCOPES))
+            client_roles[client.id] = Role(client.role)
+        StaticGatewayCredentialAuthority(credentials)
     except ValueError as exc:
         raise GatewayRuntimeConfigurationError(
             "gateway_token_invalid",
-            "Gateway token must be 32-128 URL-safe characters",
+            "Gateway clients require unique strong credentials and valid host-bound roles",
         ) from exc
 
     port = _required_port(values, gateway.port_env)
@@ -555,9 +574,10 @@ def parse_gateway_runtime_config(
             private=False,
         )
 
-    channel: OneBotChannelConfig | WeixinChannelConfig
+    channel: OneBotChannelConfig | WeixinChannelConfig | None = None
     try:
         if weixin is not None:
+            assert channel_token is not None
             channel = WeixinChannelConfig(
                 account_id=_required_env(values, weixin.account_env),
                 user_id=_required_env(values, weixin.user_env), token=channel_token,
@@ -565,13 +585,12 @@ def parse_gateway_runtime_config(
                 action_timeout_seconds=weixin.action_timeout_seconds, max_frame_bytes=weixin.max_frame_bytes)
             if channel.user_id not in {value.strip() for value in str(values.get("CHATCOPILOT_ADD_OWNER_IDS", "")).split(",")}:
                 raise WeixinError("weixin_owner_not_configured")
-        else:
-            assert qq is not None
+        elif qq is not None:
             channel = OneBotChannelConfig(
             channel_id=qq.channel_id,
             account_id=_required_env(values, qq.account_env),
             websocket_url=_required_env(values, qq.endpoint_env),
-            access_token=channel_token,
+            access_token=str(channel_token),
             action_timeout_seconds=qq.action_timeout_seconds,
             max_frame_bytes=qq.max_frame_bytes,
         )
@@ -591,6 +610,8 @@ def parse_gateway_runtime_config(
         wiki_root=wiki_root,
         channel=channel,
         policy_version=f"gateway-v{gateway.protocol_version}",
+        credentials=tuple(credentials),
+        client_roles=client_roles,
         max_concurrent_turns=gateway.max_concurrent_turns,
         max_pending_ingress=gateway.max_pending_ingress,
     )
@@ -646,7 +667,7 @@ def build_gateway_runtime_host(
             state_store=state_store,
             session_manager=session_manager,
             generation=generation,
-            client_roles={_ACP_CLIENT_ID: Role.OWNER},
+            client_roles=config.client_roles,
         )
         events = GatewayEventPublisher(
             state_store=state_store,
@@ -664,7 +685,7 @@ def build_gateway_runtime_host(
             config.channel, state_root=config.state_root, policy_version=config.policy_version,
             qq_users=values.get("QQ_ALLOW_FROM"), connection_factory=onebot_connection_factory,
             weixin_client=weixin_client,
-        )
+        ) if config.channel is not None else None
 
         def record_authorization_decision(decision: AuthorizationDecision) -> None:
             state_store.record_authorization_decision(
@@ -673,7 +694,7 @@ def build_gateway_runtime_host(
             )
 
         def file_sender_factory(principal, workspace, session_id):
-            if ChannelAccountRef(principal.channel, principal.account_id) != channel_assembly.account:
+            if channel_assembly is None or ChannelAccountRef(principal.channel, principal.account_id) != channel_assembly.account:
                 return None
             loop = asyncio.get_running_loop()
             account = ChannelAccountRef(principal.channel, principal.account_id)
@@ -728,18 +749,21 @@ def build_gateway_runtime_host(
             on_authorization_decision=record_authorization_decision,
             file_sender_factory=file_sender_factory,
         )
-        actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=ResourceMaterializationService(
-            resource_fetcher if resource_fetcher is not None else channel_assembly.resource_fetcher))
+        fetcher = resource_fetcher if resource_fetcher is not None else (
+            channel_assembly.resource_fetcher if channel_assembly is not None else None)
+        actor_executor = ActorTurnExecutor(actor_factory, resource_materializer=(
+            ResourceMaterializationService(fetcher) if fetcher is not None else None))
         coordinator = GatewayTurnCoordinator(
             state_store=state_store,
             sessions=sessions,
             events=events,
             actor_executor=actor_executor,
             identity_policy=IdentityPolicy.from_iterables(
-                owners=channel_assembly.owners,
+                owners=channel_assembly.owners if channel_assembly is not None else (),
                 admins=get_admins(),
             ),
-            admission_policy=channel_assembly.admission_policy,
+            admission_policy=(channel_assembly.admission_policy if channel_assembly is not None else
+                              AdmissionPolicy.from_raw(qq_users=None, policy_version=config.policy_version)),
             generation=generation,
             on_admission_decision=record_authorization_decision,
         )
@@ -751,11 +775,13 @@ def build_gateway_runtime_host(
             max_concurrent_turns=config.max_concurrent_turns,
             max_pending_ingress=config.max_pending_ingress,
         )
-        channel_runtime.register(channel_assembly.create_driver(channel_runtime.accept_inbound))
+        if channel_assembly is not None:
+            channel_runtime.register(channel_assembly.create_driver(channel_runtime.accept_inbound))
         coordinator.set_channel_runtime(channel_runtime)
         readiness = _RuntimeReadiness(
             generation=generation,
             channels=channel_runtime,
+            require_channel=config.channel is not None,
         )
         visibility = GatewaySessionEventVisibility(sessions)
         application_dispatcher = GatewayApplicationDispatcher(
@@ -772,16 +798,7 @@ def build_gateway_runtime_host(
             application_dispatcher,
             ready=readiness,
         )
-        credential_authority = StaticGatewayCredentialAuthority(
-            (
-                GatewayCredentialBinding(
-                    token=config.gateway_token,
-                    client_id=_ACP_CLIENT_ID,
-                    client_mode=_ACP_CLIENT_MODE,
-                    scopes=_ACP_SCOPES,
-                ),
-            )
-        )
+        credential_authority = StaticGatewayCredentialAuthority(config.credentials)
         server = GatewayWebSocketServer(
             config=GatewayServerConfig(
                 host=config.host,
@@ -838,7 +855,7 @@ def build_gateway_runtime_host(
             readiness=readiness,
             schedules=ScheduleRuntime(ScheduleService(config.state_root),
                 GatewayScheduleExecutor(coordinator, state_store, channel_assembly.schedule_account),
-                ready=readiness) if channel_assembly.schedule_account is not None else None,
+                ready=readiness) if channel_assembly is not None and channel_assembly.schedule_account is not None else None,
         )
     except BaseException:
         try:
@@ -1002,6 +1019,7 @@ def _components_ready(
     generation: int,
     server: GatewayServerHealth,
     channels: ChannelRuntimeHealth,
+    require_channel: bool = True,
 ) -> bool:
     return (
         server.ready
@@ -1009,7 +1027,7 @@ def _components_ready(
         and server.current_generation == generation
         and channels.state == "ready"
         and channels.writer_generation == generation
-        and bool(channels.channels)
+        and (bool(channels.channels) or not require_channel)
         and all(_channel_ready(channel) for channel in channels.channels)
     )
 
@@ -1019,6 +1037,7 @@ def _components_prepared(
     generation: int,
     server: GatewayServerHealth,
     channels: ChannelRuntimeHealth,
+    require_channel: bool = True,
 ) -> bool:
     return (
         server.ready
@@ -1026,7 +1045,7 @@ def _components_prepared(
         and server.current_generation == generation
         and channels.state == "prepared"
         and channels.writer_generation == generation
-        and bool(channels.channels)
+        and (bool(channels.channels) or not require_channel)
         and all(_channel_ready(channel) for channel in channels.channels)
     )
 

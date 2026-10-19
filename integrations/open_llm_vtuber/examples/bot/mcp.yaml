@@ -1,0 +1,13 @@
+servers:
+  - id: local-avatar
+    transport: streamable_http
+    url: http://127.0.0.1:12393/agentstrata/mcp/
+    headers:
+      Authorization: "${AGENTSTRATA_AVATAR_CONTROL_AUTH}"
+    exposure: main
+    risk: interactive
+    tool_prefix: avatar
+    allowed_tools: [list_actions, set_expression, play_motion]
+    timeout_seconds: 15
+    retry_on_timeout: false
+    stateless_http: true

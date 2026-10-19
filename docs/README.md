@@ -35,6 +35,7 @@ guides 解释如何操作，reference 维护当前机制与修改边界，specs 
 | QQ 登录、认证或外部服务 | [QQ](guides/qq.md) / [服务](guides/services.md) | [身份与资源](reference/identity-resources.md) / [服务边界](reference/services.md) |
 | 配置机器人定时调查与群推送 | [定时任务](reference/schedules.md) | [运行链](reference/runtime.md) / [Console](reference/console.md) |
 | 修改消息或平台接入 | [运行链](reference/runtime.md) | [身份与资源](reference/identity-resources.md) |
+| 接入 Live2D 语音角色客户端 | [Live2D 接入](guides/live2d.md) | [独立客户端边界](reference/runtime.md#独立交互客户端) |
 | 修改 Agent、提示词、记忆 | [Agent](reference/agent.md) | [上下文](reference/context.md) |
 | 选择执行或模型路由 | [执行契约](reference/agent.md#一条执行契约) | [模型配置](reference/configuration.md#llm) / [路由规格](../specs/agent-runtime-routing/spec.md) |
 | 新增或修改工具 | [工具](reference/tools.md) | [配置](reference/configuration.md) |

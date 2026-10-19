@@ -14,6 +14,8 @@
 
 ## 待确认的设计条件
 
+- [独立交互客户端与角色适配](interactive-client/spec.md)：独立客户端宿主及可选 Live2D Bridge；真实语音与角色交互需独立验收。
+
 - [Harness 多角色协作](harness-multi-agent/spec.md)：保留固定失败样本、相同模型与预算下的工作流对照验收条件。
 - [代码熵批次](harness-code-health/spec.md)：保留连续治理与真实远端交付、失败收尾的独立验收条件。
 - [Harness Skill 学习](harness-skill-learning/spec.md)：保留真实 worker 的 Skill 发现、显式调用及学习交付验收条件。

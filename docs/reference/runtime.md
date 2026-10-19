@@ -77,6 +77,17 @@ Gateway 群共享历史保存完整的用户与助手正文，不再在写入时
 
 新的原生传输放在 `channels/<name>/`，实现连接生命周期、codec、provider capability、资源获取与回执，并在实例装配入口显式接线；不能分配 AgentStrata 角色或授权工具。`platforms/<name>/adapter.py` 的 `ADAPTER` 自动发现只保留给尚未迁移的 legacy edge；平台分支仅限装配入口，不进入共享执行逻辑。
 
+## 独立交互客户端
+
+本地客户端通过既有认证 WebSocket Gateway 提交对话；`gateway.clients` 声明宿主采信的
+客户端 ID、凭据环境变量与角色。没有原生渠道时，实例就绪只要求实际装配的 Gateway
+组件；原生渠道实例仍要求渠道已就绪。会话、取消、查询与恢复沿用现有 RPC，客户端不能
+借此伪装为 QQ/微信 actor。客户端实例使用独立数据目录。
+
+可选角色适配位于 `integrations/open_llm_vtuber`。对话复用 GatewayClient；语音和头像
+留在客户端，动作经现有 MCP 和工具权限机制执行。播放反馈只记录客户端呈现事实，不改变
+AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[Live2D 接入](../guides/live2d.md)。
+
 ## 任务运行四层观测
 
 任务流按真实 Channel/Gateway/Application/Agent 交接分段，运行职责标记与配置 layer 分开。新增边界用成对 Started/Finished 及真实 trace/span，正文走有界详情与现有留存；准入且 run 建立后才归档平台输入，观测投影不进入业务 ingress 序列化/指纹。Agent 公开输出独立于投递保存，交换提交只报告实际结果；Codex 只标适配器可见范围，隐藏推理不采集。观测失败不能改变权限、执行或交付事实。规格见 `docs/reference/observability.md`。 Console 不再从旧事件名补造调用关联或回退读取 Gateway 业务状态库；任务流只消费当前四层观测版本。

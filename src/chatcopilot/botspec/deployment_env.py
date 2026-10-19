@@ -164,6 +164,8 @@ def runtime_environment_keys(spec, environment: Mapping[str, str] | None = None)
     from chatcopilot.core.model_settings import read_settings
     document = read_settings(environment)
     references = []
+    if spec.gateway is not None:
+        references.extend(client.token_env for client in spec.gateway.clients)
     if spec.channels.weixin is not None:
         channel = spec.channels.weixin
         references.extend((channel.account_env, channel.user_env, channel.endpoint_env, channel.access_token_env))

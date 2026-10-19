@@ -3,6 +3,7 @@ from chatcopilot.botspec.loader import load_botspec, validate_botspec
 from chatcopilot.botspec.model import (
     BotSpec,
     ChannelsSpec,
+    GatewayClientSpec,
     GatewaySpec,
     QQChannelSpec,
     ValidationIssue,
@@ -19,6 +20,7 @@ from chatcopilot.botspec.runtime import (
 __all__ = [
     "BotSpec",
     "GatewaySpec",
+    "GatewayClientSpec",
     "ChannelsSpec",
     "QQChannelSpec",
     "ValidationIssue",

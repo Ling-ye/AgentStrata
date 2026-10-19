@@ -1,0 +1,11 @@
+{
+  "gateway_url": "ws://127.0.0.1:18791",
+  "client_id": "avatar-owner",
+  "gateway_token_env": "AGENTSTRATA_AVATAR_GATEWAY_TOKEN",
+  "mcp_token_env": "AGENTSTRATA_AVATAR_CONTROL_TOKEN",
+  "model_name": "mao_pro",
+  "allowed_origins": ["http://localhost:12393", "http://127.0.0.1:12393"],
+  "expressions": {"neutral": "exp_01", "happy": "exp_04"},
+  "motions": {"gesture": {"group": "", "index": 0}},
+  "action_timeout_seconds": 10
+}

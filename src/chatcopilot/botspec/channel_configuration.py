@@ -60,7 +60,43 @@ class WeixinConfiguration:
         return ()
 
 
+class GatewayClientConfiguration:
+    """Provision a client-only instance without inventing a platform driver."""
+
+    name, adapter_id = "gateway", "gateway"
+
+    def __init__(self, spec):
+        self.spec = spec
+
+    def required_secrets(self) -> tuple[SecretSpec, ...]:
+        gateway = self.spec.gateway
+        return (
+            SecretSpec(gateway.port_env, default="18791", label="Gateway 端口"),
+            SecretSpec(gateway.state_root_env, required=False, label="实例私有状态目录"),
+            *(SecretSpec(client.token_env, host_generated=True, label=f"客户端 {client.id} 凭据")
+              for client in gateway.clients),
+        )
+
+    def materialize_host_generated_secret(self, env_key, current_value):
+        if env_key not in {client.token_env for client in self.spec.gateway.clients}:
+            raise ValueError("host_generated_secret_unsupported")
+        if current_value and not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", current_value):
+            raise ValueError("gateway_token_invalid")
+        return current_value or secrets.token_urlsafe(32)
+
+    def validate_runtime_env(self, values) -> tuple[str, ...]:
+        tokens = [values.get(client.token_env, "") for client in self.spec.gateway.clients]
+        if any(not re.fullmatch(r"[A-Za-z0-9_-]{32,128}", token) for token in tokens):
+            return ("gateway_token_invalid",)
+        return () if len(tokens) == len(set(tokens)) else ("gateway_token_reused",)
+
+    def setup_actions(self) -> tuple:
+        return ()
+
+
 def configuration_adapter(spec, *, resolver=None):
+    if spec.platform.type == "gateway" and spec.gateway is not None:
+        return GatewayClientConfiguration(spec)
     if spec.platform.type == "weixin":
         return WeixinConfiguration(spec)
     from chatcopilot.platforms.registry import get_adapter

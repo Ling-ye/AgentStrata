@@ -40,6 +40,15 @@ class PlatformSpec:
 
 
 @dataclass(frozen=True)
+class GatewayClientSpec:
+    """Host-bound local client authority; never supplied in a chat request."""
+
+    id: str
+    token_env: str
+    role: str = "user"
+
+
+@dataclass(frozen=True)
 class GatewaySpec:
     """Per-Bot loopback Gateway configuration by environment reference."""
 
@@ -50,6 +59,7 @@ class GatewaySpec:
     state_root_env: str = "CHATCOPILOT_GATEWAY_STATE_ROOT"
     max_concurrent_turns: int = 8
     max_pending_ingress: int = 1024
+    clients: tuple[GatewayClientSpec, ...] = ()
 
 
 @dataclass(frozen=True)

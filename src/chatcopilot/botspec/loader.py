@@ -30,6 +30,7 @@ from chatcopilot.botspec.model import (
     DeploySpec,
     DevShellSpec,
     DevSpec,
+    GatewayClientSpec,
     GatewaySpec,
     LLMSpec,
     McpSpec,
@@ -58,7 +59,7 @@ _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
 _SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2"}
 _GATEWAY_FIELDS = frozenset(
     {"protocol_version", "host", "port_env", "token_env", "state_root_env",
-     "max_concurrent_turns", "max_pending_ingress"}
+     "max_concurrent_turns", "max_pending_ingress", "clients"}
 )
 _CHANNELS_FIELDS = frozenset({"qq", "weixin"})
 _QQ_CHANNEL_FIELDS = frozenset(
@@ -140,7 +141,11 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
         # 配置层（本模块）按需 lazy import 平台层查询，避免再维护一份白名单。
         from chatcopilot.platforms.registry import is_supported, supported_platform_types
 
-        if not is_supported(platform_type) and not (platform_type == "weixin" and spec.channels.weixin is not None):
+        native_gateway = spec.gateway is not None and (
+            (platform_type == "weixin" and spec.channels.weixin is not None)
+            or (platform_type == "gateway" and bool(spec.gateway.clients))
+        )
+        if not is_supported(platform_type) and not native_gateway:
             issues.append(
                 ValidationIssue(
                     "error",
@@ -417,6 +422,24 @@ def _validate_gateway_channels(
 
     gateway = spec.gateway
     if gateway is not None:
+        seen_clients: set[str] = set()
+        seen_tokens: set[str] = set()
+        for index, client in enumerate(gateway.clients):
+            field = f"gateway.clients[{index}]"
+            if (not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._-]{0,127}", client.id)
+                    or client.id == "acp-edge" or client.id in seen_clients):
+                issues.append(ValidationIssue("error", "客户端 ID 无效、重复或保留", field + ".id"))
+            seen_clients.add(client.id)
+            if not _ENV_PREFIX_RE.fullmatch(client.token_env) or client.token_env in seen_tokens:
+                issues.append(ValidationIssue("error", "客户端凭据须引用独立环境变量", field + ".token_env"))
+            seen_tokens.add(client.token_env)
+            if client.role not in {"owner", "user"}:
+                issues.append(ValidationIssue("error", "客户端 role 仅支持 owner/user", field + ".role"))
+        if qq is None and weixin is None:
+            if not gateway.clients:
+                issues.append(ValidationIssue("error", "Gateway 必须声明渠道或客户端", "gateway.clients"))
+            if "platform" in raw:
+                issues.append(ValidationIssue("error", "客户端实例使用 gateway.clients，不声明 platform", "platform"))
         for name in ("max_concurrent_turns", "max_pending_ingress"):
             value = getattr(gateway, name)
             if type(value) is not int or value <= 0:
@@ -556,6 +579,22 @@ def _load_yaml(path: Path) -> dict[str, Any]:
     return data
 
 
+def _parse_gateway_clients(value: Any) -> tuple[GatewayClientSpec, ...]:
+    if not isinstance(value, list):
+        raise ValueError("gateway.clients 必须是 list")
+    clients = []
+    for index, item in enumerate(value):
+        field = f"gateway.clients[{index}]"
+        if not isinstance(item, dict) or set(item) - {"id", "token_env", "role"}:
+            raise ValueError(f"{field} 只接受 id/token_env/role")
+        clients.append(GatewayClientSpec(
+            id=_strict_string(item.get("id", ""), field + ".id"),
+            token_env=_strict_string(item.get("token_env", ""), field + ".token_env"),
+            role=_strict_string(item.get("role", "user"), field + ".role"),
+        ))
+    return tuple(clients)
+
+
 def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
     platform = _mapping(data.get("platform"), "platform")
     gateway_value = data.get("gateway", _MISSING)
@@ -627,6 +666,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         PlatformSpec(type="qq", adapter="gateway")
         if qq_channel is not None
         else PlatformSpec(type="weixin", adapter="gateway") if weixin_channel is not None
+        else PlatformSpec(type="gateway", adapter="gateway") if gateway_configured and gateway.get("clients")
         else PlatformSpec(
             type=str(platform.get("type", "")).strip(),
             adapter=str(platform.get("adapter", "")).strip(),
@@ -667,6 +707,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                     "gateway.max_concurrent_turns", 8),
                 max_pending_ingress=_strict_integer(gateway.get("max_pending_ingress"),
                     "gateway.max_pending_ingress", 1024),
+                clients=_parse_gateway_clients(gateway.get("clients", [])),
             )
             if gateway_configured
             else None

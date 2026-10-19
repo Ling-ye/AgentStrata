@@ -1,0 +1,12 @@
+{
+  "backend": {
+    "repository": "https://github.com/Open-LLM-VTuber/Open-LLM-VTuber.git",
+    "revision": "992309c0aa19845960228f880013d4685fde93b5",
+    "patch": "patches/backend.patch"
+  },
+  "frontend": {
+    "repository": "https://github.com/Open-LLM-VTuber/Open-LLM-VTuber-Web.git",
+    "revision": "d176e7df2366952e3bacbf12cf9a8b18a4315932",
+    "patch": "patches/frontend.patch"
+  }
+}

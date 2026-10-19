@@ -1,0 +1,169 @@
+diff --git a/run_server.py b/run_server.py
+--- a/run_server.py
++++ b/run_server.py
+@@ -10,8 +10,8 @@
+ from loguru import logger
+ from upgrade_codes.upgrade_manager import UpgradeManager
+ 
+-from src.open_llm_vtuber.server import WebSocketServer
+-from src.open_llm_vtuber.config_manager import Config, read_yaml, validate_config
++from open_llm_vtuber.server import WebSocketServer
++from open_llm_vtuber.config_manager import Config, read_yaml, validate_config
+ 
+ os.environ["HF_HOME"] = str(Path(__file__).parent / "models")
+ os.environ["MODELSCOPE_CACHE"] = str(Path(__file__).parent / "models")
+diff --git a/src/open_llm_vtuber/agent/agent_factory.py b/src/open_llm_vtuber/agent/agent_factory.py
+--- a/src/open_llm_vtuber/agent/agent_factory.py
++++ b/src/open_llm_vtuber/agent/agent_factory.py
+@@ -36,6 +36,13 @@
+         """
+         logger.info(f"Initializing agent: {conversation_agent_choice}")
+ 
++        if conversation_agent_choice == "agentstrata":
++            from agentstrata_vtuber.agent import AgentStrataAgent
++
++            return AgentStrataAgent(
++                tts_preprocessor_config=tts_preprocessor_config,
++                send_text=kwargs.get("send_text"),
++            )
+         if conversation_agent_choice == "basic_memory_agent":
+             # Get the LLM provider choice from agent settings
+             basic_memory_settings: dict = agent_settings.get("basic_memory_agent", {})
+diff --git a/src/open_llm_vtuber/config_manager/agent.py b/src/open_llm_vtuber/config_manager/agent.py
+--- a/src/open_llm_vtuber/config_manager/agent.py
++++ b/src/open_llm_vtuber/config_manager/agent.py
+@@ -200,7 +200,7 @@
+     """This class contains all of the configurations related to agent."""
+ 
+     conversation_agent_choice: Literal[
+-        "basic_memory_agent", "mem0_agent", "hume_ai_agent", "letta_agent"
++        "basic_memory_agent", "mem0_agent", "hume_ai_agent", "letta_agent", "agentstrata"
+     ] = Field(..., alias="conversation_agent_choice")
+     agent_settings: AgentSettings = Field(..., alias="agent_settings")
+     llm_configs: StatelessLLMConfigs = Field(..., alias="llm_configs")
+diff --git a/src/open_llm_vtuber/server.py b/src/open_llm_vtuber/server.py
+--- a/src/open_llm_vtuber/server.py
++++ b/src/open_llm_vtuber/server.py
+@@ -74,6 +74,9 @@
+     def __init__(self, config: Config, default_context_cache: ServiceContext = None):
+         self.app = FastAPI(title="Open-LLM-VTuber Server")  # Added title for clarity
+         self.config = config
++        if config.character_config.agent_config.conversation_agent_choice == "agentstrata":
++            from agentstrata_vtuber.runtime import install
++            install(self.app, host=config.system_config.host)
+         self.default_context_cache = (
+             default_context_cache or ServiceContext()
+         )  # Use provided context or initialize a new empty one waiting to be loaded
+diff --git a/src/open_llm_vtuber/service_context.py b/src/open_llm_vtuber/service_context.py
+--- a/src/open_llm_vtuber/service_context.py
++++ b/src/open_llm_vtuber/service_context.py
+@@ -230,7 +230,10 @@
+         self.asr_engine = asr_engine
+         self.tts_engine = tts_engine
+         self.vad_engine = vad_engine
+-        self.agent_engine = agent_engine
++        self.agent_engine = (
++            None if character_config.agent_config.conversation_agent_choice == "agentstrata"
++            else agent_engine
++        )
+         self.translate_engine = translate_engine
+         # Load potentially shared components by reference
+         self.mcp_server_registery = mcp_server_registery
+@@ -238,6 +241,10 @@
+         self.send_text = send_text
+         self.client_uid = client_uid
+ 
++        if character_config.agent_config.conversation_agent_choice == "agentstrata":
++            await self.init_agent(character_config.agent_config, character_config.persona_prompt)
++            return
++
+         # Initialize session-specific MCP components
+         await self._init_mcp_components(
+             self.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
+@@ -279,7 +286,8 @@
+ 
+         # Initialize shared ToolAdapter if it doesn't exist yet
+         if (
+-            not self.tool_adapter
++            config.character_config.agent_config.conversation_agent_choice != "agentstrata"
++            and not self.tool_adapter
+             and config.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp
+         ):
+             if not self.mcp_server_registery:
+@@ -291,10 +299,11 @@
+             self.tool_adapter = ToolAdapter(server_registery=self.mcp_server_registery)
+ 
+         # Initialize MCP Components before initializing Agent
+-        await self._init_mcp_components(
+-            config.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
+-            config.character_config.agent_config.agent_settings.basic_memory_agent.mcp_enabled_servers,
+-        )
++        if config.character_config.agent_config.conversation_agent_choice != "agentstrata":
++            await self._init_mcp_components(
++                config.character_config.agent_config.agent_settings.basic_memory_agent.use_mcpp,
++                config.character_config.agent_config.agent_settings.basic_memory_agent.mcp_enabled_servers,
++            )
+ 
+         # init agent from character config
+         await self.init_agent(
+@@ -391,6 +400,7 @@
+                 tool_manager=self.tool_manager,
+                 tool_executor=self.tool_executor,
+                 mcp_prompt_string=self.mcp_prompt,
++                send_text=self.send_text,
+             )
+ 
+             logger.debug(f"Agent choice: {agent_config.conversation_agent_choice}")
+diff --git a/src/open_llm_vtuber/websocket_handler.py b/src/open_llm_vtuber/websocket_handler.py
+--- a/src/open_llm_vtuber/websocket_handler.py
++++ b/src/open_llm_vtuber/websocket_handler.py
+@@ -76,6 +76,8 @@
+     def _init_message_handlers(self) -> Dict[str, Callable]:
+         """Initialize message type to handler mapping"""
+         return {
++            "agentstrata-avatar-result": self._handle_agentstrata_event,
++            "agentstrata-playback": self._handle_agentstrata_event,
+             "add-client-to-group": self._handle_group_operation,
+             "remove-client-from-group": self._handle_group_operation,
+             "request-group-info": self._handle_group_info,
+@@ -172,8 +174,13 @@
+         # Send initial group status
+         await self.send_group_update(websocket, client_uid)
+ 
+-        # Start microphone
+-        await websocket.send_text(json.dumps({"type": "control", "text": "start-mic"}))
++        if session_service_context.character_config.agent_config.conversation_agent_choice == "agentstrata":
++            from agentstrata_vtuber.runtime import attach
++            attach(client_uid, session_service_context.character_config.live2d_model_name,
++                   websocket.send_text)
++            await websocket.send_text(json.dumps({"type": "agentstrata-mode"}))
++        else:
++            await websocket.send_text(json.dumps({"type": "control", "text": "start-mic"}))
+ 
+     async def _init_service_context(
+         self, send_text: Callable, client_uid: str
+@@ -278,6 +285,11 @@
+         )
+ 
+     async def handle_disconnect(self, client_uid: str) -> None:
++        context = self.client_contexts.get(client_uid)
++        if context and context.character_config.agent_config.conversation_agent_choice == "agentstrata":
++            from agentstrata_vtuber.runtime import detach
++            detach(client_uid)
++            await context.close()
+         """Handle client disconnection"""
+         group = self.chat_group_manager.get_client_group(client_uid)
+         if group:
+@@ -390,6 +402,12 @@
+                 context=context,
+                 heard_response=heard_response,
+             )
++
++    async def _handle_agentstrata_event(self, websocket, client_uid, data) -> None:
++        context = self.client_contexts[client_uid]
++        if context.character_config.agent_config.conversation_agent_choice == "agentstrata":
++            from agentstrata_vtuber.runtime import receive
++            receive(client_uid, data)
+ 
+     async def _handle_history_list_request(
+         self, websocket: WebSocket, client_uid: str, data: WSMessage

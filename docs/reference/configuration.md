@@ -84,6 +84,12 @@ QQ Owner/Admin 只按稳定 `user_id` 授权。
 
 ### `gateway`
 
+独立客户端可只声明 `gateway.clients`，不声明 `platform` 或原生 `channels`。
+每项包含 `id`、`token_env` 与 `role`（`owner` 或默认 `user`）；身份由宿主与凭据绑定，
+不能由对话内容声明。客户端使用独立 token，不授予 Gateway admin。
+无原生渠道时不要求 ACP 的 `token_env` 值；带原生渠道时保留原 ACP 凭据要求。
+可运行示例与独立数据目录设置见[Live2D 接入](../guides/live2d.md)。
+
 - `protocol_version`：当前只接受 `1`。
 - `host`：必须为回环地址；v1 不开放远程 Gateway。
 - `port_env`：Gateway 监听端口的环境变量名。

@@ -214,7 +214,10 @@ def build_provision_plan(
                     starter
                     or (
                         spec.gateway is not None
-                        and platform_field.env_key == spec.gateway.token_env
+                        and platform_field.env_key in {
+                            spec.gateway.token_env,
+                            *(client.token_env for client in spec.gateway.clients),
+                        }
                     )
                 )
             ),
