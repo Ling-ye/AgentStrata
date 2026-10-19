@@ -1,5 +1,9 @@
 # Support
 
+AgentStrata is an open-source Agent framework with self-improvement capabilities,
+built around its own Harness repair and acceptance system and Eval execution and
+evidence system. Start with the [project overview](README.md) to choose a workflow.
+
 Use [GitHub Issues](https://github.com/Ling-ye/AgentStrata/issues) for
 reproducible bugs, focused feature proposals, and usage questions. Search open
 and closed issues first, then use the matching issue form and provide a minimal

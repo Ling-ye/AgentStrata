@@ -48,9 +48,12 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Harness protocol upgrades require a verified history export before starting
   a new active database; retired task resources remain available without resuming
   old workers.
-- Chinese project and Harness documentation now lead with reproducible evaluation,
-  independent acceptance, and MIT-open repair implementation; CLI examples use
-  saved model profiles.
+- Project documentation now presents AgentStrata as an Agent framework with
+  self-improvement capabilities, highlighting its own Harness and Eval systems
+  and distinguishing execution routes, design references, and implementation
+  dependencies. A framework overview diagram separates the runtime from Harness,
+  Eval, and controlled delivery. Human-facing overviews and task-routed AI
+  guidance share the same domain facts; CLI examples use saved model profiles.
 
 - Xiaohongshu deployment now uses a pinned official upstream container image
   while retaining the existing login, search, console, and Bot integration.

@@ -1,5 +1,8 @@
 # Evaluation 与评分
 
+Eval 是项目自研的评测执行与证据体系，组织 Case、Target、Trial、隔离执行、条件绑定、
+服务生命周期与结果比较。具体指标使用 DeepEval 或相应基准的评分实现，评测生命周期与原始证据由项目管理。
+
 修改题目、执行环境、评分或结果展示时阅读。运行步骤见 [测评指南](../guides/evaluation.md)，服务协议见 [测评生命周期](evaluation-service.md)。
 
 ## 评分对象与证据
