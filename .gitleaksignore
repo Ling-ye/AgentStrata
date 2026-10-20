@@ -1,0 +1,3 @@
+# Reviewed synthetic non-loopback peer in a rejection test, corrected in 5d7548b.
+# Historical finding only: commit:file:rule:line. Never add real credentials here.
+12bdc59911b106509f2c81d9004ff4d4700c06de:tests/unit/test_vtuber_integration.py:agentstrata-private-ipv4:229

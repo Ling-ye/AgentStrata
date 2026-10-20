@@ -6,6 +6,7 @@
 
 - [src/chatcopilot/evals/service](../../src/chatcopilot/evals/service)
 - [src/chatcopilot/evals/trial_runner.py](../../src/chatcopilot/evals/trial_runner.py)
+- [src/chatcopilot/evals/trial_supervisor.py](../../src/chatcopilot/evals/trial_supervisor.py)
 - [src/chatcopilot/evals/result_codec.py](../../src/chatcopilot/evals/result_codec.py)
 - [src/chatcopilot/evals/application](../../src/chatcopilot/evals/application)
 - [tests/integration/test_evaluation_service.py](../../tests/integration/test_evaluation_service.py)
@@ -62,3 +63,6 @@ Evaluation 根的既存祖先、目录、claim、取消标记和权威 artifact 
 ## Evaluation Trial 监督
 
 正式 Trial 必须在独立 `spawn` 子进程执行，期限取 Case timeout 与 Evaluation 剩余 max-wall 的最小值；取消、期限或预算终止并回收 Trial 进程组，Linux/WSL 必须绑定父死保护。只有同一 Case/attempt 的完整 Target 组可写 checkpoint；中断的不完整组及 workspace 必须丢弃，不能参与 resume、compare 或通过率。
+
+若期限在 supervisor 建立进程组前到达，清理等待收到它的 `ready` 帧后补发终止信号；
+该帧确认清理 handler 与 subreaper 已就绪。已有清理宽限期和完整回收证明仍须满足。

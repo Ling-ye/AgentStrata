@@ -5,6 +5,7 @@
 ## 源码入口
 
 - [scripts/check_public_repo.py](../../scripts/check_public_repo.py)
+- [scripts/check_secrets.sh](../../scripts/check_secrets.sh) / [.gitleaksignore](../../.gitleaksignore)
 - [scripts/verify_release_artifacts.py](../../scripts/verify_release_artifacts.py)
 - [deploy/wsl](../../deploy/wsl)
 - [src/chatcopilot/botspec](../../src/chatcopilot/botspec)
@@ -46,13 +47,20 @@ tracked 文件、示例、测试和可达 Git 历史禁止真实凭据、组织/
 
 Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查询规则只匹配 URI 中的 `?key=` / `&key=`；拒绝性测试需要用分段字面量在运行时构造私网地址、私有域名或假 secret，禁止用宽泛路径 allowlist、`gitleaks:allow` 或提交真实敏感值绕过门禁。
 
+已提交且已核实为合成夹具的历史误报，允许在 `.gitleaksignore` 中登记
+`commit:file:rule:line` 精确 fingerprint，并注明理由及修正提交。此表只用于历史扫描，
+不适用于当前索引、工作区或未跟踪候选；不能按整个提交、文件或规则忽略，更不能登记真实秘密。
+该文件是 Harness 冻结政策，候选修复不能自行新增扫描豁免。
+秘密扫描使用独立的 findings 退出码区分命中和工具故障；公开日志仅列规则计数。
+显式 `--keep-report` 才保留仓库外 mode `0700` 目录中的私有诊断，禁止上传为公开 artifact。
+
 ## 全新公开基线
 
 首次公开从审计后的 tracked-only 文件树创建单个无父根提交，不复制旧 commit、tag、branch、notes、replace refs、LFS、submodule 或 GitHub 元数据；禁止 `--mirror`、`--all` 和批量 `--tags` 推送。 完整流程与 Git 结构验收以 `docs/reference/publication.md` 为事实源，提交、推送、远端创建、可见性修改和归档由维护者执行。
 
 ## Release 构建边界
 
-`requirements/release-build.txt` 是手工复核的六包、全哈希、Python 3.10 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
+`requirements/release-build.txt` 是手工复核的五包、全哈希、Python 3.11 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
 
 ## 许可与对应源码
 

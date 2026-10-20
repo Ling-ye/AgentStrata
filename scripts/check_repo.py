@@ -193,7 +193,7 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
             cwd=test_root,
         ),
     )
-    full = (
+    python = (
         *common,
         Check("third-party license evidence", _python("scripts/third_party_notices.py", *target_args)),
         Check("installed dependency consistency", _python("-m", "pip", "check")),
@@ -209,13 +209,24 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
                 "pytest",
                 *test_imports,
                 "-q",
+                "-n", "4", "--dist=loadfile",
                 _pytest_basetemp("full"),
             ),
             cwd=test_root,
         ),
+    )
+    # Harness mounts frontend dependencies and writable build caches in its
+    # checker snapshot, which already contains the candidate's product sources.
+    # Load TS configs in memory; the bundler writes into read-only node_modules.
+    console = (
+        Check(
+            "console tests",
+            (_executable("npm"), "test", "--", "--configLoader", "runner"),
+            ROOT / "console" / "web",
+        ),
         Check(
             "console production build",
-            (_executable("npm"), "run", "build"),
+            (_executable("npm"), "run", "build", "--", "--configLoader", "runner"),
             ROOT / "console" / "web",
         ),
     )
@@ -223,7 +234,8 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
         common[0], common[1], common[2],
         Check("diff format", ("git", "diff", "--check"), cwd=test_root, uses_repository_index=True),
     )
-    return {"docs": docs, "fast": fast, "full": full}
+    return {"docs": docs, "fast": fast, "python": python, "console": console,
+            "full": (*python, *console)}
 
 
 def _preflight(check: Check) -> str | None:
@@ -290,7 +302,7 @@ def _write_manifest(report_dir: Path, payload: dict[str, object]) -> None:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("profile", choices=("docs", "fast", "full"))
+    parser.add_argument("profile", choices=("docs", "fast", "python", "console", "full"))
     parser.add_argument("--keep-going", action="store_true", help="collect every check for baseline comparison")
     parser.add_argument("--candidate-root", type=Path, help="isolated candidate test tree; checker definitions stay here")
     parser.add_argument("--docs-base", help="base commit/ref for documentation impact; defaults to local uncommitted changes")

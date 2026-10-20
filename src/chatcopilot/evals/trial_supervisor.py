@@ -489,7 +489,12 @@ def _terminate_trial_process(process: Any, *, receiver: Any | None = None) -> No
             if receiver is not None:
                 try:
                     if receiver.poll(0.05):
-                        _recv_trial_ipc_frame(receiver)
+                        frame = _recv_trial_ipc_frame(receiver)
+                        if frame == {"kind": "ready", "pid": process.pid}:
+                            # The deadline may predate setsid(), so the first
+                            # killpg found no group. Ready proves the cleanup
+                            # handler is installed; deliver the pending stop.
+                            process.terminate()
                 except (EOFError, OSError, ValueError):
                     receiver = None
             else:

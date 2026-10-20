@@ -39,7 +39,6 @@ bash scripts/check_secrets.sh history
 .venv/bin/python scripts/check_sdd_specs.py
 .venv/bin/python scripts/check_architecture.py
 .venv/bin/python scripts/check_repo.py full
-npm test --prefix console/web
 git diff --check
 ```
 
@@ -85,7 +84,7 @@ workflow 会分别执行验证、构建和创建草稿三个权限隔离的 job�
 - 核对仓库已公开、输入 tag 与运行 ref 相同、tag 为 GitHub 验证通过的签名 annotated
   tag，并且 tag commit 是 `main` 的祖先。
 - 执行公开历史扫描、Gitleaks、release metadata 检查、完整仓库门禁和 Console 测试。
-- 使用 `requirements/release-build.txt` 的全哈希 build-only 闭包，在 Python 3.10 上两次
+- 使用 `requirements/release-build.txt` 的全哈希 build-only 闭包，在 Python 3.11 上两次
   构建 wheel 与 sdist，验证内容、安装、从 sdist 重建 wheel 以及归一化产物一致性。
 - 为 wheel、sdist、release notes 和 checksum 生成校验和与 attestation，并以
   `contents: write` 只创建 draft GitHub Release。

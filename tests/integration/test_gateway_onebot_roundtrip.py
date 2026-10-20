@@ -54,6 +54,9 @@ _ACTOR = "20002"
 _GROUP = "30003"
 _ONEBOT_TOKEN = "o" * 32
 _GATEWAY_TOKEN = "g" * 32
+# This verifies delivery and persisted observations, not a latency SLA. Allow
+# scheduling and fsync under parallel CI load while still bounding a stuck test.
+_EVENT_TIMEOUT = 10
 
 
 class _PreparedExecutor:
@@ -258,7 +261,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
         client: GatewayWebSocketClient | None = None
         try:
             await channels.start()
-            await asyncio.wait_for(provider.ready.wait(), timeout=1)
+            await asyncio.wait_for(provider.ready.wait(), timeout=_EVENT_TIMEOUT)
             await gateway_server.start()
             await channels.activate()
             events.attach_live_sink(gateway_server.publish, loop=asyncio.get_running_loop())
@@ -282,7 +285,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
                 ChatSendParams(session_id, (TextRpcSegment("hello from acp"),)),
                 idempotency_key="send-acp-turn",
             )
-            final = await asyncio.wait_for(subscription.get(), timeout=1)
+            final = await asyncio.wait_for(subscription.get(), timeout=_EVENT_TIMEOUT)
             assert isinstance(final.payload, ChatFinalEvent)
             assert final.payload.run_id == accepted.run_id
             assert final.payload.segments == (TextRpcSegment("gateway-answer\n\n" + source_notice()),)
@@ -290,7 +293,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
 
             provider.emit_message.set()
             try:
-                await asyncio.wait_for(provider.outbound_received.wait(), timeout=2)
+                await asyncio.wait_for(provider.outbound_received.wait(), timeout=_EVENT_TIMEOUT)
             except asyncio.TimeoutError as exc:
                 raise AssertionError(
                     f"QQ outbound was not observed; ingress_errors={ingress_errors!r}"
@@ -377,7 +380,9 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
 
 
 async def _wait_for_completed_ingress(state: GatewayStateStore) -> None:
-    for _ in range(100):
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + _EVENT_TIMEOUT
+    while loop.time() < deadline:
         completed = state.list_ingress(states=("completed",), limit=10)
         if completed:
             return

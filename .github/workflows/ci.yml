@@ -4,7 +4,12 @@ on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch: {}
+  workflow_dispatch:
+    inputs:
+      docs_base:
+        description: Optional commit/ref for documentation impact analysis
+        required: false
+        type: string
 
 permissions:
   contents: read
@@ -16,7 +21,7 @@ concurrency:
 jobs:
   public-boundary:
     name: Public repository boundary
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - name: Check out complete history
@@ -27,19 +32,57 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.10"
+          python-version: "3.13"
       - name: Scan public identifiers across history
         run: python scripts/check_public_repo.py --history
       - name: Scan secrets across history
+        if: ${{ !cancelled() }}
         run: bash scripts/check_secrets.sh history
+
+  python:
+    name: Python ${{ matrix.python-version }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.13"]
+    env:
+      TMPDIR: /tmp
+    steps:
+      - name: Check out source and documentation bases
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Set up locked uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Prepare Linux sandbox tests
+        run: bash scripts/setup_ci_linux.sh
+      - name: Install locked Python dependencies
+        run: uv sync --locked --python "${{ matrix.python-version }}" --extra agent --extra acp --extra dev --extra evaluation --extra weixin
+      - name: Run Python repository gate
+        env:
+          DOCS_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.docs_base || '' }}
+        run: |
+          doc_args=()
+          if [[ -n "$DOCS_BASE" ]]; then
+            doc_args+=(--docs-base "$DOCS_BASE")
+          fi
+          .venv/bin/python scripts/check_repo.py python --keep-going "${doc_args[@]}"
 
   console:
     name: Console
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
-    defaults:
-      run:
-        working-directory: console/web
     steps:
       - name: Check out source
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -52,8 +95,6 @@ jobs:
           cache: npm
           cache-dependency-path: console/web/package-lock.json
       - name: Install locked dependencies
-        run: npm ci
-      - name: Test
-        run: npm test
-      - name: Build
-        run: npm run build
+        run: npm ci --prefix console/web
+      - name: Test and build Console
+        run: python3 scripts/check_repo.py console --keep-going

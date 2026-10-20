@@ -34,7 +34,7 @@ def test_public_environment_template_is_included(name):
 
 @pytest.mark.parametrize("name", ["src/chatcopilot/evals/suites/project-business-v1/cases.yaml",
     "src/chatcopilot/evals/business_policy.py", "console/web/src/features/harness/repairV2.test.ts",
-    "console/web/vite.config.ts"])
+    "console/web/vite.config.ts", ".gitleaksignore"])
 def test_existing_expectations_and_frontend_tests_remain_fixed(name):
     assert policy_path(name)
 
@@ -112,9 +112,63 @@ def test_repository_command_replaces_small_tmpfs_with_private_host_directory(tmp
     assert not (output / 'tmp').exists()
 
 
+def test_repository_command_preserves_the_selected_node_binary(tmp_path, monkeypatch):
+    root = tmp_path / "repo"
+    root.mkdir()
+    node = tmp_path / "selected-node"
+    node.write_bytes(b"fixture")
+    observed = []
+
+    class Process:
+        returncode = 0
+        pid = 1
+        def poll(self):
+            return 0
+
+    monkeypatch.setattr("chatcopilot.harness.repository_checks.shutil.which",
+                        lambda name: str(node) if name == "node" else None)
+    monkeypatch.setattr("chatcopilot.harness.repository_checks.sandbox_command",
+                        lambda argv, **kwargs: ["bwrap", "--", *argv])
+    def popen(command, **kwargs):
+        observed.extend(command)
+        return Process()
+    monkeypatch.setattr("chatcopilot.harness.repository_checks.subprocess.Popen", popen)
+    checks = RepositoryChecks(tmp_path / "checks", root)
+    code, _ = checks.command(root, ["node", "--version"], tmp_path / "checks/output", lambda: None)
+    assert code == 0
+    index = observed.index("/sandbox-tools/node")
+    assert observed[index - 2:index + 1] == ["--ro-bind", str(node), "/sandbox-tools/node"]
+
+
 def test_repository_diagnostic_is_redacted_and_bounded(monkeypatch):
     from chatcopilot.harness.repository_checks import _diagnostic
     secret = "diagnostic-token-value"
     monkeypatch.setenv("HARNESS_TEST_TOKEN", secret)
     value = _diagnostic(("failure " + secret + " ") * 500)
     assert secret not in value and len(value) <= 1200
+
+
+def test_full_gate_maps_npm_local_packages_to_candidate_sources(tmp_path, monkeypatch):
+    root, _, _ = fixture(tmp_path)
+    (root / "pyproject.toml").write_text('[project]\nname="sample"\nversion="1.0.0"\n')
+    web = root / "console/web"
+    (web / "node_modules").mkdir(parents=True)
+    package = web / "packages/local"
+    package.mkdir(parents=True)
+    (package / "index.js").write_text("export default 'candidate';\n")
+    checks = RepositoryChecks(tmp_path / "checks", root)
+
+    class Inspected(Exception):
+        pass
+
+    def inspect(snapshot, argv, output, check_cancel, *, bindings, **kwargs):
+        source = snapshot / "console/web/packages"
+        assert (source / "local/index.js").read_text() == "export default 'candidate';\n"
+        target = str(web / "packages")
+        index = bindings.index(target)
+        assert bindings[index - 2:index + 1] == ("--ro-bind", str(source), target)
+        raise Inspected
+
+    monkeypatch.setattr(checks, "command", inspect)
+    with pytest.raises(Inspected):
+        checks.verify(root, "full", lambda: None)

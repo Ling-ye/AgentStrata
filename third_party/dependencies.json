@@ -1,5 +1,5 @@
 {
-  "notices_sha256": "ce07e1892c7f93f88398c17032a90eeb0b31822bee4546225ecda68e4f9e6859",
+  "notices_sha256": "eb03b0f382c566a84d9aae48d02c335081727ceea51986fb2638157190085003",
   "reviewed_sources_sha256": "b0a3d88ad981b19def4156d8eda60131a78c5a073da826da9d900d1c291fb258",
   "dependencies": [
     {
@@ -6855,35 +6855,6 @@
     },
     {
       "ecosystem": "python",
-      "name": "async-timeout",
-      "version": "5.0.1",
-      "scopes": [
-        "agent",
-        "evaluation",
-        "weixin"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/fe/ba/e2081de779ca30d473f21f5b30e0e737c438205440784c7dfc81efc2b029/async_timeout-5.0.1-py3-none-any.whl",
-      "integrity": "sha256:39e3809566ff85354557ec2398b55e096c8364bacac9405a7a1fa429e77fe76c",
-      "source_url": "https://files.pythonhosted.org/packages/a5/ae/136395dfbfe00dfc94da3f3e136d0b13f394cba8f4841120e34226265780/async_timeout-5.0.1.tar.gz",
-      "source_integrity": "sha256:d9321a7a3d5a6a5e187e824d2fa0793ce379a202935782d555d6e9d2735677d3",
-      "license": "Apache 2",
-      "upstream_urls": [
-        "Chat: Gitter, https://gitter.im/aio-libs/Lobby",
-        "CI: GitHub Actions, https://github.com/aio-libs/async-timeout/actions",
-        "Coverage: codecov, https://codecov.io/github/aio-libs/async-timeout",
-        "GitHub: issues, https://github.com/aio-libs/async-timeout/issues",
-        "GitHub: repo, https://github.com/aio-libs/async-timeout"
-      ],
-      "upstream_authors": {
-        "Author": "Andrew Svetlov <andrew.svetlov@gmail.com>",
-        "Author-email": "andrew.svetlov@gmail.com"
-      },
-      "license_files": {
-        "async_timeout-5.0.1.dist-info/LICENSE": "e18d7bb8f513e2c46bb585c94b585bd30720dd3ccb21ddb0786f72d16658f92c"
-      }
-    },
-    {
-      "ecosystem": "python",
       "name": "attrs",
       "version": "26.1.0",
       "scopes": [
@@ -6934,31 +6905,6 @@
       },
       "license_files": {
         "backoff-2.2.1.dist-info/LICENSE": "2a6b4d5f884d4d7a1bf04ea7df1944cf12b32e35a79a86d0a075a2d3f40fb9ac"
-      }
-    },
-    {
-      "ecosystem": "python",
-      "name": "backports-asyncio-runner",
-      "version": "1.2.0",
-      "scopes": [
-        "agent",
-        "evaluation"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/a0/59/76ab57e3fe74484f48a53f8e337171b4a2349e506eabe136d7e01d059086/backports_asyncio_runner-1.2.0-py3-none-any.whl",
-      "integrity": "sha256:0da0a936a8aeb554eccb426dc55af3ba63bcdc69fa1a600b5bb305413a4477b5",
-      "source_url": "https://files.pythonhosted.org/packages/8e/ff/70dca7d7cb1cbc0edb2c6cc0c38b65cba36cccc491eca64cabd5fe7f8670/backports_asyncio_runner-1.2.0.tar.gz",
-      "source_integrity": "sha256:a5aa7b2b7d8f8bfcaa2b57313f70792df84e32a2a746f585213373f900b42162",
-      "license": "PSF-2.0",
-      "upstream_urls": [
-        "Homepage, https://github.com/samypr100/backports.asyncio.runner",
-        "Changelog, https://github.com/samypr100/backports.asyncio.runner/blob/main/CHANGELOG.md"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "samypr100 <3933065+samypr100@users.noreply.github.com>"
-      },
-      "license_files": {
-        "backports_asyncio_runner-1.2.0.dist-info/licenses/LICENSE.md": "42dc7abeff3b548860a23773afb6495785fd9de86bd6c1c16e3bfe76715b78f0"
       }
     },
     {
@@ -7443,36 +7389,6 @@
       },
       "license_files": {
         "docker-7.2.0/LICENSE": "f2f0b07fa5e492c11d27aa0d2f3f1a0e64b9d17f32d8aa489ae2af9609af33b2"
-      }
-    },
-    {
-      "ecosystem": "python",
-      "name": "exceptiongroup",
-      "version": "1.3.1",
-      "scopes": [
-        "agent",
-        "console",
-        "dev",
-        "evaluation",
-        "runtime",
-        "test"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/8a/0e/97c33bf5009bdbac74fd2beace167cab3f978feb69cc36f1ef79360d6c4e/exceptiongroup-1.3.1-py3-none-any.whl",
-      "integrity": "sha256:a7a39a3bd276781e98394987d3a5701d0c4edffb633bb7a5144577f82c773598",
-      "source_url": "https://files.pythonhosted.org/packages/50/79/66800aadf48771f6b62f7eb014e352e5d06856655206165d775e675a02c9/exceptiongroup-1.3.1.tar.gz",
-      "source_integrity": "sha256:8b412432c6055b0b7d14c310000ae93352ed6754f70fa8f7c34141f91c4e3219",
-      "license": "OSI Approved :: MIT License",
-      "upstream_urls": [
-        "Changelog, https://github.com/agronholm/exceptiongroup/blob/main/CHANGES.rst",
-        "Issue Tracker, https://github.com/agronholm/exceptiongroup/issues",
-        "Source code, https://github.com/agronholm/exceptiongroup"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "Alex Gr��nholm <alex.gronholm@nextday.fi>"
-      },
-      "license_files": {
-        "exceptiongroup-1.3.1.dist-info/licenses/LICENSE": "6e5070d765031e0ad403a1cbf90ae6d19a0228f802e320b7acff460aa72ed47c"
       }
     },
     {
@@ -8144,29 +8060,6 @@
       },
       "license_files": {
         "immutabledict-4.3.1.dist-info/licenses/LICENSE": "347f918d37d4e0556a0695d34b9fb87fa9bbe808d54949851789c6c1fc91c61f"
-      }
-    },
-    {
-      "ecosystem": "python",
-      "name": "importlib-metadata",
-      "version": "9.0.0",
-      "scopes": [
-        "dev"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/38/3d/2d244233ac4f76e38533cfcb2991c9eb4c7bf688ae0a036d30725b8faafe/importlib_metadata-9.0.0-py3-none-any.whl",
-      "integrity": "sha256:2d21d1cc5a017bd0559e36150c21c830ab1dc304dedd1b7ea85d20f45ef3edd7",
-      "source_url": "https://files.pythonhosted.org/packages/a9/01/15bb152d77b21318514a96f43af312635eb2500c96b55398d020c93d86ea/importlib_metadata-9.0.0.tar.gz",
-      "source_integrity": "sha256:a4f57ab599e6a2e3016d7595cfd72eb4661a5106e787a95bcc90c7105b831efc",
-      "license": "Apache-2.0",
-      "upstream_urls": [
-        "Source, https://github.com/python/importlib_metadata"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "\"Jason R. Coombs\" <jaraco@jaraco.com>"
-      },
-      "license_files": {
-        "importlib_metadata-9.0.0.dist-info/licenses/LICENSE": "e2f7bb0557e7a381499f15baa7c1d776d83d6616599179d71d3109b8e39f7b25"
       }
     },
     {
@@ -10134,10 +10027,10 @@
         "evaluation",
         "runtime"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/ce/3a/4140da9ad54108e517f4a16b2d83da3033e08662144623e1239587cb7db6/pywin32-312-cp310-cp310-win_arm64.whl",
-      "integrity": "sha256:3020656e34f1cf7faeb7bccd2b84653a607c6ff0c55ada85e6487d61716deabd",
-      "source_url": "https://files.pythonhosted.org/packages/ce/3a/4140da9ad54108e517f4a16b2d83da3033e08662144623e1239587cb7db6/pywin32-312-cp310-cp310-win_arm64.whl",
-      "source_integrity": "sha256:3020656e34f1cf7faeb7bccd2b84653a607c6ff0c55ada85e6487d61716deabd",
+      "artifact_url": "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl",
+      "integrity": "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c",
+      "source_url": "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl",
+      "source_integrity": "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c",
       "license": "PSF",
       "upstream_urls": [
         "Homepage, https://github.com/mhammond/pywin32",
@@ -10398,36 +10291,6 @@
       },
       "license_files": {
         "rich-14.3.4/LICENSE": "deed7c17a4318158190a3ea239cc879a5a50271cebb98ae7025f48fbe58dca15"
-      }
-    },
-    {
-      "ecosystem": "python",
-      "name": "rpds-py",
-      "version": "0.30.0",
-      "scopes": [
-        "agent",
-        "runtime"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/20/af/3f2f423103f1113b36230496629986e0ef7e199d2aa8392452b484b38ced/rpds_py-0.30.0.tar.gz",
-      "integrity": "sha256:dd8ff7cf90014af0c0f787eea34794ebf6415242ee1d6fa91eaba725cc441e84",
-      "source_url": "https://files.pythonhosted.org/packages/20/af/3f2f423103f1113b36230496629986e0ef7e199d2aa8392452b484b38ced/rpds_py-0.30.0.tar.gz",
-      "source_integrity": "sha256:dd8ff7cf90014af0c0f787eea34794ebf6415242ee1d6fa91eaba725cc441e84",
-      "license": "MIT",
-      "upstream_urls": [
-        "Documentation, https://rpds.readthedocs.io/",
-        "Homepage, https://github.com/crate-py/rpds",
-        "Issues, https://github.com/crate-py/rpds/issues/",
-        "Funding, https://github.com/sponsors/Julian",
-        "Tidelift, https://tidelift.com/subscription/pkg/pypi-rpds-py?utm_source=pypi-rpds-py&utm_medium=referral&utm_campaign=pypi-link",
-        "Source, https://github.com/crate-py/rpds",
-        "Upstream, https://github.com/orium/rpds"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "Julian Berman <Julian+rpds@GrayVines.com>"
-      },
-      "license_files": {
-        "rpds_py-0.30.0/LICENSE": "314e4e91be3baa93c0fb4bccc9e4e97cd643eb839b065af921782c2175fe9909"
       }
     },
     {
@@ -10877,35 +10740,6 @@
       },
       "license_files": {
         "toml-0.10.2.dist-info/LICENSE": "2d9294823df6c89357c8be4927fce79361d6561e5ee7532d5926e63939aaa536"
-      }
-    },
-    {
-      "ecosystem": "python",
-      "name": "tomli",
-      "version": "2.4.1",
-      "scopes": [
-        "agent",
-        "dev",
-        "evaluation",
-        "release-build",
-        "runtime",
-        "test"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/7b/61/cceae43728b7de99d9b847560c262873a1f6c98202171fd5ed62640b494b/tomli-2.4.1-py3-none-any.whl",
-      "integrity": "sha256:0d85819802132122da43cb86656f8d1f8c6587d54ae7dcaf30e90533028b49fe",
-      "source_url": "https://files.pythonhosted.org/packages/22/de/48c59722572767841493b26183a0d1cc411d54fd759c5607c4590b6563a6/tomli-2.4.1.tar.gz",
-      "source_integrity": "sha256:7c7e1a961a0b2f2472c1ac5b69affa0ae1132c39adcb67aba98568702b9cc23f",
-      "license": "MIT",
-      "upstream_urls": [
-        "Changelog, https://github.com/hukkin/tomli/blob/master/CHANGELOG.md",
-        "Homepage, https://github.com/hukkin/tomli"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "Taneli Hukkinen <hukkin@users.noreply.github.com>"
-      },
-      "license_files": {
-        "tomli-2.4.1.dist-info/licenses/LICENSE": "b80816b0d530b8accb4c2211783790984a6e3b61922c2b5ee92f3372ab2742fe"
       }
     },
     {
@@ -11386,34 +11220,6 @@
     {
       "ecosystem": "python",
       "name": "websockets",
-      "version": "16.1.1",
-      "scopes": [
-        "agent",
-        "runtime"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/be/4d/2d0d67834092e354d2b0498f014a41249a89556bc406cf86f3e1557bb463/websockets-16.1.1-py3-none-any.whl",
-      "integrity": "sha256:6abbd3e82c731c8e531714466acd5d87b5e88ac3243465337ba71d68e23ae7e3",
-      "source_url": "https://files.pythonhosted.org/packages/21/f7/bc3a25c5ec26ce62ce487690becc2f3710bbc7b33338f005ad390db0b986/websockets-16.1.1.tar.gz",
-      "source_integrity": "sha256:db234eda965dcce15df96bb9709f587cd87d4d52aaf0e80e2f34ec04c7670c57",
-      "license": "BSD-3-Clause",
-      "upstream_urls": [
-        "Homepage, https://github.com/python-websockets/websockets",
-        "Changelog, https://websockets.readthedocs.io/en/stable/project/changelog.html",
-        "Documentation, https://websockets.readthedocs.io/",
-        "Funding, https://tidelift.com/subscription/pkg/pypi-websockets?utm_source=pypi-websockets&utm_medium=referral&utm_campaign=readme",
-        "Tracker, https://github.com/python-websockets/websockets/issues"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "Aymeric Augustin <aymeric.augustin@m4x.org>"
-      },
-      "license_files": {
-        "websockets-16.1.1.dist-info/licenses/LICENSE": "3d6a0c050d8bec52fabad502e45fb25bd02bcadbd70dea34d447b6a0ff4e6da8"
-      }
-    },
-    {
-      "ecosystem": "python",
-      "name": "websockets",
       "version": "17.1",
       "scopes": [
         "agent",
@@ -11526,36 +11332,13 @@
     },
     {
       "ecosystem": "python",
-      "name": "zipp",
-      "version": "4.1.0",
-      "scopes": [
-        "dev"
-      ],
-      "artifact_url": "https://files.pythonhosted.org/packages/3a/13/547360d81e6d88d58492968ffda9f9542854f11310ee556fef14260cc886/zipp-4.1.0-py3-none-any.whl",
-      "integrity": "sha256:25ad4e16390cd314347dd8f1de67a2ac538ae658ed4ab9db16029c07c188e97f",
-      "source_url": "https://files.pythonhosted.org/packages/b9/d8/eab98a517c14134c0b2eb4e2387bc5f457334293ec5d2dd3857ec2966802/zipp-4.1.0.tar.gz",
-      "source_integrity": "sha256:4cb57381f544315db7688e976e922a2b18cdb513d21cc194eb42232ba2a3e602",
-      "license": "MIT",
-      "upstream_urls": [
-        "Source, https://github.com/jaraco/zipp"
-      ],
-      "upstream_authors": {
-        "Author": "",
-        "Author-email": "\"Jason R. Coombs\" <jaraco@jaraco.com>"
-      },
-      "license_files": {
-        "zipp-4.1.0.dist-info/licenses/LICENSE": "9755a18519666e5f0f4cae3daad3d7012bcae48a600b31237d75e9fe134e6683"
-      }
-    },
-    {
-      "ecosystem": "python",
       "name": "zstandard",
       "version": "0.25.0",
       "scopes": [
         "agent"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/ef/d6/8c4bd38a3b24c4c7676a7a3d8de85d6ee7a983602a734b9f9cdefb04a5d6/zstandard-0.25.0-cp310-cp310-win32.whl",
-      "integrity": "sha256:106281ae350e494f4ac8a80470e66d1fe27e497052c8d9c3b95dc4cf1ade81aa",
+      "artifact_url": "https://files.pythonhosted.org/packages/7b/a3/732893eab0a3a7aecff8b99052fecf9f605cf0fb5fb6d0290e36beee47a4/zstandard-0.25.0-cp311-cp311-win32.whl",
+      "integrity": "sha256:f5aeea11ded7320a84dcdd62a3d95b5186834224a9e55b92ccae35d21a8b63d4",
       "source_url": "https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz",
       "source_integrity": "sha256:7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b",
       "license": "BSD-3-Clause",

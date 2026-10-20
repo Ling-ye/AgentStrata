@@ -88,10 +88,12 @@ class RepositoryChecks:
         for name in ("/etc/alternatives", "/etc/os-release", "/etc/lsb-release"):
             if Path(name).exists():
                 extra += ["--ro-bind", name, name]
-        rg = shutil.which("rg")
-        if rg:
-            extra += ["--dir", "/sandbox-tools", "--ro-bind", str(Path(rg).resolve()), "/sandbox-tools/rg",
+        tools = [(name, path) for name in ("rg", "node") if (path := shutil.which(name))]
+        if tools:
+            extra += ["--dir", "/sandbox-tools",
                       "--setenv", "PATH", f"/sandbox-tools:{sys.prefix}/bin:/usr/local/bin:/usr/bin:/bin"]
+            for name, path in tools:
+                extra += ["--ro-bind", str(Path(path).resolve()), f"/sandbox-tools/{name}"]
         command[boundary:boundary] = [*extra, *bindings]
         stdout, stderr = output / "stdout.log", output / "stderr.log"
         try:
@@ -165,6 +167,11 @@ class RepositoryChecks:
                     (target / entry.name).symlink_to(entry)
             private_directory(target / ".cache")
             module_reads = (modules,)
+            # npm file: dependencies resolve out of the host node_modules tree.
+            # Expose candidate package sources at that path, never operator code.
+            packages = snapshot / "console/web/packages"
+            if packages.is_dir():
+                bindings += ["--ro-bind", str(packages), str(modules.parent / "packages")]
             cache = private_directory(output / "node-cache")
             info = output / "tsconfig.tsbuildinfo"
             info.touch(mode=0o600)

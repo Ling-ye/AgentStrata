@@ -6,6 +6,12 @@ readonly POLICY_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 readonly ROOT="$(cd -- "${AGENTSTRATA_REPO_ROOT:-$POLICY_ROOT}" && pwd)"
 readonly GITLEAKS_VERSION="8.30.1"
 readonly MODE="${1:-all}"
+readonly REPORT_OPTION="${2:-}"
+
+if (( $# > 2 )) || [[ -n "$REPORT_OPTION" && "$REPORT_OPTION" != --keep-report ]]; then
+  printf 'usage: check_secrets.sh [all|history|changes] [--keep-report]\n' >&2
+  exit 2
+fi
 
 case "$(uname -m)" in
   x86_64|amd64)
@@ -25,60 +31,105 @@ esac
 case "$MODE" in
   all|history|changes) ;;
   *)
-    printf 'usage: check_secrets.sh [all|history|changes]\n' >&2
+    printf 'usage: check_secrets.sh [all|history|changes] [--keep-report]\n' >&2
     exit 2
     ;;
 esac
 
 readonly WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/agentstrata-gitleaks.XXXXXX")"
+FAILED_SCOPE=""
 cleanup() {
+  if [[ "$REPORT_OPTION" == --keep-report && -n "$FAILED_SCOPE" ]]; then
+    local destination
+    # Always outside the repository, even when TMPDIR points into a checkout.
+    destination="$(mktemp -d /tmp/agentstrata-secret-report.XXXXXX)"
+    cp -- "$WORK_DIR/$FAILED_SCOPE.log" "$destination/"
+    if [[ -f "$WORK_DIR/$FAILED_SCOPE.json" ]]; then
+      cp -- "$WORK_DIR/$FAILED_SCOPE.json" "$destination/"
+    fi
+    printf 'Private diagnostics retained at %s; do not upload them to CI or Git\n' "$destination" >&2
+  fi
   rm -rf -- "$WORK_DIR"
 }
-trap cleanup EXIT HUP INT TERM
+trap cleanup EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 chmod 0700 "$WORK_DIR"
 
 readonly ARCHIVE="$WORK_DIR/gitleaks.tar.gz"
 readonly DOWNLOAD_URL="https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${ASSET_ARCH}.tar.gz"
+readonly HISTORY_IGNORE="$POLICY_ROOT/.gitleaksignore"
 readonly EMPTY_IGNORE="$WORK_DIR/controlled-empty.gitleaksignore"
 : > "$EMPTY_IGNORE"
-chmod 0600 "$EMPTY_IGNORE"
 
-curl --fail --location --silent --show-error --retry 3 \
+if ! curl --fail --location --silent --show-error --retry 3 --retry-all-errors \
+  --connect-timeout 15 --max-time 120 \
   --proto '=https' --tlsv1.2 \
-  --output "$ARCHIVE" "$DOWNLOAD_URL"
-printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum --check --status
-tar -xzf "$ARCHIVE" -C "$WORK_DIR" gitleaks
+  --output "$ARCHIVE" "$DOWNLOAD_URL"; then
+  printf 'ERROR: unable to download the pinned Gitleaks archive\n' >&2
+  exit 2
+fi
+if ! printf '%s  %s\n' "$ARCHIVE_SHA256" "$ARCHIVE" | sha256sum --check --status; then
+  printf 'ERROR: Gitleaks archive checksum mismatch\n' >&2
+  exit 2
+fi
+if ! tar -xzf "$ARCHIVE" -C "$WORK_DIR" gitleaks; then
+  printf 'ERROR: unable to extract the verified Gitleaks archive\n' >&2
+  exit 2
+fi
 readonly GITLEAKS="$WORK_DIR/gitleaks"
 
 run_gitleaks() {
   local scope="$1"
   shift
   local report="$WORK_DIR/${scope}.json"
+  local ignore="$EMPTY_IGNORE"
+  if [[ "$scope" == history ]]; then
+    ignore="$HISTORY_IGNORE"
+  fi
   local status
   set +e
   "$GITLEAKS" "$@" \
     --config "$POLICY_ROOT/.gitleaks.toml" \
-    --gitleaks-ignore-path "$EMPTY_IGNORE" \
+    --gitleaks-ignore-path "$ignore" \
     --ignore-gitleaks-allow \
     --max-archive-depth=2 \
     --max-decode-depth=2 \
     --no-banner \
     --redact=100 \
+    --exit-code=10 \
     --report-format=json \
     --report-path "$report" \
-    > /dev/null 2>&1
+    > "$WORK_DIR/${scope}.log" 2>&1
   status=$?
   set -e
   case "$status" in
     0)
+      printf 'OK: gitleaks %s scan\n' "$scope"
       return 0
       ;;
-    1)
-      printf 'FAIL: gitleaks %s scan detected findings; inspect a private local run\n' "$scope" >&2
+    10)
+      FAILED_SCOPE="$scope"
+      printf 'FAIL: gitleaks %s scan detected findings\n' "$scope" >&2
+      python3 - "$report" <<'PY'
+from collections import Counter
+import json
+from pathlib import Path
+import sys
+
+findings = json.loads(Path(sys.argv[1]).read_text(encoding="utf-8"))
+counts = Counter(finding["RuleID"] for finding in findings)
+# No paths, matches, author identities or commit messages in public output.
+print("Finding counts by rule: " + json.dumps(counts, sort_keys=True))
+PY
+      printf 'For private diagnostics rerun: bash scripts/check_secrets.sh %s --keep-report\n' "$scope" >&2
       return 1
       ;;
     *)
+      FAILED_SCOPE="$scope"
       printf 'ERROR: gitleaks %s scan failed without publishing raw output\n' "$scope" >&2
+      printf 'For private diagnostics rerun with --keep-report\n' >&2
       return 2
       ;;
   esac

@@ -1456,12 +1456,46 @@ def test_spawn_supervisor_timeout_reaps_setsid_descendant(tmp_path: Path) -> Non
     with pytest.raises(evaluation_module._TrialExecutionDeadlineExceeded):
         evaluation_module._execute_supervised_trial(
             request,
-            budget=evaluation_module._TrialExecutionBudget(seconds=1.5, scope="case"),
+            # This case needs an actual descendant before the deadline. The
+            # separate delayed-start test covers expiry before supervisor ready.
+            budget=evaluation_module._TrialExecutionBudget(seconds=10, scope="case"),
             cancel_check=None,
             executor=_process_tree_probe_executor,
         )
 
     _assert_linux_process_reaped(int(marker.read_text(encoding="utf-8")))
+
+
+@pytest.mark.skipif(
+    not os.path.isdir("/proc/self/task"),
+    reason="Linux subreaper supervision requires /proc",
+)
+def test_timeout_before_supervisor_ready_still_stops_and_reaps_it(tmp_path, monkeypatch):
+    request = _supervisor_trial_request(tmp_path)
+    supervisor_pid = tmp_path / "starting-supervisor.pid"
+    descendant = request.output / "late-descendant.pid"
+    request = replace(request, options={
+        "marker": str(descendant), "mode": "block", "escape_session": True,
+    })
+    prepare = supervisor_module._prepare_trial_process
+
+    def delayed_prepare(*, parent_pid):
+        supervisor_pid.write_text(str(os.getpid()))
+        time.sleep(0.2)
+        prepare(parent_pid=parent_pid)
+
+    monkeypatch.setattr(supervisor_module, "_prepare_trial_process", delayed_prepare)
+    with pytest.raises(evaluation_module._TrialExecutionDeadlineExceeded):
+        evaluation_module._execute_supervised_trial(
+            request,
+            budget=evaluation_module._TrialExecutionBudget(seconds=0.05, scope="case"),
+            cancel_check=None,
+            executor=_process_tree_probe_executor,
+            _context=multiprocessing.get_context("fork"),
+        )
+    _assert_linux_process_reaped(int(supervisor_pid.read_text()))
+    if descendant.exists():
+        _assert_linux_process_reaped(int(descendant.read_text()))
 
 
 @pytest.mark.skipif(

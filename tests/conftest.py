@@ -3,6 +3,26 @@ import pytest
 
 
 @pytest.fixture(autouse=True)
+def isolated_runtime_logging():
+    """CLI handlers and unfinished recorder contexts belong to one test only."""
+    import logging
+    from chatcopilot.core.log_context import bind_log_context
+    root = logging.getLogger()
+    original_handlers = set(root.handlers)
+    original_level = root.level
+    with bind_log_context():
+        yield
+    for handler in list(root.handlers):
+        if handler not in original_handlers and (
+            getattr(handler, "_chatcopilot_stream_handler", False)
+            or getattr(handler, "_chatcopilot_file_handler", False)
+        ):
+            root.removeHandler(handler)
+            handler.close()
+    root.setLevel(original_level)
+
+
+@pytest.fixture(autouse=True)
 def model_settings(tmp_path_factory, monkeypatch):
     """Unit tests use a configured test host and never read an operator's model file.
 

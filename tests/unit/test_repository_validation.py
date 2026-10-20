@@ -43,18 +43,21 @@ def test_validation_profiles_include_static_and_runtime_checks(
         "component catalog",
         "core tests",
     ]
-    assert full_names[-4:] == [
+    assert full_names[-5:] == [
         "installed dependency consistency",
         "Python wheel build smoke",
         "full Python tests",
+        "console tests",
         "console production build",
     ]
+    assert profiles["full"] == (*profiles["python"], *profiles["console"])
+    assert not any("npm" in c.argv[0] for c in profiles["python"])
     assert [c.name for c in profiles["docs"]] == [
         "SDD metadata", "public repository boundary", "documentation", "diff format",
     ]
     assert all("pytest" not in c.argv and "build" not in c.argv for c in profiles["docs"])
     fast_pytest = profiles["fast"][-1]
-    full_pytest = profiles["full"][-2]
+    full_pytest = profiles["python"][-1]
     fast_paths = check_repo._fast_test_paths()
     assert fast_pytest.argv[3:3 + len(fast_paths)] == fast_paths
     assert fast_pytest.argv[3 + len(fast_paths):-1] == (
@@ -62,6 +65,7 @@ def test_validation_profiles_include_static_and_runtime_checks(
     )
     assert "tests/unit" not in fast_pytest.argv
     assert full_pytest.argv[1:4] == ("-m", "pytest", "-q")
+    assert full_pytest.argv[4:-1] == ("-n", "4", "--dist=loadfile")
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-fast'}" in fast_pytest.argv
     assert f"--basetemp={tmp_path / 'chatcopilot-pytest-full'}" in full_pytest.argv
     indexed_checks = {
@@ -74,6 +78,43 @@ def test_validation_profiles_include_static_and_runtime_checks(
         "UTF-8 source normalization",
         "Python wheel build smoke",
     }
+
+
+def test_candidate_console_uses_the_snapshot_with_dependency_mounts(tmp_path):
+    check_repo = _load_script("check_repo.py")
+    profiles = check_repo._profiles(tmp_path)
+    assert profiles["python"][-1].cwd == tmp_path
+    assert all(check.cwd == ROOT / "console/web" for check in profiles["console"])
+    assert all(check.argv[-3:] == ("--", "--configLoader", "runner")
+               for check in profiles["console"])
+
+
+def test_cli_logging_fixture_restores_process_state(monkeypatch):
+    import io
+    import logging
+    from tests.conftest import isolated_runtime_logging
+    from chatcopilot.core.log_context import current_log_context, push_log_context
+    from chatcopilot.core.logging import configure_logging
+
+    root = logging.getLogger()
+    before = list(root.handlers)
+    level = root.level
+    context = current_log_context()
+    capture = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", capture)
+    monkeypatch.delenv("CHATCOPILOT_LOG_DIR", raising=False)
+    scope = isolated_runtime_logging.__wrapped__()
+    next(scope)
+    configure_logging("INFO")
+    push_log_context(task_id="unfinished-fixture-task")
+    assert any(getattr(handler, "_chatcopilot_stream_handler", False)
+               for handler in root.handlers)
+    with pytest.raises(StopIteration):
+        next(scope)
+    capture.close()
+    assert root.handlers == before
+    assert root.level == level
+    assert current_log_context() == context
 
 
 def test_fast_selection_preserves_file_order_and_ignores_comments(monkeypatch, tmp_path):
@@ -116,11 +157,17 @@ def test_fast_selection_rejects_invalid_manifest(monkeypatch, tmp_path, selectio
 def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"public-boundary", "console"}
+    assert set(workflow["jobs"]) == {"public-boundary", "python", "console"}
     for job in workflow["jobs"].values():
         assert job.get("permissions", workflow["permissions"]) == {"contents": "read"}
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["with"]["persist-credentials"] is False
+        assert job["runs-on"] == "ubuntu-24.04"
+        assert "continue-on-error" not in job
+        for step in job["steps"]:
+            if "uses" in step:
+                assert re.fullmatch(r"[^@]+@[0-9a-f]{40}", step["uses"])
+            assert "continue-on-error" not in step
     job = workflow["jobs"]["public-boundary"]
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
@@ -133,8 +180,63 @@ def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
 def test_ci_console_runs_locked_install_tests_and_build():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     job = workflow["jobs"]["console"]
-    assert job["defaults"]["run"]["working-directory"] == "console/web"
-    assert [step["run"] for step in job["steps"] if "run" in step] == ["npm ci", "npm test", "npm run build"]
+    assert [step["run"] for step in job["steps"] if "run" in step] == [
+        "npm ci --prefix console/web",
+        "python3 scripts/check_repo.py console --keep-going",
+    ]
+
+
+def test_ci_python_covers_supported_boundaries_with_locked_dependencies():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["python"]
+    assert job["strategy"] == {
+        "fail-fast": False, "matrix": {"python-version": ["3.11", "3.13"]},
+    }
+    steps = job["steps"]
+    install = next(step["run"] for step in steps if step.get("run", "").startswith("uv sync "))
+    assert "--locked" in install and "--frozen" not in install
+    for extra in ("agent", "acp", "dev", "evaluation", "weixin"):
+        assert f"--extra {extra}" in install
+    assert "pip install" not in install
+    assert any(step.get("run") == "bash scripts/setup_ci_linux.sh" for step in steps)
+    gate = next(step for step in steps if "scripts/check_repo.py python" in step.get("run", ""))
+    assert all(base in gate["env"]["DOCS_BASE"] for base in (
+        "github.event.pull_request.base.sha", "github.event.before", "inputs.docs_base",
+    ))
+    assert '--docs-base "$DOCS_BASE"' in gate["run"]
+    assert '--keep-going "${doc_args[@]}"' in gate["run"]
+
+
+def test_release_verification_uses_the_same_locked_environment_and_full_gate():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    runs = "\n".join(step.get("run", "") for step in workflow["jobs"]["verify"]["steps"])
+    assert "uv sync --locked --python 3.13" in runs
+    assert "--extra weixin" in runs
+    assert "bash scripts/setup_ci_linux.sh" in runs
+    assert ".venv/bin/python scripts/check_repo.py full --keep-going" in runs
+    assert "pip install -e" not in runs
+    assert "npm test" not in runs  # The full gate owns this check.
+
+
+def test_ci_setup_refuses_to_modify_an_operator_host():
+    import os
+    import subprocess
+    env = {key: value for key, value in os.environ.items()
+           if key not in {"GITHUB_ACTIONS", "RUNNER_ENVIRONMENT"}}
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/setup_ci_linux.sh")],
+        env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 2
+    assert "only for disposable GitHub-hosted runners" in result.stderr
+
+
+def test_dependabot_updates_the_python_lockfile_ecosystem():
+    config = yaml.safe_load((ROOT / ".github/dependabot.yml").read_text())
+    python = [update for update in config["updates"]
+              if update["directory"] == "/" and update["package-ecosystem"] in {"pip", "uv"}]
+    assert len(python) == 1
+    assert python[0]["package-ecosystem"] == "uv"
 
 
 def test_validation_subprocesses_use_one_wsl_temp_root(
@@ -209,14 +311,92 @@ def test_gitleaks_wrapper_enforces_private_three_scope_scans() -> None:
     assert '"$candidate_root/untracked"' in script
     assert "--modified" in script
     assert "--others --exclude-standard" in script
-    assert '--gitleaks-ignore-path "$EMPTY_IGNORE"' in script
+    assert 'local ignore="$EMPTY_IGNORE"' in script
+    assert 'if [[ "$scope" == history ]]' in script
+    assert 'ignore="$HISTORY_IGNORE"' in script
+    assert '--gitleaks-ignore-path "$ignore"' in script
     assert "--ignore-gitleaks-allow" in script
     assert "--max-decode-depth=2" in script
     assert "--report-format=json" in script
     assert '--report-path "$report"' in script
-    assert "> /dev/null 2>&1" in script
+    assert '--exit-code=10' in script
+    assert '> "$WORK_DIR/${scope}.log" 2>&1' in script
     assert "unsupported candidate path type: %s" not in script
     assert 'printf \'%s\\n\' "$relative_path"' not in script
+
+
+def test_gitleaks_exceptions_are_exact_historical_fingerprints():
+    fingerprints = [line for line in (ROOT / ".gitleaksignore").read_text().splitlines()
+                    if line and not line.startswith("#")]
+    assert fingerprints
+    assert len(fingerprints) == len(set(fingerprints))
+    assert all(re.fullmatch(r"[0-9a-f]{40}:[A-Za-z0-9_./-]+:[a-z0-9-]+:[1-9][0-9]*", f)
+               for f in fingerprints)
+
+
+@pytest.mark.parametrize(("scanner_exit", "expected_exit", "keep_report"), (
+    (0, 0, False), (10, 1, False), (10, 1, True), (1, 2, False),
+))
+def test_secret_scan_failures_are_distinct_and_diagnostics_stay_private(
+    tmp_path, monkeypatch, scanner_exit, expected_exit, keep_report,
+):
+    import json
+    import os
+    import shutil
+    import subprocess
+
+    tools = tmp_path / "tools"
+    tools.mkdir()
+    scanner = tmp_path / "scanner"
+    scanner.write_text(
+        f"#!{sys.executable}\n"
+        "import json, pathlib, sys\n"
+        "report = pathlib.Path(sys.argv[sys.argv.index('--report-path') + 1])\n"
+        "report.write_text(json.dumps([{'RuleID': 'fixture-rule', "
+        "'Secret': 'never-print-this-value', 'File': 'private-fixture-path'}]))\n"
+        "print('never-print-this-value')\n"
+        f"sys.exit({scanner_exit})\n"
+    )
+    scanner.chmod(0o700)
+    # Mock the download only; exercise the actual wrapper, status mapping,
+    # report handling and cleanup without requiring network in unit tests.
+    programs = {
+        "curl": "exit 0\n",
+        "sha256sum": "cat > /dev/null\nexit 0\n",
+        "tar": 'cp "$SCANNER_TEST_BIN" "$4/gitleaks"\n',
+    }
+    for name, body in programs.items():
+        path = tools / name
+        path.write_text("#!/bin/bash\nset -e\n" + body)
+        path.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tools) + os.pathsep + os.environ["PATH"])
+    monkeypatch.setenv("SCANNER_TEST_BIN", str(scanner))
+    monkeypatch.setenv("TMPDIR", str(tmp_path))
+    result = subprocess.run(
+        ["bash", str(ROOT / "scripts/check_secrets.sh"), "history",
+         *(["--keep-report"] if keep_report else [])],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == expected_exit
+    output = result.stdout + result.stderr
+    assert "never-print-this-value" not in output
+    assert "private-fixture-path" not in output
+    assert ("Finding counts by rule" in output) == (scanner_exit == 10)
+    assert ("ERROR:" in output) == (scanner_exit == 1)
+    assert not list(tmp_path.glob("agentstrata-gitleaks.*"))
+    if keep_report:
+        match = re.search(r"Private diagnostics retained at (/tmp/[^;]+);", output)
+        assert match
+        directory = Path(match.group(1))
+        try:
+            assert directory.stat().st_mode & 0o777 == 0o700
+            report = directory / "history.json"
+            assert report.stat().st_mode & 0o777 == 0o600
+            assert json.loads(report.read_text())[0]["RuleID"] == "fixture-rule"
+        finally:
+            shutil.rmtree(directory)
+    else:
+        assert "Private diagnostics retained" not in output
 
 
 def test_gitleaks_policy_covers_network_and_query_leaks() -> None:

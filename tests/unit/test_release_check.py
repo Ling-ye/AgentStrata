@@ -223,7 +223,6 @@ def test_release_build_lock_is_exact_and_matches_pyproject() -> None:
         "packaging": "26.2",
         "pyproject-hooks": "1.2.0",
         "setuptools": "83.0.0",
-        "tomli": "2.4.1",
         "wheel": "0.47.0",
     }
     lock_lines = (ROOT / "requirements" / "release-build.txt").read_text(

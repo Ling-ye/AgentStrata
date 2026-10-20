@@ -8,7 +8,7 @@ from chatcopilot.core.source_manifest import is_private_environment_path
 from chatcopilot.harness.models import HarnessError
 
 POLICY_PREFIXES = ("tests", "specs", ".github", ".cursor", ".agents/skills", "requirements", "docs/reference", "src/chatcopilot/evals/suites")
-POLICY_NAMES = frozenset({"AGENTS.md", "SECURITY.md", "CODE_OF_CONDUCT.md", ".gitignore", ".gitattributes", "pyproject.toml",
+POLICY_NAMES = frozenset({"AGENTS.md", "SECURITY.md", "CODE_OF_CONDUCT.md", ".gitignore", ".gitleaksignore", ".gitattributes", "pyproject.toml",
                           "uv.lock", "package.json", "package-lock.json", "pytest.ini",
                           "conftest.py", "tox.ini", "setup.cfg", "mypy.ini", "ruff.toml", ".ruff.toml",
                           "tsconfig.json", "vitest.config.ts", "vite.config.ts"})

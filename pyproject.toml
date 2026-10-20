@@ -16,7 +16,7 @@ keywords = ["ai-agents", "bot", "mcp", "multi-agent", "onebot"]
 authors = [
     { name = "Lingye", email = "616202172@qq.com" },
 ]
-requires-python = ">=3.10,<3.14"
+requires-python = ">=3.11,<3.14"
 maintainers = [
     { name = "Lingye", email = "616202172@qq.com" },
 ]
@@ -25,7 +25,6 @@ classifiers = [
     "Development Status :: 3 - Alpha",
     "Operating System :: POSIX :: Linux",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.13",
@@ -37,7 +36,6 @@ dependencies = [
     "Requests>=2.32,<3",
     "mcp-server-git>=0.6",
     "websockets>=12",
-    "tomli>=2; python_version < '3.11'",
 ]
 
 [project.optional-dependencies]
@@ -79,7 +77,6 @@ test = [
     "pytest",
     "pytest-xdist>=3.8,<4",
     "httpx2>=2.0.0,<3",
-    "tomli>=2; python_version < '3.11'",
 ]
 dev = [
     "pip",
@@ -93,7 +90,6 @@ dev = [
     "mypy>=1.16,<2",
     "types-PyYAML",
     "types-requests",
-    "tomli>=2; python_version < '3.11'",
     "setuptools==83.0.0",
     "wheel==0.47.0",
 ]
@@ -138,7 +134,7 @@ chatcopilot = [
 ]
 
 [tool.ruff]
-target-version = "py310"
+target-version = "py311"
 line-length = 100
 extend-exclude = ["scratch_unit_tests"]
 
@@ -158,7 +154,7 @@ select = ["E4", "E7", "E9", "F"]
 "src/chatcopilot/evals/vendor/bfcl/language.py" = ["E721"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.11"
 warn_unused_ignores = true
 check_untyped_defs = true
 ignore_missing_imports = true

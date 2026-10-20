@@ -547,7 +547,7 @@ def test_release_wheel_requires_python_must_match_pyproject(
     if difference == "missing":
         metadata = metadata.replace(line, b"", 1)
     elif difference == "changed":
-        metadata = metadata.replace(line, b"Requires-Python: >=3.11,<3.14\n", 1)
+        metadata = metadata.replace(line, b"Requires-Python: <3\n", 1)
     else:
         metadata = metadata.replace(line, line + line, 1)
     _write_test_wheel(wheel, verifier, metadata_payload=metadata)
@@ -585,7 +585,7 @@ def test_release_sdist_requires_python_must_match_pyproject(
     source_value = verifier._source_project_data()["project"]["requires-python"]
     metadata = metadata.replace(
         f"Requires-Python: {source_value}\n".encode(),
-        b"Requires-Python: >=3.11,<3.14\n",
+        b"Requires-Python: <3\n",
         1,
     )
     _write_test_sdist(

@@ -73,7 +73,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.10"
+          python-version: "3.13"
+      - name: Set up locked uv
+        uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
+        with:
+          version: "0.12.5"
+          enable-cache: true
+          cache-dependency-glob: uv.lock
       - name: Set up Node.js
         uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6.5.0
         with:
@@ -82,8 +88,10 @@ jobs:
           cache-dependency-path: console/web/package-lock.json
       - name: Install development dependencies
         run: |
-          python -m pip install -e ".[agent,acp,dev,evaluation]"
+          uv sync --locked --python 3.13 --extra agent --extra acp --extra dev --extra evaluation --extra weixin
           npm ci --prefix console/web
+      - name: Prepare Linux sandbox tests
+        run: bash scripts/setup_ci_linux.sh
       - name: Verify public history and secrets
         run: |
           python scripts/check_public_repo.py --history
@@ -106,9 +114,7 @@ jobs:
             --tag "$RELEASE_TAG" \
             --as-of-date-utc "$release_date_utc"
       - name: Run full repository gate
-        run: python scripts/check_repo.py full
-      - name: Run console tests
-        run: npm test --prefix console/web
+        run: .venv/bin/python scripts/check_repo.py full --keep-going
 
   build:
     name: Build hermetic release candidate
@@ -170,7 +176,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.10"
+          python-version: "3.11"
       - name: Install hash-locked build closure
         run: |
           python -m pip install \
@@ -314,7 +320,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: "3.10"
+          python-version: "3.11"
       - name: Install hash-locked build closure
         run: |
           python -m pip install \

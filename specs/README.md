@@ -12,6 +12,7 @@
 - [Harness LangGraph 编排](harness-langgraph/spec.md) / [编译图](harness-langgraph/graphs.md)
 - [Harness 控制与生命周期边界](harness-control-lifecycle/spec.md)
 - [许可、署名与对应源码](agpl-license/spec.md)
+- [持续集成与本地验证](ci-validation/spec.md)
 
 ## 待确认的设计条件
 
