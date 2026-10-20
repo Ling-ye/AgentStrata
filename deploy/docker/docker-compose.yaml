@@ -82,7 +82,7 @@ services:
 
   # ---------- Playwright isolated dynamic-page reader ------------------------
   playwright-mcp:
-    image: mcr.microsoft.com/playwright/mcp:v0.0.76@sha256:3108dac789720d5236ee1869ad65c8f32fbbfe9d7eea8a5eb89920ab35a665d6
+    image: mcr.microsoft.com/playwright/mcp:v0.0.83@sha256:690763cbb437ee7233f538a953bb5390bf03791eb5c965b471e59d17a6132fcb
     container_name: chatcopilot-playwright-mcp
     profiles: [browser]
     init: true
