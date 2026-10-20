@@ -42,6 +42,7 @@ from chatcopilot.gateway.observation_runtime import ObservationRecorder
 from chatcopilot.gateway.observation_queries import detail as observation_detail
 from chatcopilot.gateway.server import GatewayServerConfig, GatewayWebSocketServer
 from chatcopilot.gateway.state_store import GatewayStateStore
+from chatcopilot.project import source_notice
 from chatcopilot.protocols.gateway_client import (
     GatewayClientConfig,
     GatewayWebSocketClient,
@@ -284,7 +285,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
             final = await asyncio.wait_for(subscription.get(), timeout=1)
             assert isinstance(final.payload, ChatFinalEvent)
             assert final.payload.run_id == accepted.run_id
-            assert final.payload.segments == (TextRpcSegment("gateway-answer"),)
+            assert final.payload.segments == (TextRpcSegment("gateway-answer\n\n" + source_notice()),)
             subscription.close()
 
             provider.emit_message.set()
@@ -302,7 +303,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
                 "group_id": _GROUP,
                 "message": [
                     {"type": "reply", "data": {"id": "message-1"}},
-                    {"type": "text", "data": {"text": "gateway-answer"}},
+                    {"type": "text", "data": {"text": "gateway-answer\n\n" + source_notice()}},
                 ],
             }
             assert len(executor.requests) == 2
@@ -368,6 +369,7 @@ def test_real_gateway_websocket_and_fake_onebot_roundtrip(tmp_path: Path, record
             await gateway_server.stop()
             await channels.stop()
             await coordinator.close()
+            provider.emit_message.set()
             provider_server.close()
             await provider_server.wait_closed()
 

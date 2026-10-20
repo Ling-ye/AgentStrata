@@ -15,3 +15,8 @@
 
 后端原项目使用 MIT，前端使用 Open-LLM-VTuber License 1.0，模型及 Live2D SDK 另有许可。
 独立安装第三方项目时保留其原许可证；商业打包需按实际使用的组成部分核对授权。
+
+自有 Python 适配器采用 AGPL-3.0-only，署名为 Copyright (C) 2026 Lingye。
+`patches/frontend.patch`（包括为该前端添加的内容）按上游前端条款单独许可，排除于项目
+默认 AGPL 授权；收费访问/托管、商业重分发/改名及商业嵌入须取得上游规定的商业授权。
+完整原文、固定 revision 与后端 MIT 声明见[第三方声明](../../THIRD_PARTY_NOTICES.md)。

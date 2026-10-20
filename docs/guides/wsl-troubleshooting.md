@@ -93,7 +93,7 @@ sudo systemctl start "user@$(id -u).service"
 systemctl --user is-system-running
 ```
 
-引导安装会安装 `dbus-user-session`；`setup_wsl_root.sh --legacy-feishu` 只用于 Feishu legacy edge。
+引导安装会安装 `dbus-user-session`。
 `console/setup_console.sh` 在注册服务前会拒绝缺包或不可达的 user bus。
 
 ## 实例启动失败
@@ -148,19 +148,11 @@ journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
 - OneBot 健康但 Bot service 失败：检查主 service 的 journald 中 Gateway、模型和 Channel
   错误，并确认 systemd `MainPID` 是当前实例的 `python -m chatcopilot run --bot ...`。
 
-## Feishu legacy edge 的 cc-connect 修复
+## 旧 Feishu 桥接入口
 
-出现 `EACCES`、`Auto-install failed`、系统 Node 版本漂移或
-`/usr/lib/node_modules/cc-connect` 时，不要改用 root/global npm。此段只适用于明确部署的
-Feishu legacy edge；QQ Gateway 路径不会安装或启动 Node/cc-connect。重新对账 legacy 工具链：
-
-```bash
-bash deploy/wsl/install_wsl_env.sh
-bash deploy/wsl/update_instance.sh --instance <id>
-```
-
-Bot 私有 env 中的 `CHATCOPILOT_CC_CONNECT_BIN` 应指向引导安装生成的项目私有固定版本
-可执行文件。不要修改 shell profile，也不要让 systemd 依赖 root 全局 npm 安装。
+内置安装与启动已移除 cc-connect。不要通过全局 npm 或旧安装脚本恢复该依赖。
+现有 QQ/微信实例继续使用原生 Gateway；需要 Feishu 等外部入口时，应通过项目提供的
+ACP/Gateway 协议自行集成客户端，并独立核对其软件许可。
 
 ## code-worker 启动失败
 

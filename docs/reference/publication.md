@@ -17,6 +17,11 @@
 
 tracked 文件、示例、测试和可达 Git 历史禁止真实凭据、组织/租户端点、文档 token、平台账号/群号、显示名、稳定平台身份、私有项目名或机器路径；公开维护者身份只有 `Lingye` / `lingye` 与 `616202172@qq.com`。 `DEFAULT_OWNERS` / `DEFAULT_ADMINS` 保持为空，角色只由部署 env 显式配置；Unity/Windows 根目录走 `CHATCOPILOT_UNITY_SAMPLE_GAME_ROOT`、`CHATCOPILOT_UNITY_PROJECTS`、`CHATCOPILOT_WINDOWS_FS_EXTRA_ROOTS` 或 `CHATCOPILOT_WINDOWS_FS_ALLOWLIST`，空 Windows allow-list 失败关闭。
 
+固定的第三方许可原文和依赖证据文件保留上游公开署名、邮箱、仓库和网站；扫描器只对
+明确列出的这些文件区分上游归属信息，许可证据门禁另行校验来源和内容哈希。此范围不
+扩展到第三方目录中的任意文件，仍检查凭据、私有主机与文档、机器路径、私有字面量和
+未允许的维护者仓库。
+
 ## 私有语义清单
 
 组织名、私有域名、文档 ID 和项目代号等语义规则只通过 `scripts/check_public_repo.py --private-literals-file` 从仓库外载入；文件必须由当前用户拥有、mode `0600`、非符号链接、single-link、UTF-8 且每行一个非空唯一字面量。 私有清单和匹配报告禁止进入任何仓库；扫描输出不得打印字面量或命中路径。
@@ -48,3 +53,27 @@ Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查�
 ## Release 构建边界
 
 `requirements/release-build.txt` 是手工复核的六包、全哈希、Python 3.10 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
+
+## 许可与对应源码
+
+自有代码和文档采用 AGPL-3.0-only，作者与例外以根 [COPYRIGHT](../../COPYRIGHT) 和
+[第三方声明](../../THIRD_PARTY_NOTICES.md) 为准。历史已授予的 MIT 权利继续有效。
+独立选配的 Open-LLM-VTuber 前端与前端补丁使用上游单独许可，商业使用须核对其额外授权。
+
+部署者将 `CHATCOPILOT_SOURCE_URL` 设置为实际运行版本的免费可获取源码归档或明确的
+版本源码入口。官方版本使用对应 tag/commit 的完整仓库归档；下游改动必须提供自己的
+修改版及所需构建、安装脚本、无秘密必要配置与依赖源码。秘密和用户数据不进入归档。
+Python sdist 仅提供 Python 包源码，不包含完整 Console 项目。
+
+机器人沿用 `bots/<id>/local.env` 与现有 provision 流程注入此变量。Console、独立 HTTP/MCP
+及 CLI 使用各自进程环境；Console 的 systemd 部署可在现有 service drop-in 中设置
+`Environment=CHATCOPILOT_SOURCE_URL=...`，使其对应 Console 自身运行的源码版本。
+
+Console「许可与源码」、CLI `agentstrata source`、机器人 `/source`、HTTP `/legal`
+和 MCP 初始化说明展示相同声明。未设置部署源码时明确显示项目仓库与缺失状态，不能
+据此通过对外部署验收。`agentstrata source --check` 检查是否已配置；发布前仍需实际下载
+并核对该地址与运行版本、构建脚本和第三方源码是否对应，配置存在不证明可用或完整。
+
+依赖变化后刷新并复核许可材料；离线校验由 `scripts/third_party_notices.py` 完成。
+wheel、sdist 和前端构建必须携带各自所需法律文件；发布说明附对应版本的源码链接。
+许可切换的第一个 commit 和首个 Release 在维护者实际提交、发布时记录，不预造标识。

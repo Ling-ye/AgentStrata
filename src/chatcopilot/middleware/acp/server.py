@@ -1487,7 +1487,13 @@ class AcpChatAgent(Agent):
                     )
                     raise RuntimeError("group conversation commit failed") from None
             session.persist_transcript()
-            pushed = await translator.flush_final(fallback_text=result.final_text)
+            from chatcopilot.project import source_notice
+
+            notice_actor = session.turn_identity.actor_ref if session.turn_identity else session.workspace.user_id
+            suffix = "" if notice_actor in session.source_notice_seen else "\n\n" + source_notice()
+            pushed = await translator.flush_final(fallback_text=result.final_text, suffix=suffix)
+            if pushed:
+                session.source_notice_seen.add(notice_actor)
             final_text_delivered = bool(pushed)
             if turn_task is not None:
                 try:

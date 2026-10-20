@@ -5,6 +5,13 @@ AgentStrata 是具备自我优化能力的开源 Agent 框架。贡献可以从�
 从[开发环境与检查范围](docs/guides/development.md)开始，按[文档导航](docs/README.md)定位领域正文。
 AI 协作者先读 [AGENTS](AGENTS.md)，再按当前任务逐层展开。
 
+## 贡献许可与署名
+
+项目自有代码和文档使用 [AGPL-3.0-only](LICENSE)。提交自有贡献表示你有权按此许可提供，
+贡献者保留自己的版权；本项目不要求版权转让或 CLA。第三方代码、数据和改编材料必须
+提供来源、版本、原署名、许可及修改说明，并更新[第三方声明](THIRD_PARTY_NOTICES.md)。
+Open-LLM-VTuber 前端补丁按上游条款单独许可，不适用项目默认 AGPL 授权。
+
 ## 改进 Harness 与 Eval
 
 - 修改修复核心、角色协作或执行适配：先读[Harness 契约](docs/reference/harness.md)，再按源码入口进入实现；编排与恢复约束见[规格](specs/harness-langgraph/spec.md)。

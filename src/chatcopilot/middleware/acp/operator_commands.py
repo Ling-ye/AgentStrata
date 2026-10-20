@@ -14,9 +14,10 @@ from chatcopilot.contracts.workspace import (
     normalize_chat_kind,
 )
 from chatcopilot.middleware.acp.session_state import SessionState
+from chatcopilot.project import source_command_reply
 
 
-OWNER_COMMAND_DENIED_TEXT = "斜杠指令仅限 Owner 使用。"
+OWNER_COMMAND_DENIED_TEXT = "管理斜杠指令仅限 Owner 使用。源码与许可请发送 /source。"
 
 _SLASH_COMMAND_RE = re.compile(
     r"\A\s*/(?P<name>[A-Za-z][A-Za-z0-9_-]*)(?=\s|\Z)"
@@ -71,6 +72,7 @@ class _CommandHelp:
 
 
 COMMAND_CATALOG = (
+    _CommandHelp("source", "/source", "查看源码、许可与作者署名", "operator"),
     _CommandHelp("help", "/help", "显示当前实例可用的指令", "operator"),
     _CommandHelp("state", "/state", "查看当前会话与宿主状态", "operator"),
     _CommandHelp("restart", "/restart", "安全请求重启当前机器人实例", "restart"),
@@ -126,6 +128,9 @@ def handle_operator_command(
     command = parse_slash_command(text)
     if command is None:
         return None
+    source_reply = source_command_reply(text)
+    if source_reply is not None:
+        return OperatorCommandResult(command=command, action="reply", text=source_reply, code="source_info")
     if not _is_owner(session):
         return OperatorCommandResult(
             command=command,
@@ -212,7 +217,7 @@ def format_help(
         )
     ]
 
-    lines = ["可用斜杠指令（仅限 Owner）："]
+    lines = ["可用斜杠指令（管理操作仅限 Owner）："]
     lines.extend(f"- {item.usage}：{item.summary}" for item in commands)
     return "\n".join(lines)
 

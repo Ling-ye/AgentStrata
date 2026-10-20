@@ -1106,7 +1106,7 @@ check_docker_endpoint
 show_plan
 
 if [ "$DRY_RUN" -eq 1 ]; then
-    if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages --skip-cc-connect --dry-run --no-verify; then
+    if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages --dry-run --no-verify; then
         finish_failed "isolated_runtime_plan" "无法生成隔离运行时零写入预览" \
             "检查 uv.lock 和 Python 运行时下载信息"
     fi
@@ -1130,12 +1130,12 @@ if [ "$NETWORK_READY" -ne 1 ]; then
     check_network after-install
 fi
 
-if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages --skip-cc-connect; then
+if ! bash "$SCRIPT_DIR/install_wsl_env.sh" --no-system-packages; then
     finish_failed "isolated_runtime" "用户级 Python Gateway 运行时安装失败" "检查下载和校验和错误后运行：$RESUME_COMMAND"
 fi
 PYTHON_BIN="$REPO_ROOT/.venv/bin/python"
 [ -x "$PYTHON_BIN" ] \
-    || finish_failed "isolated_runtime" "缺少项目隔离 Python" "bash deploy/wsl/install_wsl_env.sh --no-system-packages --skip-cc-connect"
+    || finish_failed "isolated_runtime" "缺少项目隔离 Python" "bash deploy/wsl/install_wsl_env.sh --no-system-packages"
 add_check "isolated_runtime" "pass" "固定用户级 Python Gateway 运行时已就绪；未安装 Node/cc-connect" ""
 
 if [ "$RESUME_HAS_BOT" -eq 1 ]; then

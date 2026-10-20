@@ -22,8 +22,6 @@ _REBUILD_INPUTS = (
     "pyproject.toml",
     "uv.lock",
     "deploy/wsl/install_wsl_env.sh",
-    "deploy/wsl/node-tools/package.json",
-    "deploy/wsl/node-tools/package-lock.json",
     "deploy/wsl/bootstrap_wsl.sh",
 )
 
@@ -273,7 +271,7 @@ def test_update_script_sets_pythonpath_for_provision_env() -> None:
     text = Path("deploy/wsl/update_instance.sh").read_text(encoding="utf-8")
 
     assert 'VENV_PY="$SRC/.venv/bin/python"' in text
-    assert 'bash "$installer" --no-system-packages --skip-cc-connect' in text
+    assert 'bash "$installer" --no-system-packages' in text
     assert '--with-console-deps --venv "$venv_dir" --no-verify' in text
     assert 'python3 -m venv "$venv_dir"' not in text
     assert ' -m pip install ' not in text

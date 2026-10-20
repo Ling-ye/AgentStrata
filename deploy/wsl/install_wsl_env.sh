@@ -14,19 +14,12 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/../.." >/dev/null 2>&1 && pwd)"
 UV_VERSION="0.12.5"
 PYTHON_VERSION="3.13.15"
 NODE_VERSION="24.20.0"
-CC_CONNECT_VERSION="1.4.0-beta.3"
 RUNTIME_ROOT="${AGENTSTRATA_RUNTIME_ROOT:-$HOME/.local/share/agentstrata}"
 UV_INSTALL_DIR="$RUNTIME_ROOT/uv/$UV_VERSION"
 PYTHON_INSTALL_DIR="$RUNTIME_ROOT/python"
-NODE_TOOLS_ROOT="$RUNTIME_ROOT/node-tools"
-CC_CONNECT_DIR="$NODE_TOOLS_ROOT/cc-connect-$CC_CONNECT_VERSION"
-CC_CONNECT_BIN="$CC_CONNECT_DIR/node_modules/.bin/cc-connect"
-CC_CONNECT_NATIVE_BIN="$CC_CONNECT_DIR/node_modules/cc-connect/bin/cc-connect"
-NODE_TOOLS_SOURCE="$REPO_ROOT/deploy/wsl/node-tools"
 ARTIFACT_CACHE="$RUNTIME_ROOT/cache/artifacts"
 
 INSTALL_SYSTEM_PACKAGES=1
-INSTALL_CC_CONNECT=1
 INSTALL_CONSOLE=0
 INSTALL_CONSOLE_DEPS=0
 INSTALL_WEIXIN_DEPS=0
@@ -46,7 +39,6 @@ Options:
   --with-console-deps     Include the locked Console Python dependencies only.
   --skip-web              Pass --skip-web when --with-console is used.
   --no-system-packages    Do not install apt packages; isolated runtimes are still installed.
-  --skip-cc-connect       Do not install the private Node.js/cc-connect toolchain.
   --venv DIR              Python environment path (default: .venv).
   --init-env              Copy deploy/wsl/env.example to ~/.chatcopilot.env if absent.
   --no-verify             Skip import and BotSpec validation checks.
@@ -62,7 +54,6 @@ while [ "$#" -gt 0 ]; do
         --with-weixin) INSTALL_WEIXIN_DEPS=1 ;;
         --skip-web) SKIP_WEB=1 ;;
         --no-system-packages) INSTALL_SYSTEM_PACKAGES=0 ;;
-        --skip-cc-connect) INSTALL_CC_CONNECT=0 ;;
         --venv)
             [ "$#" -ge 2 ] || { echo "[ERR] --venv needs a value" >&2; exit 2; }
             VENV_DIR="$2"
@@ -178,10 +169,6 @@ ensure_repo() {
     fi
     if [ ! -f "$REPO_ROOT/uv.lock" ]; then
         err "missing locked Python dependency graph: $REPO_ROOT/uv.lock"
-        exit 1
-    fi
-    if [ ! -f "$NODE_TOOLS_SOURCE/package.json" ] || [ ! -f "$NODE_TOOLS_SOURCE/package-lock.json" ]; then
-        err "missing locked Node tool manifests: $NODE_TOOLS_SOURCE"
         exit 1
     fi
     if grep -qi microsoft /proc/version 2>/dev/null; then
@@ -355,15 +342,12 @@ print_runtime_plan() {
     info "uv sha256: $UV_SHA256"
     info "uv target: $UV_INSTALL_DIR"
     info "managed Python: $PYTHON_VERSION -> $PYTHON_INSTALL_DIR"
-    if [ "$INSTALL_CC_CONNECT" -eq 1 ] || [ "$INSTALL_CONSOLE" -eq 1 ]; then
+    if [ "$INSTALL_CONSOLE" -eq 1 ]; then
         info "Node.js $NODE_VERSION: $NODE_URL"
         info "Node.js sha256: $NODE_SHA256"
         info "Node.js target: $NODE_INSTALL_DIR"
     else
-        info "Node.js/cc-connect: not required by the Gateway QQ runtime"
-    fi
-    if [ "$INSTALL_CC_CONNECT" -eq 1 ]; then
-        info "cc-connect $CC_CONNECT_VERSION target: $CC_CONNECT_DIR"
+        info "Node.js: only needed when installing Console"
     fi
     info "Python environment target: $VENV_DIR"
 }
@@ -471,53 +455,12 @@ install_node() {
     ok "Node.js $NODE_VERSION installed: $NODE_BIN"
 }
 
-install_node_tools() {
-    if [ "$INSTALL_CC_CONNECT" -eq 0 ] && [ "$INSTALL_CONSOLE" -eq 0 ]; then
-        warn "private Node.js/cc-connect installation skipped"
-        return 0
+install_console_node() {
+    if [ "$INSTALL_CONSOLE" -eq 1 ]; then
+        install_node
+    else
+        warn "private Node.js installation skipped; Python Gateway needs no Node toolchain"
     fi
-    install_node
-    if [ "$INSTALL_CC_CONNECT" -eq 0 ]; then
-        warn "cc-connect installation skipped; private Node.js remains available for Console"
-        return 0
-    fi
-
-    if [ -e "$CC_CONNECT_DIR" ] || [ -L "$CC_CONNECT_DIR" ]; then
-        if [ ! -d "$CC_CONNECT_DIR" ] || [ -L "$CC_CONNECT_DIR" ] \
-            || [ "$(stat -c '%u' "$CC_CONNECT_DIR" 2>/dev/null || true)" != "$(id -u)" ]; then
-            err "existing cc-connect directory has unsafe metadata: $CC_CONNECT_DIR"
-            return 1
-        fi
-    fi
-
-    run mkdir -p "$CC_CONNECT_DIR" "$RUNTIME_ROOT/cache/npm" \
-        "$RUNTIME_ROOT/cache/npm-home" "$RUNTIME_ROOT/cache/npm-config"
-    run cp "$NODE_TOOLS_SOURCE/package.json" "$CC_CONNECT_DIR/package.json"
-    run cp "$NODE_TOOLS_SOURCE/package-lock.json" "$CC_CONNECT_DIR/package-lock.json"
-    run env HOME="$RUNTIME_ROOT/cache/npm-home" \
-        XDG_CONFIG_HOME="$RUNTIME_ROOT/cache/npm-config" \
-        PATH="$NODE_COMMAND_PATH" NODE_OPTIONS= NODE_PATH= \
-        NPM_CONFIG_USERCONFIG=/dev/null NPM_CONFIG_GLOBALCONFIG=/dev/null \
-        "$NPM_BIN" ci --prefix "$CC_CONNECT_DIR" --omit=dev --no-audit --no-fund \
-        --cache "$RUNTIME_ROOT/cache/npm"
-    if [ "$DRY_RUN" -eq 0 ]; then
-        if [ ! -x "$CC_CONNECT_BIN" ] || [ ! -x "$CC_CONNECT_NATIVE_BIN" ]; then
-            err "cc-connect binary is missing after npm ci: $CC_CONNECT_NATIVE_BIN"
-            return 1
-        fi
-        if [ "$("$NODE_BIN" -p "require('$CC_CONNECT_DIR/node_modules/cc-connect/package.json').version" 2>/dev/null || true)" != "$CC_CONNECT_VERSION" ]; then
-            err "cc-connect version differs from the locked package after npm ci"
-            return 1
-        fi
-        case "$("$CC_CONNECT_NATIVE_BIN" --version 2>/dev/null | head -n 1 || true)" in
-            "cc-connect v$CC_CONNECT_VERSION") ;;
-            *)
-                err "cc-connect native binary version differs from the locked package"
-                return 1
-                ;;
-        esac
-    fi
-    [ "$DRY_RUN" -eq 1 ] || ok "cc-connect $CC_CONNECT_VERSION installed: $CC_CONNECT_BIN"
 }
 
 install_python_env() {
@@ -626,7 +569,7 @@ select_architecture
 print_runtime_plan
 install_system_packages
 require_download_tools
-install_node_tools
+install_console_node
 install_python_env
 prepare_runtime_dirs
 verify_installation
@@ -639,7 +582,4 @@ else
     ok "isolated runtime is ready"
 fi
 echo "  python:      $VENV_DIR/bin/python"
-if [ "$INSTALL_CC_CONNECT" -eq 1 ]; then
-    echo "  cc-connect:  $CC_CONNECT_BIN"
-fi
 echo

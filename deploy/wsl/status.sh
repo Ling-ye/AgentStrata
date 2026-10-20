@@ -137,7 +137,7 @@ CC_LOG="$(_resolve_cc_log_for_status)"
 CC_HOME="${CHATCOPILOT_CC_HOME:-$CCP_CC_HOME_DEFAULT}"
 CC_CONFIG_DIR="${CHATCOPILOT_CC_CONNECT_CONFIG_DIR:-$CC_HOME/.cc-connect}"
 CC_CONF="$CC_CONFIG_DIR/config.toml"
-CC_CONNECT_BIN="${CHATCOPILOT_CC_CONNECT_BIN:-$HOME/.local/share/agentstrata/node-tools/cc-connect-1.4.0-beta.3/node_modules/.bin/cc-connect}"
+CC_CONNECT_BIN="${CHATCOPILOT_CC_CONNECT_BIN:-}"
 CURSOR_MCP="$HOME/.cursor/mcp.json"
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
 WS_ROOT="${WORKSPACE_ROOT:-${CHATCOPILOT_WORKSPACE_ROOT:-$CCP_WORKSPACE_ROOT_DEFAULT}}"
@@ -486,10 +486,6 @@ print_status() {
                 cc_version="$(PATH="$(dirname "$private_node"):$PATH" \
                     "$private_node" "$resolved_cc" --version 2>&1 | head -n 1)"
                 dim "version=$cc_version"
-                if [ "$PLATFORM_TYPE_FOR_STATUS" = "qq" ] \
-                    && [[ "$cc_version" != *"1.4.0-beta.3"* ]]; then
-                    bad "QQ 实例要求固定 cc-connect 1.4.0-beta.3；升级只能走显式安装流程"
-                fi
                 ;;
         esac
     else
@@ -504,7 +500,6 @@ print_status() {
             ok "$tool -> $(command -v $tool)"
         else
             case "$tool" in
-                cc-connect) bad "$tool 未在 PATH（必装；platform=qq 需要 cc-connect@beta）" ;;
                 lark-cli)   warn "$tool 未在 PATH（飞书数据下载相关命令将不可用）" ;;
                 *)          warn "$tool 未在 PATH（非必须）" ;;
             esac

@@ -175,7 +175,8 @@ def test_legacy_passthrough_requires_the_same_runtime_capability_as_help() -> No
 
     help_text = format_help(session, restart_available=False, supports_debug=False)
     assert help_text.splitlines() == [
-        "可用斜杠指令（仅限 Owner）：",
+        "可用斜杠指令（管理操作仅限 Owner）：",
+        "- /source：查看源码、许可与作者署名",
         "- /help：显示当前实例可用的指令",
         "- /state：查看当前会话与宿主状态",
         "- /model <profile> [once]：查看或切换主模型配置档，不改变 runtime、认证或 worker",

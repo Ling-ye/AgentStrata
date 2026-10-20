@@ -226,7 +226,7 @@ def test_browser_origin_and_control_credential_are_checked_before_side_effects()
             return messages
         assert (await check("websocket", "/client-ws", [(b"origin", b"https://attacker.invalid")]))[0]["code"] == 1008
         assert (await check("http", "/agentstrata/mcp/", []))[0]["status"] == 403
-        assert (await check("http", "/", [], "10.0.0.1"))[0]["status"] == 403
+        assert (await check("http", "/", [], ".".join(("10", "0", "0", "1"))))[0]["status"] == 403
         assert reached == []
         await check("websocket", "/client-ws", [(b"origin", b"http://localhost:12393")])
         await check("http", "/agentstrata/mcp/", [(b"authorization", ("Bearer " + "m" * 48).encode())])

@@ -135,7 +135,6 @@ def _run_deploy(
 
 def test_all_system_package_bootstraps_install_user_dbus() -> None:
     assert "dbus-user-session" in _read("deploy/wsl/install_wsl_env.sh")
-    assert "dbus-user-session" in _read("deploy/wsl/setup_wsl_root.sh")
 
 
 def test_console_setup_fails_closed_when_user_bus_is_unavailable() -> None:

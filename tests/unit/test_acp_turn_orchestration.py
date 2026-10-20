@@ -143,7 +143,7 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
         self.assertIs(result.response, response)
         self.assertEqual(seen[-1], "finish")
 
-    async def test_every_non_owner_slash_command_stops_before_attachments(self) -> None:
+    async def test_non_owner_management_commands_stop_before_attachments(self) -> None:
         updates: list[str] = []
         finishes: list[dict[str, object]] = []
 
@@ -197,7 +197,7 @@ class AcpTurnOrchestrationTests(unittest.IsolatedAsyncioTestCase):
 
                 self.assertTrue(outcome.stop)
                 self.assertEqual(outcome.reason, "owner_command_required")
-                self.assertEqual(updates, ["斜杠指令仅限 Owner 使用。"])
+                self.assertEqual(updates, ["管理斜杠指令仅限 Owner 使用。源码与许可请发送 /source。"])
                 self.assertEqual(
                     finishes[0]["stop_reason"],
                     "owner_command_required",

@@ -9,10 +9,8 @@ from chatcopilot.botspec.runtime_env import llm_runtime_env_defaults
 from chatcopilot.core.settings import expand_leading_home
 from chatcopilot.core.mcp_catalog import resolve_catalog_server
 
-_CC_CONNECT_VERSION = "1.4.0-beta.3"
 
-
-def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: Path, home: Path, runtime_root: str = "") -> dict[str, str]:
+def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: Path, home: Path) -> dict[str, str]:
     from chatcopilot.botspec.loader import validate_model_bindings
     from chatcopilot.core.model_settings import reject_model_overrides
     issues = validate_model_bindings(spec)
@@ -85,11 +83,9 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
         values["CHATCOPILOT_GATEWAY_URL"] = f"ws://{url_host}:{gateway_port}"
     else:
         cc_connect_bin = str(values.get("CHATCOPILOT_CC_CONNECT_BIN", "") or "").strip()
-        if not cc_connect_bin:
-            cc_connect_bin = private_cc_connect_bin(runtime_root, home=home)
         if (
             any(character in cc_connect_bin for character in ("\r", "\n", "\x00"))
-            or not Path(cc_connect_bin).is_absolute()
+            or (cc_connect_bin and not Path(cc_connect_bin).is_absolute())
         ):
             raise ValueError("cc_connect_bin_invalid")
         values.update(
@@ -103,26 +99,6 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
             }
         )
     return values
-
-
-def private_cc_connect_bin(runtime_root_value: str, *, home: Path) -> str:
-    if runtime_root_value:
-        runtime_root_value = expand_leading_home(runtime_root_value, home=home)
-        if any(character in runtime_root_value for character in ("\r", "\n", "\x00")):
-            raise ValueError("agentstrata_runtime_root_invalid")
-        runtime_root = Path(runtime_root_value)
-        if not runtime_root.is_absolute():
-            raise ValueError("agentstrata_runtime_root_invalid")
-    else:
-        runtime_root = home / ".local" / "share" / "agentstrata"
-    return str(
-        runtime_root
-        / "node-tools"
-        / f"cc-connect-{_CC_CONNECT_VERSION}"
-        / "node_modules"
-        / ".bin"
-        / "cc-connect"
-    )
 
 
 def _tool_pack_runtime_defaults(tool_packs: Iterable[str]) -> dict[str, str]:

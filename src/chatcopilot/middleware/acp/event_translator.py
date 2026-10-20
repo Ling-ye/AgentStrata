@@ -114,11 +114,12 @@ class EventTranslator:
             return_exceptions=True,
         )
 
-    async def flush_final(self, fallback_text: str = "") -> str:
+    async def flush_final(self, fallback_text: str = "", *, suffix: str = "") -> str:
         """本轮末尾统一推 last_text 或 fallback；返回实际推送的文本。"""
         await self.await_pending()
         text = self._last_text_cache["text"] or fallback_text
         if text:
+            text += suffix
             await self._conn.session_update(
                 session_id=self._session_id,
                 update=self._update_agent_message_text(text),

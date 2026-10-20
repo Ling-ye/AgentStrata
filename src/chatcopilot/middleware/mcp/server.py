@@ -23,7 +23,7 @@ from chatcopilot.core.workspace_runtime import (
     describe_workspace,
     resolve_workspace,
 )
-from chatcopilot.project import ENV_PREFIX, PROJECT_SLUG
+from chatcopilot.project import ENV_PREFIX, PROJECT_SLUG, format_legal_info
 
 _LOGGER = logging.getLogger("chatcopilot.middleware.mcp")
 
@@ -91,7 +91,7 @@ async def _run_stdio_server() -> int:
     ))
     executor = ToolExecutor(caller_role_hint="owner", workspace_service=service)
 
-    server: Server = Server(PROJECT_SLUG)
+    server: Server = Server(PROJECT_SLUG, instructions=format_legal_info())
 
     @server.list_tools()
     async def _list_tools() -> List[Tool]:

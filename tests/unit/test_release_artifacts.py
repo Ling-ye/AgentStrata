@@ -87,6 +87,24 @@ def _record_hash(payload: bytes) -> str:
     return f"sha256={encoded}"
 
 
+def test_wheel_must_preserve_reviewed_copyright(tmp_path):
+    verifier = _load_verifier()
+    wheel = tmp_path / "agentstrata-1.0-py3-none-any.whl"
+    _write_test_wheel(wheel, verifier, member_overrides={
+        "agentstrata-1.0.dist-info/licenses/COPYRIGHT": b"Different attribution\n"})
+    with pytest.raises(verifier.VerificationError, match="legal file differs"):
+        verifier.validate_wheel(wheel)
+
+
+def test_wheel_rejects_outdated_project_license(tmp_path):
+    verifier = _load_verifier()
+    wheel = tmp_path / "agentstrata-1.0-py3-none-any.whl"
+    metadata = _metadata_payload(verifier).replace(b"License-Expression: AGPL-3.0-only", b"License-Expression: MIT")
+    _write_test_wheel(wheel, verifier, metadata_payload=metadata)
+    with pytest.raises(verifier.VerificationError, match="License-Expression"):
+        verifier.validate_wheel(wheel)
+
+
 def _metadata_payload(
     verifier,
     *,
@@ -104,6 +122,8 @@ def _metadata_payload(
         f"Name: {identity.name}",
         f"Version: {version}",
         f"Requires-Python: {source_project['requires-python']}",
+        "License-Expression: AGPL-3.0-only",
+        *(f"License-File: {name}" for name in sorted(verifier.LEGAL_SOURCE_FILES)),
         *(f"Requires-Dist: {requirement}" for requirement in requirements),
         *(f"Provides-Extra: {extra}" for extra in extras),
     ]
@@ -135,7 +155,8 @@ def _write_test_wheel(
         f"{dist_info}/entry_points.txt": (
             b"[console_scripts]\nagentstrata = chatcopilot.__main__:main\n"
         ),
-        f"{dist_info}/licenses/LICENSE": b"MIT\n",
+        **{f"{dist_info}/licenses/{name}": (verifier.ROOT / name).read_bytes()
+           for name in verifier.LEGAL_SOURCE_FILES},
     }
     members.update(member_overrides or {})
     members.update(extra_members or {})

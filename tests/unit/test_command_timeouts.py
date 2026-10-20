@@ -209,8 +209,8 @@ def test_standalone_mcp_binds_startup_environment_timeouts(tmp_path, monkeypatch
         return SimpleNamespace(execute=lambda *_args: ToolResult(ok=True))
 
     class Server:
-        def __init__(self, _name):
-            pass
+        def __init__(self, _name, *, instructions):
+            captured["instructions"] = instructions
 
         def list_tools(self):
             return lambda handler: handler
@@ -231,6 +231,8 @@ def test_standalone_mcp_binds_startup_environment_timeouts(tmp_path, monkeypatch
     monkeypatch.setattr(mcp.server, "Server", Server)
     monkeypatch.setattr(mcp.server.stdio, "stdio_server", stdio)
     assert asyncio.run(endpoint._run_stdio_server()) == 0
+    assert "AGPL-3.0-only" in captured["instructions"]
+    assert "Copyright (C) 2026 Lingye" in captured["instructions"]
     with bind_execution_scope(captured["scope"]):
         assert get_dev_config().shell.timeout_max == 1200
 

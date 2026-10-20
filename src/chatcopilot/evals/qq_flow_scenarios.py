@@ -49,6 +49,7 @@ from chatcopilot.middleware.runtime.task_projection import (
     TURN_FILENAME,
 )
 from chatcopilot.evals.qq_ingress_probe import run_simulated_gateway_ingress
+from chatcopilot.project import source_notice
 
 
 _SENTINEL = "QQ-FLOW-SENTINEL"
@@ -573,7 +574,9 @@ async def _run_owned_roundtrip(
                         and _decision(delivery).get("code") == "session_update_emitted"
                     ),
                     "client_session_update_count": len(client.updates),
-                    "client_received_sentinel": client.updates == [_SENTINEL],
+                    # Display notices are verified at delivery; the recorded
+                    # AgentResult and TrialObservation remain the raw sentinel.
+                    "client_received_sentinel": client.updates == [_SENTINEL + "\n\n" + source_notice()],
                 }
             )
 
@@ -1084,7 +1087,7 @@ async def _run_persona_roundtrip(
             and _decision(second_delivery).get("code") == "session_update_emitted"
         ),
         "next_turn_client_session_update_count": len(second_client.updates),
-        "next_turn_client_received_sentinel": second_client.updates == [_SENTINEL],
+        "next_turn_client_received_sentinel": second_client.updates == [_SENTINEL + "\n\n" + source_notice()],
         "next_turn_task_succeeded": (
             second_task.get("status") == "succeeded"
             and second_turn.get("status") == "succeeded"

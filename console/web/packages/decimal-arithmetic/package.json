@@ -1,0 +1,13 @@
+{
+  "name": "@agentstrata/decimal-arithmetic",
+  "version": "0.0.0",
+  "private": true,
+  "license": "AGPL-3.0-only",
+  "author": "Lingye",
+  "main": "index.ts",
+  "types": "index.ts",
+  "dependencies": {
+    "decimal.js": "10.6.0"
+  },
+  "type": "module"
+}

@@ -38,6 +38,74 @@ def test_harness_comparison_sources_do_not_allow_other_vendor_repositories():
     }
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "untracked:THIRD_PARTY_LICENSES.txt",
+        "worktree:third_party/dependencies.json",
+        "index:third_party/license_sources.json",
+        "history:third_party/Open-LLM-VTuber-Web-LICENSE.txt@deadbeef",
+    ],
+)
+def test_upstream_attribution_accepts_public_contacts_only_in_exact_legal_files(path):
+    checker = _load_checker()
+    public_attribution = "\n".join(
+        [
+            "https://" + "upstream-vendor.org/license",
+            "https://github.com/unreviewed-" + "vendor/library",
+            "https://" + "gitlab.com/unreviewed-vendor/library",
+            "upstream-author" + "@" + "upstream-vendor.org",
+        ]
+    )
+    assert checker.scan_text(public_attribution, path=path) == []
+    for authored_path in ("README.md", "third_party/README.md", "src/LICENSE.txt"):
+        assert {f.rule for f in checker.scan_text(public_attribution, path=authored_path)} == {
+            "url-host-not-allowlisted", "unexpected-code-repository", "unexpected-email",
+        }
+
+
+def test_upstream_attribution_keeps_secret_and_private_identity_checks():
+    checker = _load_checker()
+    private_host = "corp" + ".internal"
+    private_literal = "private-project-" + "marker"
+    text = "\n".join(
+        [
+            f"https://{private_host}/license",
+            "https://github.com/Ling-ye/" + "private-project",
+            "https://" + "tenant-name.feishu.cn/wiki/real-document-identifier",
+            "https://" + "alice:unreviewed-password" + "@" + "upstream-vendor.org/license",
+            "https://" + "upstream-vendor.org/?" + "access_token=unreviewed-secret",
+            "author" + "@" + private_host,
+            "/home/" + "alice/private",
+            "-----BEGIN " + "PRIVATE KEY-----",
+            private_literal,
+        ]
+    )
+    assert {f.rule for f in checker.scan_text(
+        text, path="THIRD_PARTY_LICENSES.txt", private_literals=[private_literal],
+    )} == {
+        "url-private-or-local-host", "unexpected-maintainer-github-repo",
+        "private-document-identifier", "uri-userinfo-identity-or-secret",
+        "uri-userinfo-secret", "sensitive-uri-query", "unexpected-email",
+        "machine-user-path", "private-key-header", "private-literal", "bare-private-or-local-host",
+    }
+
+
+def test_markdown_url_labels_scan_both_urls_and_keep_ipv6_support():
+    checker = _load_checker()
+    assert checker.scan_text(
+        "[https://example.org](https://example.org) http://[::1]:3000/health",
+        path="README.md",
+    ) == []
+    for label, target in (
+        ("https://example.org/?" + "token=unreviewed-secret", "https://example.org"),
+        ("https://example.org", "https://example.org/?" + "token=unreviewed-secret"),
+    ):
+        assert {f.rule for f in checker.scan_text(
+            f"[{label}]({target})", path="README.md",
+        )} == {"sensitive-uri-query"}
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(
         ("git", *args),

@@ -31,6 +31,28 @@ body {
   border-bottom: var(--cc-border);
 }
 
+.console-sider > .arco-layout-sider-children {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow-y: auto;
+}
+
+.console-legal {
+  padding: 8px;
+  margin-top: auto;
+  border-top: var(--cc-border);
+  flex-shrink: 0;
+}
+
+.console-legal-content {
+  overflow-wrap: anywhere;
+}
+
+.console-legal-content .arco-alert {
+  margin-bottom: 16px;
+}
+
 .console-logo-title {
   margin: 0;
   white-space: nowrap;

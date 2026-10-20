@@ -431,6 +431,8 @@ def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
     backend_session = _Session()
     session = SimpleNamespace(
         debug_mode=False,
+        turn_identity=None,
+        source_notice_seen=set(),
         main_model_route=None,
         workspace=workspace,
         require_session=lambda: backend_session,
@@ -451,7 +453,10 @@ def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
     )
 
     outbound = [update.content.text for _, update in agent._conn.updates]
-    assert outbound == [safe_text]
+    from chatcopilot.project import source_notice
+
+    displayed_text = safe_text + "\n\n" + source_notice()
+    assert outbound == [displayed_text]
     assert raw_error not in "\n".join(outbound)
     assert recorder.progress == ["执行失败（错误代码：codex_cli_failed）。"]
     assert recorder.events[0] == (
@@ -472,7 +477,7 @@ def test_llm_error_keeps_raw_diagnostic_private_and_delivers_safe_text(
                 "code": "session_update_emitted",
                 "authoritative": False,
             },
-            "payload": {"text_length": len(safe_text)},
+            "payload": {"text_length": len(displayed_text)},
         },
     )
     assert recorder.finished is not None
@@ -504,8 +509,10 @@ def test_once_model_selection_is_consumed_only_after_run_task_returns(
 
     class _SessionState:
         debug_mode = False
+        turn_identity = None
 
         def __init__(self, backend, workspace, selection) -> None:
+            self.source_notice_seen = set()
             self._backend = backend
             self.workspace = workspace
             self.selection = selection
@@ -604,10 +611,12 @@ def test_rejected_explicit_memory_never_retries_or_false_reports(
 
     class _State:
         debug_mode = False
+        turn_identity = None
         main_model_route = None
         role = SimpleNamespace(value="user")
 
         def __init__(self, backend) -> None:
+            self.source_notice_seen = set()
             self.runtime_id = backend
             self.workspace = Workspace(
                 root=tmp_path / "p2p_member-1",

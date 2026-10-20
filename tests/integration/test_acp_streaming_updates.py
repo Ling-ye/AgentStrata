@@ -1,6 +1,7 @@
 """Regression tests for ACP streaming updates in the Feishu bridge."""
 from __future__ import annotations
 from tests.acp_runtime_fixture import make_acp_agent
+from chatcopilot.project import source_notice
 from chatcopilot.middleware.acp import agent_bridge
 
 import asyncio
@@ -89,6 +90,8 @@ class _FakeSession:
         self.is_workspace_materialized = False
         self.materialization_calls = 0
         self.debug_mode = debug_mode
+        self.turn_identity = None
+        self.source_notice_seen = set()
         self.assistant_mode = AssistantMode.PERFORMANCE
         self.lifecycle_barrier = lifecycle_barrier
         self.workspace = SimpleNamespace(
@@ -120,6 +123,8 @@ class _FakeSession:
 
     def persist_transcript(self) -> None:
         return None
+
+
 
 
 class StreamingUpdateTests(unittest.TestCase):
@@ -172,13 +177,13 @@ class StreamingUpdateTests(unittest.TestCase):
         session = _FakeSession(debug_mode=False)
         updates = self._run_prompt(session)
 
-        self.assertEqual(updates, [("sid", "你好")])
+        self.assertEqual(updates, [("sid", "你好" + "\n\n" + source_notice())])
         self.assertEqual(session.materialization_calls, 1)
 
     def test_debug_streaming_sends_only_final_text_update(self) -> None:
         updates = self._run_prompt(_FakeSession(debug_mode=True))
 
-        self.assertEqual(updates, [("sid", "你好")])
+        self.assertEqual(updates, [("sid", "你好" + "\n\n" + source_notice())])
 
     def test_task_tracking_failure_refuses_agent_execution(self) -> None:
         session = _FakeSession(debug_mode=False)
@@ -198,7 +203,7 @@ class StreamingUpdateTests(unittest.TestCase):
         self.assertEqual(len(updates), 3)
         self.assertIn("正在调用工具 `long_running_export`", updates[0][1])
         self.assertIn("`long_running_export` 完成", updates[1][1])
-        self.assertEqual(updates[2], ("sid", "你好"))
+        self.assertEqual(updates[2], ("sid", "你好" + "\n\n" + source_notice()))
 
     def test_non_debug_tool_progress_sends_visible_keepalive(self) -> None:
         updates = self._run_prompt(
@@ -209,14 +214,14 @@ class StreamingUpdateTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(updates, [("sid", "你好"), ("sid", "最终回复")])
+        self.assertEqual(updates, [("sid", "你好"), ("sid", "最终回复" + "\n\n" + source_notice())])
 
     def test_final_return_text_is_used_when_emit_text_is_missing(self) -> None:
         updates = self._run_prompt(
             _FakeSession(emit_stream_text=False, emit_final_text=False, return_text="兜底回复")
         )
 
-        self.assertEqual(updates, [("sid", "兜底回复")])
+        self.assertEqual(updates, [("sid", "兜底回复" + "\n\n" + source_notice())])
 
     def test_empty_turn_gets_user_visible_fallback(self) -> None:
         updates = self._run_prompt(
@@ -258,7 +263,7 @@ class StreamingUpdateTests(unittest.TestCase):
             )
         )
 
-        self.assertEqual(updates[0], ("sid", "最终回复"))
+        self.assertEqual(updates[0], ("sid", "最终回复" + "\n\n" + source_notice()))
         self.assertIn("job_20260703_123456_abcdef12", updates[1][1])
         self.assertEqual(len(calls), 1)
         self.assertTrue(calls[0]["final_text_delivered"])

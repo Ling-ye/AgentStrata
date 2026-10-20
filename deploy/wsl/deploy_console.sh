@@ -165,7 +165,7 @@ elif [ "$UPDATE_ONLY" -eq 1 ]; then
         exit 1
     fi
     run_or_print bash "$REPO_ROOT/deploy/wsl/install_wsl_env.sh" \
-        --no-system-packages --skip-cc-connect --with-console-deps \
+        --no-system-packages --with-console-deps \
         --venv "$REPO_ROOT/.venv" --no-verify || { err "dependency sync failed; update stopped"; exit 1; }
     build_web || { err "web build failed; services were not restarted"; exit 1; }
     restart_evaluation || exit $?

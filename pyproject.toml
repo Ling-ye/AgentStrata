@@ -10,8 +10,8 @@ name = "agentstrata"
 version = "0.1.0.dev0"
 description = "Declarative runtime, operations, and evaluation platform for multi-channel AI agents"
 readme = "README.md"
-license = "MIT"
-license-files = ["LICENSE"]
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt", "third_party/*.json", "third_party/*LICENSE.txt"]
 keywords = ["ai-agents", "bot", "mcp", "multi-agent", "onebot"]
 authors = [
     { name = "Lingye", email = "616202172@qq.com" },

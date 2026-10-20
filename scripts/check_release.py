@@ -159,7 +159,12 @@ def validate_release(root: Path, tag: str, *, today: date | None = None) -> str:
         raise ReleaseCheckError(
             "CHANGELOG.md needs exactly one trailing reference for: " + ", ".join(invalid_counts)
         )
-    return notes + "\n"
+    source_url = f"https://github.com/Ling-ye/AgentStrata/archive/refs/tags/{tag}.tar.gz"
+    return notes + (
+        f"\n\nSource code for this release: {source_url}\n"
+        "License: AGPL-3.0-only; Copyright (C) 2026 Lingye.\n"
+        "Third-party notices are included in the distributions.\n"
+    )
 
 
 def main(argv: list[str] | None = None) -> int:

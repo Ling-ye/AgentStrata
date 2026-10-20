@@ -467,23 +467,9 @@ def _binary_snapshot(instance: BotInstance) -> dict[str, Any]:
             key, value = raw.split("=", 1)
             if key in {"CHATCOPILOT_CODEX_BIN", "CHATCOPILOT_CC_CONNECT_BIN"}:
                 configured[key] = value.strip().strip('"')
-    configured.setdefault(
-        "CHATCOPILOT_CC_CONNECT_BIN",
-        str(
-            Path.home()
-            / ".local"
-            / "share"
-            / "agentstrata"
-            / "node-tools"
-            / "cc-connect-1.4.0-beta.3"
-            / "node_modules"
-            / ".bin"
-            / "cc-connect"
-        ),
-    )
     return {
         "codex": _one_binary(configured.get("CHATCOPILOT_CODEX_BIN", "")),
-        "cc_connect": _one_binary(configured["CHATCOPILOT_CC_CONNECT_BIN"]),
+        "cc_connect": _one_binary(configured.get("CHATCOPILOT_CC_CONNECT_BIN", "")),
     }
 
 

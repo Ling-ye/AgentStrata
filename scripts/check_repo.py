@@ -195,6 +195,7 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
     )
     full = (
         *common,
+        Check("third-party license evidence", _python("scripts/third_party_notices.py", *target_args)),
         Check("installed dependency consistency", _python("-m", "pip", "check")),
         Check(
             "Python wheel build smoke",

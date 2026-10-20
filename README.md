@@ -8,7 +8,7 @@
 
 构建与运行 Agent → 发现问题 → 生成改进 → 对照评测 → 独立验收 → 后续任务使用新版本
 
-[![MIT License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
+[![AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
 [![Linux / WSL2](https://img.shields.io/badge/Runtime-Linux%20%2F%20WSL2-informational.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)
 
@@ -208,12 +208,12 @@ uv run agentstrata --help
 
 ## 开源价值与相关项目
 
-MIT 许可开放项目的运行实现、自研 Harness、Eval、修复规则与验收源码。开发者可以自行运行、审查和修改这套改进过程；模型、计算资源与第三方服务仍需自行配置。
+AGPL-3.0-only 许可开放项目的运行实现、自研 Harness、Eval、修复规则与验收源码。开发者可以自行运行、审查和修改这套改进过程；模型、计算资源与第三方服务仍需自行配置。
 
 | 项目 | 主要职责 | 与 AgentStrata 的关系 |
 | --- | --- | --- |
 | LangSmith / Engine | 观测、评测、问题调查与修复工作流 | [SDK 为 MIT 开源](https://github.com/langchain-ai/langsmith-sdk/blob/main/LICENSE)；Engine 商业自托管需要相应许可，见[官方说明](https://docs.langchain.com/langsmith/engine-self-hosted) |
-| AgentStrata | Agent 运行、自研 Harness 与 Eval、框架自身的受控改进 | [MIT 开源](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)，修复、评测与验收实现可自行运行、审查和修改 |
+| AgentStrata | Agent 运行、自研 Harness 与 Eval、框架自身的受控改进 | [AGPL-3.0-only 开源](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)，修复、评测与验收实现可自行运行、审查和修改 |
 
 授权与产品边界于 2026-10-19 核对。此表说明职责与开放方式，不代表性能或修复成功率排名。
 
@@ -223,4 +223,16 @@ MIT 许可开放项目的运行实现、自研 Harness、Eval、修复规则与�
 
 欢迎改进 Harness 的失败调查与验收、Eval 的用例和证据，也欢迎扩展运行、工具、上下文和 Console。先从[贡献指南](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md)与[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)进入对应领域。Python namespace 仍为 `chatcopilot`，依赖与支持范围以 [pyproject.toml](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml) 为准。
 
-[安全](https://github.com/Ling-ye/AgentStrata/blob/main/SECURITY.md) · [支持](https://github.com/Ling-ye/AgentStrata/blob/main/SUPPORT.md) · [行为准则](https://github.com/Ling-ye/AgentStrata/blob/main/CODE_OF_CONDUCT.md) · [变更记录](https://github.com/Ling-ye/AgentStrata/blob/main/CHANGELOG.md) · [MIT 许可](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
+[安全](https://github.com/Ling-ye/AgentStrata/blob/main/SECURITY.md) · [支持](https://github.com/Ling-ye/AgentStrata/blob/main/SUPPORT.md) · [行为准则](https://github.com/Ling-ye/AgentStrata/blob/main/CODE_OF_CONDUCT.md) · [变更记录](https://github.com/Ling-ye/AgentStrata/blob/main/CHANGELOG.md) · [AGPL-3.0-only 许可](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
+
+## 版权、许可与源码
+
+Copyright (C) 2026 Lingye · 联系：616202172@qq.com。项目自有代码和文档采用
+[AGPL-3.0-only](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)，完整适用范围见 [COPYRIGHT](https://github.com/Ling-ye/AgentStrata/blob/main/COPYRIGHT)。允许依许可商业使用、
+修改和再分发；本程序不提供担保。第三方材料按[第三方声明](https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md)保留原许可。
+历史版本已授予的 MIT 权利不受本次迁移影响。
+
+[项目源码](https://github.com/Ling-ye/AgentStrata)可公开获取；Console「许可与源码」、
+`agentstrata source` 和机器人 `/source` 提供同一入口。部署修改版时，运营者须将
+`CHATCOPILOT_SOURCE_URL` 设置为实际运行版本的完整源码获取地址，不能只指向上游最新分支。
+源码交付要求与选配集成边界见[公开与发布契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/publication.md#许可与对应源码)。

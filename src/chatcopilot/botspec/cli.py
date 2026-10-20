@@ -888,8 +888,7 @@ def _load_local_env(path: Path) -> dict[str, str]:
 
 
 def _runtime_env_values(spec, local_env: Mapping[str, str]) -> dict[str, str]:
-    return deployment_environment(spec, local_env, source_root=_repo_root(), home=Path.home(),
-                                  runtime_root=os.environ.get("AGENTSTRATA_RUNTIME_ROOT", "").strip())
+    return deployment_environment(spec, local_env, source_root=_repo_root(), home=Path.home())
 
 
 def _render_runtime_env(values: Mapping[str, str], ordered_keys: Iterable[str]) -> str:

@@ -97,7 +97,6 @@ step "仓库就位：$MT_HOME"
 echo
 _install_args=(--no-system-packages --venv "$MT_HOME/.venv" --no-verify)
 if ccp_bot_uses_gateway "$BOOTSTRAP_BOT_SPEC"; then
-    _install_args+=(--skip-cc-connect)
     if awk '/^channels:/ { channels=1; next } /^[^[:space:]#]/ { channels=0 } channels && /^[[:space:]]+weixin:/ { found=1 } END { exit(found ? 0 : 1) }' "$BOOTSTRAP_BOT_SPEC"; then
         _install_args+=(--with-weixin)
     fi
@@ -107,7 +106,8 @@ elif ccp_bot_is_legacy_qq "$BOOTSTRAP_BOT_SPEC"; then
     err "请先把该 BotSpec 迁移为 gateway + channels.qq，再重新 bootstrap。"
     exit 78
 else
-    step "[1/2] 通过 uv.lock 同步隔离 Python/Node/cc-connect legacy 运行时"
+    err "内置部署已移除 cc-connect；legacy 平台请自行接入 ACP 客户端，或使用 QQ/微信原生 Gateway。"
+    exit 78
 fi
 echo
 if ! bash "$INSTALL_SCRIPT" "${_install_args[@]}"; then

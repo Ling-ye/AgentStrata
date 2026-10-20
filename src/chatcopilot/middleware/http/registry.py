@@ -7,7 +7,7 @@ from http import HTTPStatus
 from typing import Any, Callable, Dict, Mapping, Tuple
 
 from chatcopilot.middleware.http.auth import HttpError
-from chatcopilot.project import ENV_PREFIX
+from chatcopilot.project import ENV_PREFIX, legal_info
 
 RouteResponse = Tuple[HTTPStatus, Dict[str, Any]]
 RouteHandler = Callable[[str, str, Mapping[str, str], Dict[str, Any]], RouteResponse]
@@ -40,6 +40,8 @@ def dispatch_request(
     headers: Mapping[str, str],
     payload: Dict[str, Any],
 ) -> RouteResponse:
+    if method == "GET" and path == "/legal":
+        return HTTPStatus.OK, {"ok": True, **legal_info()}
     if method == "GET" and path == "/healthz":
         return HTTPStatus.OK, {
             "ok": True,

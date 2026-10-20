@@ -12,6 +12,15 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     command = args.pop(0)
+    if command in {"license", "source"}:
+        check_source = command == "source" and args == ["--check"]
+        if args and not check_source:
+            parser = argparse.ArgumentParser(prog=f"agentstrata {command}")
+            parser.error(f"unexpected arguments: {' '.join(args)}")
+        from chatcopilot.project import format_legal_info, legal_info
+
+        print(format_legal_info())
+        return 2 if check_source and not legal_info()["source_configured"] else 0
     if command == "botspec":
         from chatcopilot.botspec.__main__ import main as botspec_main
 
@@ -54,6 +63,8 @@ def main(argv: list[str] | None = None) -> int:
 def _print_help() -> None:
     print(
         "AgentStrata commands:\n"
+        "  agentstrata license\n"
+        "  agentstrata source\n"
         "  agentstrata botspec validate bots/<bot-id>/bot.yaml\n"
         "  agentstrata botspec show bots/<bot-id>/bot.yaml\n"
         "  agentstrata bot list\n"

@@ -169,7 +169,7 @@ def test_bootstrap_reconciles_runtime_before_env_loader_executes_python(
 
     bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
     bot_spec.parent.mkdir(parents=True)
-    bot_spec.write_text("id: test-bot\n", encoding="utf-8")
+    bot_spec.write_text("id: test-bot\ngateway:\n  host: 127.0.0.1\nchannels:\n  qq: {}\n", encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir()
     runtime_env = home / ".chatcopilot-test-bot.env"
@@ -295,7 +295,7 @@ def test_qq_gateway_does_not_source_bot_owned_local_env() -> None:
 
 
 @pytest.mark.parametrize("entrypoint", ["start.sh", "_apply_config.sh", "_stop_cc.sh", "qq_gateway.sh",
-    "status.sh", "_session_env.sh", "setup_wsl_user.sh", "bootstrap_wsl.sh"])
+    "status.sh", "_session_env.sh", "bootstrap_wsl.sh"])
 def test_runtime_entrypoints_pass_the_shared_model_config_path(tmp_path, entrypoint):
     import re
     import shlex

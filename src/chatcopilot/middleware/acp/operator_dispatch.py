@@ -11,6 +11,7 @@ from acp import PromptResponse, update_agent_message_text
 from acp.interfaces import Client
 
 from chatcopilot.contracts.identity import Role, role_value
+from chatcopilot.project import source_notice
 from chatcopilot.middleware.acp import operator_commands as _operator_commands
 from chatcopilot.middleware.acp.instance_control import InstanceControlError
 from chatcopilot.middleware.acp.session_state import SessionState
@@ -71,7 +72,7 @@ async def handle_operator_replies(
         return None
     if decision.action == "reply":
         text = decision.text or "指令处理失败。"
-        await _send_text(conn, session_id, text, make_text_update)
+        await _send_text(conn, session_id, text, make_text_update, session=session, source_reply=decision.code == "source_info" and not command.arguments)
         finish_turn_task(
             turn_task,
             progress=f"已完成斜杠指令处理（{decision.code or 'reply'}）。",
@@ -164,7 +165,7 @@ async def _handle_restart_command(
 ) -> PromptResponse:
     if instance_control is None or finish_turn_task_strict is None:
         text = "当前运行环境缺少安全重启或任务终态能力，未调度重启。"
-        await _send_text(conn, session_id, text, make_text_update)
+        await _send_text(conn, session_id, text, make_text_update, session=session)
         finish_turn_task(
             turn_task,
             status="failed",
@@ -180,6 +181,7 @@ async def _handle_restart_command(
         status = await asyncio.to_thread(instance_control.preflight_restart, instance_id)
     except InstanceControlError as exc:
         return await _restart_preflight_failure(
+            session=session,
             conn=conn,
             session_id=session_id,
             message_id=message_id,
@@ -191,6 +193,7 @@ async def _handle_restart_command(
     except Exception:  # noqa: BLE001 - injected ports fail closed
         _LOGGER.exception("operator restart preflight failed")
         return await _restart_preflight_failure(
+            session=session,
             conn=conn,
             session_id=session_id,
             message_id=message_id,
@@ -201,6 +204,7 @@ async def _handle_restart_command(
         )
     if not bool(status.running):
         return await _restart_preflight_failure(
+            session=session,
             conn=conn,
             session_id=session_id,
             message_id=message_id,
@@ -216,7 +220,7 @@ async def _handle_restart_command(
         "workspace、会话日志、memory、persona 与持久化任务不会被清理。"
         "正在运行的进程内回合可能中断。"
     )
-    await _send_text(conn, session_id, accepted_text, make_text_update)
+    await _send_text(conn, session_id, accepted_text, make_text_update, session=session)
     try:
         finish_turn_task_strict(
             turn_task,
@@ -298,6 +302,7 @@ async def _handle_restart_command(
 
 async def _restart_preflight_failure(
     *,
+    session: SessionState,
     conn: Client,
     session_id: str,
     message_id: str | None,
@@ -307,7 +312,7 @@ async def _restart_preflight_failure(
     code: str,
 ) -> PromptResponse:
     text = f"当前实例无法通过安全重启预检（错误代码：{code}），未调度重启。"
-    await _send_text(conn, session_id, text, make_text_update)
+    await _send_text(conn, session_id, text, make_text_update, session=session)
     finish_turn_task(
         turn_task,
         status="failed",
@@ -358,11 +363,21 @@ async def _send_text(
     session_id: str,
     text: str,
     make_text_update: MakeTextUpdate,
+    *,
+    session: SessionState | None = None,
+    source_reply: bool = False,
 ) -> None:
+    actor = None
+    if session is not None:
+        actor = session.turn_identity.actor_ref if session.turn_identity else session.workspace.user_id
+        if text and actor not in session.source_notice_seen and not source_reply:
+            text += "\n\n" + source_notice()
     await conn.session_update(
         session_id=session_id,
         update=make_text_update(text),
     )
+    if session is not None and actor is not None and text:
+        session.source_notice_seen.add(actor)
 
 
 async def _send_text_best_effort(

@@ -120,6 +120,9 @@ def test_owned_roundtrip_traverses_acp_task_and_client_chain_without_private_inp
     )
 
     assert judge.passed is True, {key: value for key, value in receipt.items() if value is False}
+    assert observation.final_text == "QQ-FLOW-SENTINEL"
+    assert receipt["agent_result_returned"] is True
+    assert receipt["client_received_sentinel"] is True
     assert receipt["passed"] is True
     assert receipt["role_resolved"] is True
     assert receipt["deterministic_agent_invocation_count"] == 1

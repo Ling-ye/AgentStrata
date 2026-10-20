@@ -123,7 +123,13 @@ SDIST_GENERATED_FILES = frozenset(
         "src/agentstrata.egg-info/top_level.txt",
     }
 )
-SDIST_SOURCE_FILES = frozenset({"LICENSE", "README.md", "pyproject.toml"})
+LEGAL_SOURCE_FILES = frozenset({
+    "LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt",
+    "third_party/dependencies.json", "third_party/CC-BY-4.0-LICENSE.txt",
+    "third_party/Open-LLM-VTuber-LICENSE.txt", "third_party/Open-LLM-VTuber-Web-LICENSE.txt",
+    "third_party/license_sources.json", "third_party/MIT-REFERENCE-LICENSE.txt",
+})
+SDIST_SOURCE_FILES = LEGAL_SOURCE_FILES | {"README.md", "pyproject.toml"}
 _SELF_CONTAINED_PROBE = r"""
 import json
 import site
@@ -494,6 +500,10 @@ def _validate_dependency_metadata(metadata: Message, *, label: str) -> None:
 
 
 def _validate_core_metadata(metadata: Message, *, label: str) -> None:
+    if metadata.get("License-Expression") != "AGPL-3.0-only":
+        raise VerificationError(f"{label} must declare License-Expression: AGPL-3.0-only")
+    if set(metadata.get_all("License-File", [])) != LEGAL_SOURCE_FILES:
+        raise VerificationError(f"{label} legal file list differs from the reviewed source")
     _validate_requires_python_metadata(metadata, label=label)
     _validate_dependency_metadata(metadata, label=label)
     _validate_description_metadata(metadata, label=label)
@@ -854,12 +864,15 @@ def validate_wheel(wheel: Path) -> ArtifactIdentity:
                 f"{dist_info}/WHEEL",
                 f"{dist_info}/entry_points.txt",
                 f"{dist_info}/licenses/LICENSE",
-            }
+            } | {f"{dist_info}/licenses/{name}" for name in LEGAL_SOURCE_FILES}
             missing_metadata = sorted(required_metadata - file_names)
             if missing_metadata:
                 raise VerificationError(
                     "wheel missing metadata: " + ", ".join(missing_metadata)
                 )
+            for name in LEGAL_SOURCE_FILES:
+                if archive.read(f"{dist_info}/licenses/{name}") != (ROOT / name).read_bytes():
+                    raise VerificationError(f"wheel legal file differs from source: {name}")
             _validate_wheel_record(
                 archive,
                 file_names=file_names,

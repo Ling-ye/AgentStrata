@@ -7,6 +7,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+- 将自有代码与文档改为 AGPL-3.0-only，补齐版权署名、第三方许可和部署对应源码入口。许可切换以包含此变更的首个提交为界；首个适用 Release 尚未发布，历史 MIT 授权保持。
+
 ### Fixed
 
 - AI Harness retains actionable draft diagnostics and continuation evidence,

@@ -1,11 +1,14 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentstrata-open-llm-vtuber"
 version = "0.1.0"
 description = "Optional dialogue and avatar adapter for Open-LLM-VTuber"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "COPYRIGHT"]
+authors = [{name = "Lingye", email = "616202172@qq.com"}]
 requires-python = ">=3.10,<3.13"
 dependencies = ["agentstrata>=0.1.0.dev0", "fastapi>=0.110", "mcp>=1.27,<2"]
 

@@ -1,6 +1,7 @@
 import { lazy, Suspense, useCallback, useEffect, useState } from "react";
 import { Layout, Spin, Typography } from "@arco-design/web-react";
 import Sidebar, { type PageKey } from "./components/Sidebar";
+import LegalInfo from "./components/LegalInfo";
 import { NavigationGuardContext, useGuardedHash } from "./shared/navigationGuard";
 
 const OverviewPage = lazy(() => import("./pages/OverviewPage"));
@@ -44,6 +45,7 @@ export default function App() {
           <Text type="secondary" className="cc-text-small">运维控制台</Text>
         </div>
         <Sidebar current={page} onChange={navigate} />
+        <LegalInfo />
       </Sider>
       <Content className="console-content">
         <Suspense fallback={<Spin dot tip="正在加载页面…" />}>

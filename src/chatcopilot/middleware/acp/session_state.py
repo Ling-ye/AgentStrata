@@ -75,6 +75,7 @@ class SessionState:
     )
     pending_image_names: tuple[str, ...] = field(default=(), repr=False)
     turn_identity: TurnIdentity | None = field(default=None, repr=False)
+    source_notice_seen: set[str] = field(default_factory=set, repr=False)
     conversation_journal: GroupConversationJournal | None = field(
         default=None,
         repr=False,

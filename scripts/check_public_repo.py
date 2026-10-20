@@ -54,6 +54,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "en.wikipedia.org",
         "example.feishu.cn",
         "files.pythonhosted.org",
+        "fsf.org",
         "github.com",
         "gorilla.cs.berkeley.edu",
         "huggingface.co",
@@ -78,6 +79,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "registry.npmmirror.com",
         "registry.npmjs.org",
         "semver.org",
+        "spdx.org",
         "tarkov.dev",
         "tavily.com",
         "tidelift.com",
@@ -86,6 +88,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "webarena.dev",
         "www.alimama.com",
         "www.contributor-covenant.org",
+        "www.gnu.org",
         "www.minimaxi.com",
         "www.nowcoder.com",
         "www.npmjs.com",
@@ -138,6 +141,8 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/shishirpatil/gorilla",
         "github.com/nltk/nltk_data",
         "github.com/kubernetes/enhancements",
+        "github.com/kieler/elkjs",
+        "github.com/eclipse-elk/elk",
         "github.com/langchain-ai/langgraph",
         "github.com/langchain-ai/langsmith-sdk",
         "github.com/ling-ye/agentstrata",
@@ -156,6 +161,23 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/thudm/agentbench",
         "github.com/vitejs/vite",
         "github.com/xpzouying/xiaohongshu-mcp",
+    }
+)
+
+# These exact files carry upstream attribution, including public author emails
+# and project URLs outside our own integration allowlist. The license evidence
+# check verifies the generated inventory and notice hashes separately. This is
+# not a directory-wide exception: secrets, private hosts/documents, machine paths
+# and unexpected repositories belonging to the maintainer remain checked here.
+UPSTREAM_ATTRIBUTION_FILES = frozenset(
+    {
+        "THIRD_PARTY_LICENSES.txt",
+        "third_party/dependencies.json",
+        "third_party/license_sources.json",
+        "third_party/CC-BY-4.0-LICENSE.txt",
+        "third_party/MIT-REFERENCE-LICENSE.txt",
+        "third_party/Open-LLM-VTuber-LICENSE.txt",
+        "third_party/Open-LLM-VTuber-Web-LICENSE.txt",
     }
 )
 GITHUB_NON_REPOSITORY_NAMESPACES = frozenset(
@@ -413,6 +435,11 @@ def _is_allowed_email(email: str, *, path: str) -> bool:
     _, _, domain = normalized.rpartition("@")
     if domain in PUBLIC_EMAIL_DOMAINS or _is_reserved_example_host(domain):
         return True
+    if (
+        _relative_scan_path(path) in UPSTREAM_ATTRIBUTION_FILES
+        and not _is_private_or_local_host(domain)
+    ):
+        return True
     return _is_allowed_systemd_unit_token(normalized, path=path)
 
 
@@ -506,8 +533,10 @@ def _scan_uri_candidate(candidate: str, *, path: str, line_number: int) -> set[F
         and not _is_documentation_address(host)
         and not _is_known_test_fixture(path, host)
     ):
-        rule = "url-private-or-local-host" if _is_private_or_local_host(host) else "url-host-not-allowlisted"
-        findings.add(_finding(rule, path, line_number, host))
+        if _is_private_or_local_host(host):
+            findings.add(_finding("url-private-or-local-host", path, line_number, host))
+        elif _relative_scan_path(path) not in UPSTREAM_ATTRIBUTION_FILES:
+            findings.add(_finding("url-host-not-allowlisted", path, line_number, host))
     return findings
 
 
@@ -515,7 +544,11 @@ def _scan_urls(line: str, *, path: str, line_number: int) -> set[Finding]:
     findings: set[Finding] = set()
     for pattern in (URL_RE, URI_RE):
         for match in pattern.finditer(line):
-            findings.update(_scan_uri_candidate(match.group(0), path=path, line_number=line_number))
+            # An autolink used as a Markdown label contains two URLs with no
+            # whitespace: [https://example.org](https://example.org). Scan both independently;
+            # keep IPv6 bracket syntax and credential checks intact.
+            for candidate in match.group(0).split("]("):
+                findings.update(_scan_uri_candidate(candidate, path=path, line_number=line_number))
     return findings
 
 
@@ -540,12 +573,17 @@ def _scan_maintainer_repositories(line: str, *, path: str, line_number: int) -> 
             identity = _normalized_repository("github.com", f"{owner}/{repository}")
             if identity in PUBLIC_CODE_REPOSITORIES:
                 continue
+            if owner != "ling-ye" and _relative_scan_path(path) in UPSTREAM_ATTRIBUTION_FILES:
+                continue
             rule = "unexpected-maintainer-github-repo" if owner == "ling-ye" else "unexpected-code-repository"
             findings.add(_finding(rule, path, line_number, identity))
     for pattern in (OTHER_CODE_REPO_RE, SCP_CODE_REPO_RE):
         for match in pattern.finditer(line):
             identity = _normalized_repository(match.group("host"), match.group("coordinate"))
-            if identity not in PUBLIC_CODE_REPOSITORIES:
+            if (
+                identity not in PUBLIC_CODE_REPOSITORIES
+                and _relative_scan_path(path) not in UPSTREAM_ATTRIBUTION_FILES
+            ):
                 findings.add(_finding("unexpected-code-repository", path, line_number, identity))
     return findings
 

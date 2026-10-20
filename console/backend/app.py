@@ -21,6 +21,7 @@ from console.backend.routes import (  # noqa: E402
     evals,
     infra,
     llm,
+    legal,
     harness,
     overview,
     shared_services,
@@ -70,6 +71,7 @@ from console.control.discovery import repo_root  # noqa: E402
 app.state.llm = ModelControl(repo_root())
 
 app.include_router(overview.router)
+app.include_router(legal.router)
 app.include_router(architecture.router)
 # Fixed bot resources must precede the /{instance_id}/{verb} control fallback.
 app.include_router(schedules.router)

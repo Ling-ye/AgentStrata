@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import os
 from pathlib import Path
 import subprocess
@@ -8,7 +7,6 @@ import subprocess
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 INSTALLER = REPO_ROOT / "deploy/wsl/install_wsl_env.sh"
-NODE_TOOLS = REPO_ROOT / "deploy/wsl/node-tools"
 START_SCRIPT = REPO_ROOT / "deploy/wsl/start.sh"
 LOAD_ENV_SCRIPT = REPO_ROOT / "deploy/wsl/_load_env.sh"
 BOOTSTRAP_SCRIPT = REPO_ROOT / "deploy/wsl/bootstrap_wsl.sh"
@@ -84,24 +82,11 @@ def test_installer_pins_isolated_minimal_runtimes() -> None:
     assert "numpy" not in script.lower()
     assert "pandas" not in script.lower()
     assert "pyinstaller" not in script.lower()
-    assert '"cc-connect v$CC_CONNECT_VERSION"' in script
-    assert "NPM_CONFIG_USERCONFIG=/dev/null" in script
-    assert "NPM_CONFIG_GLOBALCONFIG=/dev/null" in script
+    assert "cc-connect" not in script
     assert 'sync_args+=(--no-config)' in script
     assert "GatewayAcpAgent" in script
     assert "GatewayAcpServer" not in script
 
-
-def test_node_tool_lock_contains_only_pinned_cc_connect() -> None:
-    package = json.loads((NODE_TOOLS / "package.json").read_text(encoding="utf-8"))
-    lock = json.loads((NODE_TOOLS / "package-lock.json").read_text(encoding="utf-8"))
-
-    assert package["private"] is True
-    assert package["dependencies"] == {"cc-connect": "1.4.0-beta.3"}
-    assert package["allowScripts"] == {"cc-connect@1.4.0-beta.3": True}
-    assert lock["lockfileVersion"] == 3
-    assert lock["packages"]["node_modules/cc-connect"]["version"] == "1.4.0-beta.3"
-    assert lock["packages"]["node_modules/cc-connect"]["integrity"].startswith("sha512-")
 
 
 def test_dry_run_is_zero_write_and_reports_x86_artifacts(tmp_path: Path) -> None:
@@ -111,7 +96,7 @@ def test_dry_run_is_zero_write_and_reports_x86_artifacts(tmp_path: Path) -> None
     assert not (tmp_path / "runtime").exists()
     assert list((tmp_path / "home").iterdir()) == []
     assert "uv-x86_64-unknown-linux-gnu.tar.gz" in completed.stdout
-    assert "node-v24.20.0-linux-x64.tar.xz" in completed.stdout
+    assert "node-v24.20.0-linux-x64.tar.xz" not in completed.stdout
     assert "uv sync --locked --python 3.13.15 --extra agent --extra acp" in completed.stdout
     assert "--link-mode" not in completed.stdout
     assert "--no-config" in completed.stdout
@@ -119,7 +104,7 @@ def test_dry_run_is_zero_write_and_reports_x86_artifacts(tmp_path: Path) -> None
 
 
 def test_dry_run_maps_aarch64_to_locked_artifacts(tmp_path: Path) -> None:
-    completed = _run_dry_run(tmp_path, architecture="aarch64")
+    completed = _run_dry_run(tmp_path, architecture="aarch64", extra_args=("--with-console",))
 
     assert completed.returncode == 0, completed.stderr
     assert "uv-aarch64-unknown-linux-gnu.tar.gz" in completed.stdout
@@ -132,7 +117,7 @@ def test_dry_run_maps_aarch64_to_locked_artifacts(tmp_path: Path) -> None:
 def test_console_dependencies_are_an_explicit_locked_extra(tmp_path: Path) -> None:
     completed = _run_dry_run(
         tmp_path,
-        extra_args=("--skip-cc-connect", "--with-console-deps"),
+        extra_args=("--with-console-deps",),
     )
 
     assert completed.returncode == 0, completed.stderr
@@ -197,7 +182,7 @@ def test_installer_scrubs_bot_and_model_secrets_before_child_commands(
     assert secret not in completed.stderr
 
 
-def test_legacy_feishu_start_executes_cc_connect_with_private_node(
+def test_removed_legacy_feishu_launcher_does_not_execute_external_client(
     tmp_path: Path,
 ) -> None:
     runtime = tmp_path / "runtime"
@@ -278,11 +263,10 @@ def test_legacy_feishu_start_executes_cc_connect_with_private_node(
         check=False,
     )
 
-    assert completed.returncode == 0, completed.stdout + completed.stderr
-    assert private_marker.exists()
+    assert completed.returncode == 78
+    assert "已移除 cc-connect" in completed.stderr
+    assert not private_marker.exists()
     assert not system_marker.exists()
-    assert not injection_marker.exists()
-    assert (tmp_path / "private-node-argument").read_text(encoding="utf-8").strip() == str(cc_entry)
 
 
 def test_gateway_start_executes_python_host_without_node_or_cc_connect(
@@ -402,6 +386,7 @@ def test_dry_run_with_existing_node_does_not_fill_missing_archive_cache(
             "--no-system-packages",
             "--dry-run",
             "--no-verify",
+            "--with-console",
             "--venv",
             str(tmp_path / "venv"),
         ],
@@ -427,12 +412,12 @@ def test_dry_run_with_existing_node_does_not_fill_missing_archive_cache(
     assert before == after
     assert not (runtime / "cache" / "artifacts").exists()
     assert "real run will compare the complete Node tree" in completed.stdout
-    assert " ci --prefix " in completed.stdout
+    assert "cc-connect" not in completed.stdout
     assert "already installed" not in completed.stdout
 
 
 def test_obsolete_installer_flags_are_rejected() -> None:
-    for option in ("--skip-lark-cli", "--cc-connect-pkg"):
+    for option in ("--skip-lark-cli", "--cc-connect-pkg", "--skip-cc-connect"):
         completed = subprocess.run(
             ["bash", str(INSTALLER), option],
             cwd=REPO_ROOT,
@@ -464,7 +449,6 @@ def test_fake_uv_is_rejected_before_execution_in_real_and_dry_run(tmp_path: Path
                 "bash",
                 str(INSTALLER),
                 "--no-system-packages",
-                "--skip-cc-connect",
                 "--no-verify",
                 "--venv",
                 str(tmp_path / "venv"),
@@ -502,6 +486,7 @@ def test_same_version_fake_node_is_rejected_before_npm(tmp_path: Path) -> None:
             str(INSTALLER),
             "--no-system-packages",
             "--no-verify",
+            "--with-console",
             "--venv",
             str(tmp_path / "venv"),
         ],

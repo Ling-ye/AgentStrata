@@ -4,26 +4,35 @@
   "version": "1.0.0",
   "type": "module",
   "scripts": {
-    "dev": "rsbuild dev",
-    "build": "tsc -b && rsbuild build",
+    "dev": "vite",
+    "build": "tsc -b && vite build",
     "test": "vitest run",
-    "preview": "rsbuild preview"
+    "preview": "vite preview"
   },
   "dependencies": {
     "@arco-design/web-react": "^2.66.15",
-    "@rsbuild/core": "^2.1.0",
-    "@rsbuild/plugin-react": "^2.1.0",
     "@tanstack/react-query": "^5.101.1",
     "@xyflow/react": "^12.11.6",
     "elkjs": "^0.12.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
-    "react-resizable": "^4.0.2"
+    "react-resizable": "^4.0.2",
+    "@agentstrata/decimal-arithmetic": "file:packages/decimal-arithmetic",
+    "decimal.js": "10.6.0"
   },
   "devDependencies": {
     "@types/react": "^18.3.3",
     "@types/react-dom": "^18.3.0",
     "typescript": "^5.5.3",
-    "vitest": "^3.2.4"
+    "vitest": "^3.2.4",
+    "vite": "7.3.6",
+    "@vitejs/plugin-react": "^5.1.1",
+    "@types/node": "^24"
+  },
+  "license": "AGPL-3.0-only",
+  "overrides": {
+    "@arco-design/web-react": {
+      "number-precision": "file:../../../packages/decimal-arithmetic"
+    }
   }
 }

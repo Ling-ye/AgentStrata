@@ -29,6 +29,9 @@
 3. 确认 README、badge、包元数据和文档不声称尚未存在的 tag 或 Release。
 4. 运行完整门禁；如果维护者有语义隐私清单，再额外运行本地私有字面量扫描。
 
+依赖或复制材料变化时，先刷新并人工复核[第三方许可证据](../../THIRD_PARTY_NOTICES.md)，
+确认所有原文缺口均有明确处理决定。首次采用 AGPL 的发布须记录许可切换 commit 和版本。
+
 ```bash
 .venv/bin/python scripts/check_public_repo.py
 .venv/bin/python scripts/check_public_repo.py --history
@@ -97,7 +100,8 @@ workflow 会分别执行验证、构建和创建草稿三个权限隔离的 job�
 - Release 的 target commit 与签名 tag commit 一致。
 - workflow 的 verify、build、draft jobs 全部成功。
 - wheel、sdist、release notes、checksum 与 attestation 文件齐全。
-- `SHA256SUMS` 与下载后的资产一致，release notes 只来自该版本 Changelog。
+- `SHA256SUMS` 与下载后的资产一致，release notes 的变更内容来自该版本 Changelog，
+  并附带该 tag 的完整仓库源码归档、作者和许可说明；实际下载并核对源码与 tag 一致。
 - 产物中没有本地 env、凭据、私有配置、日志、数据库、缓存或未声明资源。
 
 核对完成后手工发布 draft。当前发布流程不上传 PyPI；若未来引入包索引发布，必须先

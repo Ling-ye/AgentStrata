@@ -1,0 +1,91 @@
+{
+  "npm:elkjs:0.12.0": {
+    "selected_license": "GPL-3.0 (secondary license; AGPL section 13 combination)",
+    "preferred_source_url": "https://github.com/kieler/elkjs/archive/refs/tags/0.12.0.tar.gz",
+    "copyright_notice_files": [
+      "package/lib/elk.bundled.js"
+    ],
+    "license_urls": [
+      "https://raw.githubusercontent.com/spdx/license-list-data/31ba1a50e5397e00a304dbadc76531740e89ee48/text/GPL-3.0-only.txt"
+    ],
+    "reason": "Supply the complete standard GPLv3 text from a fixed SPDX revision for the selected secondary-license route, in addition to the package's original EPL and secondary-license notice."
+  },
+  "python:langsmith:0.11.1": {
+    "license_urls": [
+      "https://raw.githubusercontent.com/langchain-ai/langsmith-sdk/930be18058789110d7d9883d7b7d481f10fa1830/LICENSE"
+    ],
+    "reason": "The wheel omits the upstream MIT file; retain the SDK repository license at its immutable v0.11.1 tag commit."
+  },
+  "python:sqlite-vec:0.1.9": {
+    "preferred_source_url": "https://github.com/asg017/sqlite-vec/archive/e9f598abfa0c06b328d8fe5da9c3760cce74be10.tar.gz",
+    "license_urls": [
+      "https://raw.githubusercontent.com/asg017/sqlite-vec/e9f598abfa0c06b328d8fe5da9c3760cce74be10/LICENSE-MIT",
+      "https://raw.githubusercontent.com/asg017/sqlite-vec/e9f598abfa0c06b328d8fe5da9c3760cce74be10/LICENSE-APACHE"
+    ],
+    "reason": "Binary wheels omit both license files; retain the immutable v0.1.9 upstream MIT/Apache texts."
+  },
+  "python:types-certifi:2021.10.8.3": {
+    "license_urls": [
+      "https://raw.githubusercontent.com/python/typeshed/28e24a4664b814e6767b45e8eaac7d40d14b4765/LICENSE"
+    ],
+    "reason": "Distribution declares Apache-2.0 but omits its text; use the upstream typeshed LICENSE revision preceding this artifact's 2022-06-09 upload."
+  },
+  "python:pywin32:312": {
+    "preferred_source_url": "https://github.com/mhammond/pywin32/archive/2a277cb5552756c2b4d42b524dc36d25e0bb6354.tar.gz",
+    "reason": "The registry publishes wheels only; provide the preferred source and build scripts at the immutable b312 tag commit, independently of the binary artifact URL."
+  },
+  "npm:stackback:0.0.2": {
+    "declaration_only": true,
+    "review_status": "retained-with-disclosed-gap",
+    "source_commit": "2963095372abf7b75ba55f01cef08ab1e62c2ff4",
+    "reason": "Development dependency declares MIT in package.json but supplies no original license file, including at its upstream tag. Keep the declaration and author metadata without inventing copyright; verify exclusion from browser code."
+  },
+  "npm:@babel/runtime:7.29.7": {
+    "preferred_source_url": "https://github.com/babel/babel/archive/4fba7541180bf5f58256d8e358b544e3831ad090.tar.gz",
+    "upstream_revision": "4fba7541180bf5f58256d8e358b544e3831ad090",
+    "source_tag": "v7.29.7",
+    "reason": "Preferred source and build recipes at the upstream version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:@xyflow/react:12.11.6": {
+    "preferred_source_url": "https://github.com/xyflow/xyflow/archive/0a1f9575b25679f2880175de8d3eae21aedde921.tar.gz",
+    "upstream_revision": "0a1f9575b25679f2880175de8d3eae21aedde921",
+    "source_tag": "@xyflow/react@12.11.6",
+    "reason": "Preferred source and build recipes at the upstream version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:@xyflow/system:0.0.82": {
+    "preferred_source_url": "https://github.com/xyflow/xyflow/archive/0a1f9575b25679f2880175de8d3eae21aedde921.tar.gz",
+    "upstream_revision": "0a1f9575b25679f2880175de8d3eae21aedde921",
+    "source_tag": "@xyflow/system@0.0.82",
+    "reason": "Preferred source and build recipes at the upstream version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:dom-helpers:5.2.1": {
+    "preferred_source_url": "https://github.com/react-bootstrap/dom-helpers/archive/06310089836557a0affb1eeed65d175aadcb22db.tar.gz",
+    "upstream_revision": "06310089836557a0affb1eeed65d175aadcb22db",
+    "source_tag": "v5.2.1",
+    "reason": "Preferred source and build recipes at the upstream version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:react-is:16.13.1": {
+    "preferred_source_url": "https://github.com/facebook/react/archive/da834083cccb6ef942f701c6b6cecc78213196a8.tar.gz",
+    "upstream_revision": "da834083cccb6ef942f701c6b6cecc78213196a8",
+    "source_tag": "v16.13.1",
+    "reason": "Preferred source and build recipes at the upstream version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:react-transition-group:4.4.5": {
+    "preferred_source_url": "https://github.com/reactjs/react-transition-group/archive/4cb51a9be0ebf508cb8f6506452097f7ebb874fe.tar.gz",
+    "upstream_revision": "4cb51a9be0ebf508cb8f6506452097f7ebb874fe",
+    "source_tag": "v4.4.5",
+    "reason": "Preferred source and build recipes at the upstream version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:@tanstack/query-core:5.101.1": {
+    "preferred_source_url": "https://github.com/TanStack/query/archive/b80929716f9ae36104245da9d99e8af3550e6f58.tar.gz",
+    "upstream_revision": "b80929716f9ae36104245da9d99e8af3550e6f58",
+    "source_tag": "@tanstack/query-core@5.101.1",
+    "reason": "Preferred source and build recipes at the upstream package version tag, resolved to its immutable commit; original package license files remain unchanged."
+  },
+  "npm:@tanstack/react-query:5.101.1": {
+    "preferred_source_url": "https://github.com/TanStack/query/archive/b80929716f9ae36104245da9d99e8af3550e6f58.tar.gz",
+    "upstream_revision": "b80929716f9ae36104245da9d99e8af3550e6f58",
+    "source_tag": "@tanstack/react-query@5.101.1",
+    "reason": "Preferred source and build recipes at the upstream package version tag, resolved to its immutable commit; original package license files remain unchanged."
+  }
+}

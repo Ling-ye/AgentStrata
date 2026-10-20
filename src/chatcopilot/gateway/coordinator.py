@@ -45,6 +45,7 @@ from chatcopilot.contracts.identity import ConversationIdentity, Role, TurnIdent
 from chatcopilot.core.runtime_observation import (
     channel_input_summary, inbound_summary, result_summary, runtime_stage, turn_summary,
 )
+from chatcopilot.project import source_command_reply, source_notice
 
 from .application import GatewayApplicationError, GatewaySessionService
 from .events import GatewayEventPublisher
@@ -171,6 +172,7 @@ class GatewayTurnCoordinator:
         self._tokens: dict[str, CancellationToken] = {}
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._closing = False
+        self._source_notice_seen: set[tuple[str, str]] = set()
 
     def set_channel_runtime(self, runtime: ChannelOutboundPort) -> None:
         if self._channel_runtime is not None and self._channel_runtime is not runtime:
@@ -386,6 +388,7 @@ class GatewayTurnCoordinator:
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         self._actor_executor.close()
+        self._source_notice_seen.clear()
 
     async def execute_scheduled(self, *, run_id: str, schedule_id: str, account: ChannelAccountRef,
                                 group_id: str, prompt: str, preview: bool,
@@ -562,14 +565,17 @@ class GatewayTurnCoordinator:
                     session_id=session_id,
                     run_id=run_id,
                     result=result.result,
+                    display_text=self._reply_text(request, result.result.final_text, preview=True),
                 )
+                if result.result.final_text and result.result.stop_reason == "end_turn":
+                    self._source_notice_seen.add((session_id, principal.actor_ref))
             except StaleWriterGeneration:
                 return
             except Exception as exc:
                 self._fail_run(session_id=session_id, run_id=run_id, error=exc,
                                result=result.result if result is not None else None)
             finally:
-                if result is not None:
+                if result is not None and result.exchange is not None:
                     self._actor_executor.discard_exchange(request, result)
 
     async def _execute_channel_run(
@@ -591,7 +597,8 @@ class GatewayTurnCoordinator:
                 cancellation=cancellation,
             )
             if result.result.stop_reason == "cancelled" or cancellation.is_cancelled:
-                self._actor_executor.discard_exchange(request, result)
+                if result.exchange is not None:
+                    self._actor_executor.discard_exchange(request, result)
                 self._finish_aborted(session_id=session_id, run_id=run_id)
                 return
             final_text = _final_text(result.result.final_text)
@@ -606,7 +613,7 @@ class GatewayTurnCoordinator:
                     outbound_id=response_outbound_id(run_id),
                     account=event.evidence.account,
                     conversation=event.evidence.conversation,
-                    segments=(MessageSegment(kind="text", text=final_text),),
+                    segments=(MessageSegment(kind="text", text=self._reply_text(request, final_text)),),
                     created_at=self._now(),
                     session_id=session_id,
                     run_id=run_id,
@@ -615,14 +622,18 @@ class GatewayTurnCoordinator:
                 receipt = await runtime.send(envelope)
                 self._sessions.assert_current_generation()
                 if cancellation.is_cancelled:
-                    self._actor_executor.discard_exchange(request, result)
+                    if result.exchange is not None:
+                        self._actor_executor.discard_exchange(request, result)
                     self._finish_aborted(session_id=session_id, run_id=run_id)
                     return
-                result = self._actor_executor.commit_exchange(
-                    request, result, envelope=envelope, receipt=receipt)
+                if result.exchange is not None:
+                    result = self._actor_executor.commit_exchange(
+                        request, result, envelope=envelope, receipt=receipt)
+                if receipt.stage == "provider_acknowledged" and receipt.outbound_id == envelope.outbound_id:
+                    self._source_notice_seen.add((session_id, principal.actor_ref))
 
                 exchange_committed = True
-            else:
+            elif result.exchange is not None:
                 self._actor_executor.discard_exchange(request, result)
             self._finish_result(
                 session_id=session_id,
@@ -630,12 +641,12 @@ class GatewayTurnCoordinator:
                 result=result.result,
             )
         except (StaleWriterGeneration, asyncio.CancelledError):
-            if result is not None and not exchange_committed:
+            if result is not None and result.exchange is not None and not exchange_committed:
                 self._actor_executor.discard_exchange(request, result)
             raise
         except Exception as error:
             failure = error
-            if result is not None and not exchange_committed:
+            if result is not None and result.exchange is not None and not exchange_committed:
                 try:
                     self._actor_executor.discard_exchange(request, result)
                 except Exception as discard_error:
@@ -665,6 +676,9 @@ class GatewayTurnCoordinator:
             run_id=run_id,
             now=self._now(),
         )
+        source_reply = source_command_reply(request.canonical_text)
+        if source_reply is not None:
+            return TurnOutcome(AgentResult(source_reply, "end_turn"))
         observer = RunObserver(self._state_store, self._generation, run_id, agent_stage_span_id=ACTOR_SPAN_ID)
         forwarder = _AgentEventForwarder(
             events=self._events,
@@ -708,7 +722,15 @@ class GatewayTurnCoordinator:
                 "Gateway session already has an active run",
             ) from exc
 
-    def _finish_result(self, *, session_id: str, run_id: str, result: AgentResult) -> None:
+    def _reply_text(self, request: PreparedTurn, text: str, *, preview: bool = False) -> str:
+        key = (request.session_id, request.principal.actor_ref)
+        suffix = ""
+        if text and key not in self._source_notice_seen and request.canonical_text.strip().lower() != "/source":
+            suffix = "\n\n" + source_notice()
+        return result_preview(text, suffix=suffix) if preview else text + suffix
+
+    def _finish_result(self, *, session_id: str, run_id: str, result: AgentResult,
+                       display_text: str | None = None) -> None:
         if result.stop_reason == "cancelled":
             self._finish_aborted(session_id=session_id, run_id=run_id)
             return
@@ -743,7 +765,7 @@ class GatewayTurnCoordinator:
                 session_id=session_id,
             )
             return
-        segments = (TextRpcSegment(result_preview(final_text)),) if final_text else ()
+        segments = (TextRpcSegment(display_text if display_text is not None else result_preview(final_text)),) if final_text else ()
         self._events.emit(
             "chat.final",
             ChatFinalEvent(

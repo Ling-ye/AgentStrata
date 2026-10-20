@@ -45,7 +45,7 @@ ensure_source_cli_env() {
         return 1
     fi
     echo "[update] reconciling source CLI from uv.lock"
-    bash "$installer" --no-system-packages --skip-cc-connect \
+    bash "$installer" --no-system-packages \
         --with-console-deps --venv "$venv_dir" --no-verify
     local refresh_rc=$?
     if [ "$refresh_rc" -ne 0 ]; then
@@ -140,8 +140,6 @@ REBUILD_INPUTS=(
     "pyproject.toml"
     "uv.lock"
     "deploy/wsl/install_wsl_env.sh"
-    "deploy/wsl/node-tools/package.json"
-    "deploy/wsl/node-tools/package-lock.json"
     "deploy/wsl/bootstrap_wsl.sh"
 )
 UPDATE_MODE="fast"
@@ -297,9 +295,6 @@ if bot_uses_gateway "$BOT_FOR_CMD"; then
     GATEWAY_BACKED=1
 fi
 RUNTIME_INSTALL_ARGS=(--no-system-packages --venv "$DST/.venv" --no-verify)
-if [ "$GATEWAY_BACKED" -eq 1 ]; then
-    RUNTIME_INSTALL_ARGS+=(--skip-cc-connect)
-fi
 select_update_mode
 if [ -n "$UPDATE_ERROR" ]; then
     echo "[ERR] $UPDATE_ERROR" >&2
@@ -312,7 +307,7 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "[DRY-RUN] selected update mode: $UPDATE_MODE ($UPDATE_REASON)"
     echo "[DRY-RUN] BotSpec dev.code_tasks requirement: deferred until locked source CLI reconciliation"
     echo "[DRY-RUN] would ensure source venv from: '$SRC/uv.lock'"
-    echo "[DRY-RUN] would run locked installer: bash '$SRC/deploy/wsl/install_wsl_env.sh' --no-system-packages --skip-cc-connect --with-console-deps --venv '$SRC/.venv' --no-verify"
+    echo "[DRY-RUN] would run locked installer: bash '$SRC/deploy/wsl/install_wsl_env.sh' --no-system-packages --with-console-deps --venv '$SRC/.venv' --no-verify"
     echo "[DRY-RUN] would reconcile source CLI with uv sync --locked before executing '$VENV_PY'"
     echo "[DRY-RUN] would export: PYTHONPATH='$SRC/src\${PYTHONPATH:+:\$PYTHONPATH}'"
     echo "[DRY-RUN] would run: '$VENV_PY' -m chatcopilot bot provision-env --bot '$BOT_FOR_CMD'"
@@ -326,7 +321,7 @@ if [ "$DRY_RUN" = 1 ]; then
     else
         echo "[DRY-RUN] would reconcile the locked runtime before runtime-config check"
         if [ "$GATEWAY_BACKED" -eq 1 ]; then
-            echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify --skip-cc-connect"
+            echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify"
             echo "[DRY-RUN] Gateway path does not render cc-connect/session-env configuration"
         else
             echo "[DRY-RUN] would run: bash '$DST/deploy/wsl/install_wsl_env.sh' --no-system-packages --venv '$DST/.venv' --no-verify"

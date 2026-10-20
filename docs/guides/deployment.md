@@ -10,6 +10,9 @@
 AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部署。Console 是可选管理面，
 不是 QQ 首次部署的依赖。
 
+对外提供服务前，在实例环境中设置 `CHATCOPILOT_SOURCE_URL` 并核对它与部署版本对应；
+配置、源码范围与验收要求见[许可与对应源码](../reference/publication.md#许可与对应源码)。
+
 安装脚本使用 `uv sync --locked`，项目依赖声明与锁文件不一致时停止；文件复用采用 uv 默认方式。
 机器人 `agent` 依赖包含 DeepEval 4.2.2。同步依赖后在安装环境执行无网络、无模型的
 临时归档保存和读取探针，防止开发环境可用而实际实例缺少记录依赖。
@@ -42,7 +45,7 @@ AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部�
 
 向导使用固定校验和的用户级 Python，不覆盖系统 Python，不修改 shell profile，也不默认
 安装 Console、桌面、测试、飞书或第三方 MCP/Skill 依赖。QQ 推荐路径不安装 Node 或
-cc-connect；只有单独部署可选 Console 前端或 Feishu legacy edge 时才需要对应工具链。
+cc-connect；只有单独部署可选 Console 前端时才需要 Node 工具链。内置安装与启动已移除 cc-connect 和 Feishu legacy 一键桥接，ACP 协议实现仍可供外部客户端集成。
 
 ## 三条命令开始
 

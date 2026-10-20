@@ -20,6 +20,8 @@ from chatcopilot.middleware.runtime.tasks import TurnTaskRecorder
 def _session(*, role: Role = Role.OWNER) -> SimpleNamespace:
     return SimpleNamespace(
         role=role,
+        turn_identity=None,
+        source_notice_seen=set(),
         runtime=SimpleNamespace(
             instance_id="qq-bot",
             display_name="Test Bot",
@@ -31,7 +33,7 @@ def _session(*, role: Role = Role.OWNER) -> SimpleNamespace:
                 llm=SimpleNamespace(code=SimpleNamespace(enabled=True, allowed_roles=("owner",))),
             ),
         ),
-        workspace=SimpleNamespace(scope="actor", chat_kind="p2p"),
+        workspace=SimpleNamespace(scope="actor", chat_kind="p2p", user_id="fixture-operator"),
         assistant_mode=SimpleNamespace(value="performance"),
         debug_mode=False,
         is_workspace_materialized=False,
@@ -420,3 +422,16 @@ def test_restart_persists_terminal_acceptance_before_scheduling_receipt() -> Non
         and event.get("data", {}).get("status") == "scheduled"
         for event in raw_events
     )
+
+
+@pytest.mark.parametrize("role", [Role.OWNER, Role.ADMIN, Role.USER])
+def test_source_bypasses_owner_control_without_host_query(role):
+    events = []
+    session = _session(role=role)
+    control = _Control(events)
+    asyncio.run(_call("/source", events=events, session=session, control=control))
+    assert not any(item[0] in {"preflight", "status", "schedule"} for item in events)
+    assert session.source_notice_seen == {"fixture-operator"}
+    sent = [item for item in events if item[0] == "delivery"]
+    assert len(sent) == 1
+    assert "AGPL-3.0-only" in str(sent[0])

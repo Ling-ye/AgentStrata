@@ -4,7 +4,11 @@
 
 ## 界面与数据
 
-保持现有 React、Rsbuild/Rspack、Arco Design 和 TanStack Query。共享视觉语义复用样式 tokens、业务组件与状态映射；操作页信息密集、可扫描，优先完整呈现加载、空、错误、禁用和窄屏状态。
+固定侧栏的「许可与源码」通过只读 `/api/legal` 显示项目版权、AGPL-3.0-only、无担保
+说明、对应源码和第三方声明。构建附带的许可文本位于 `/third-party-notices.txt`。
+未设置部署对应源码时明确提示，配置要求见[公开契约](publication.md#许可与对应源码)。
+
+保持现有 React、Vite/Rollup、Arco Design 和 TanStack Query。共享视觉语义复用样式 tokens、业务组件与状态映射；操作页信息密集、可扫描，优先完整呈现加载、空、错误、禁用和窄屏状态。
 
 服务端读取走 Query；SSE 使用专用 hook。局部选择与展开留在组件中，异步响应必须绑定实例与任务。使用原生 Arco API；标签内部保持横向单行，超长时省略并可查看全文。
 
@@ -22,7 +26,7 @@
 
 - 控制台是运维工作台，不是营销页：信息密集、安静、可扫描，优先支持重复运维操作和异常定位。
 - Console 管理视图直接展示实例配置与私有观测原值，包括身份名单、凭据、环境引用和路径；不再次脱敏已有可读取字段。值仅进入私有存储及禁止缓存的 API，不进入公开源码或诊断导出；历史已省略字段不能补造。共享 artifact、Evaluation、群聊/工具授权及隐藏推理边界保持，契约见 `docs/reference/observability.md`。
-- 保持 React 18 + Rsbuild/Rspack + Arco Design + TanStack Query；不默认引入 Tailwind、shadcn、MUI、Storybook 或 Playwright 视觉测试等新栈。
+- 保持 React 18 + Vite/Rollup + Arco Design + TanStack Query；不默认引入 Tailwind、shadcn、MUI、Storybook 或 Playwright 视觉测试等新栈。
 - 触碰页面时使用原生 Arco API，不恢复旧 UI 语义兼容层。
 - 文本、状态标签和按钮层级优先复用 `styles/tokens.css`、`styles/components.css` 与 `shared/ui/status.ts`。
 - 修改后优先用当前 AI 环境已有浏览器工具检查桌面和窄屏；没有浏览器时至少完成构建并说明未做视觉验证。

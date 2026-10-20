@@ -49,6 +49,7 @@ from chatcopilot.gateway.channels import ChannelRuntimeManager
 from chatcopilot.gateway.protocol import request_fingerprint
 from chatcopilot.gateway.observation_runtime import ObservationRecorder
 from chatcopilot.gateway.observation_queries import detail as observation_detail
+from chatcopilot.project import source_notice
 
 
 def _async_test(function):
@@ -1184,6 +1185,11 @@ async def test_agent_result_terminal_preserves_execution_and_delivery(
             assert terminals[0].payload["stopReason"] == (
                 "aborted" if stop_reason == "cancelled" else "completed"
             )
+            if entrypoint == "client" and stop_reason == "end_turn" and final_text:
+                # Long answer previews must still expose the source footer;
+                # persisted results above retain the complete raw answer.
+                assert terminals[0].payload["segments"][0]["text"].endswith(source_notice())
+                assert len(terminals[0].payload["segments"][0]["text"]) <= 64 * 1024
         observed = observation_detail(recorder.store, run_id)
         assert observed["run"]["state"] == expected_state
         assert observed["run"]["error_code"] == run.error_code
@@ -1195,7 +1201,7 @@ async def test_agent_result_terminal_preserves_execution_and_delivery(
         if entrypoint == "channel" and final_text:
             assert len(driver.sent) == len(actor.commits) == 1
             assert not actor.discards
-            assert driver.sent[0].segments[0].text == final_text
+            assert driver.sent[0].segments[0].text == final_text + "\n\n" + source_notice()
             assert [receipt.stage for receipt in state.delivery_receipts(driver.sent[0].outbound_id)] == [
                 "gateway_accepted", "provider_submitted", "provider_acknowledged",
             ]
@@ -1273,3 +1279,89 @@ async def test_agent_failure_does_not_override_delivery_or_persistence_errors(tm
     finally:
         await channels.stop()
         await coordinator.close()
+
+
+@_async_test
+async def test_source_is_available_to_admitted_member_without_actor_or_history(tmp_path):
+    from chatcopilot.project import format_legal_info
+
+    state, _, _, _, _, channels, _, _, actor = _runtime(tmp_path)
+    driver = _Driver()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    try:
+        event = replace(_event(event_id="source-command", sender="20002"),
+                        segments=(MessageSegment("text", text="/source"),))
+        await channels.handle_inbound(event)
+        assert not actor.requests and not actor.commits and not actor.discards
+        assert driver.sent[0].segments[0].text == format_legal_info()
+        run = state.get_run(driver.sent[0].run_id)
+        assert run.result["final_text"] == format_legal_info()
+    finally:
+        await channels.stop()
+
+
+@_async_test
+async def test_first_source_notice_is_per_session_and_actor_and_preserves_raw_result(tmp_path):
+    state, _, _, _, coordinator, channels, _, _, actor = _runtime(tmp_path)
+    driver = _Driver()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    try:
+        for i, (sender, group) in enumerate([("20002", "30003"), ("20002", "30003"),
+                                            ("20003", "30003"), ("20002", "30004")]):
+            await channels.handle_inbound(_event(event_id=f"notice-{i}", sender=sender, group=group))
+        assert ["/source" in e.segments[0].text for e in driver.sent] == [True, False, True, True]
+        assert [r.canonical_text for r in actor.requests] == ["hello"] * 4
+        assert [state.get_run(e.run_id).result["final_text"] for e in driver.sent] == ["answer"] * 4
+        assert all(outcome.result.final_text == "answer" for _, outcome in actor.commits)
+        assert coordinator._source_notice_seen
+        await coordinator.close()
+        assert not coordinator._source_notice_seen
+    finally:
+        await channels.stop()
+
+
+@_async_test
+async def test_failed_delivery_does_not_consume_first_source_notice(tmp_path):
+    class FailOnce(_Driver):
+        async def send(self, envelope):
+            if not self.sent:
+                self.sent.append(envelope)
+                raise ChannelDefinitelyNotSubmittedError("provider_rejected", "fixture rejection")
+            return await super().send(envelope)
+
+    _, _, _, _, _, channels, _, _, _ = _runtime(tmp_path)
+    driver = FailOnce()
+    channels.register(driver)
+    await channels.start()
+    await channels.activate()
+    try:
+        with pytest.raises(ChannelDefinitelyNotSubmittedError):
+            await channels.handle_inbound(_event(event_id="notice-failed", sender="20002"))
+        await channels.handle_inbound(_event(event_id="notice-retry", sender="20002"))
+        await channels.handle_inbound(_event(event_id="notice-next", sender="20002"))
+        assert ["/source" in e.segments[0].text for e in driver.sent] == [True, True, False]
+    finally:
+        await channels.stop()
+
+
+@_async_test
+async def test_rebuilt_host_repeats_first_notice_without_replaying_old_turns(tmp_path):
+    for generation in range(2):
+        _, _, _, _, coordinator, channels, _, _, actor = _runtime(tmp_path)
+        driver = _Driver()
+        channels.register(driver)
+        await channels.start()
+        await channels.activate()
+        try:
+            for turn in range(2):
+                await channels.handle_inbound(_event(
+                    event_id=f"rebuilt-{generation}-{turn}", sender="20002"))
+            assert ["/source" in e.segments[0].text for e in driver.sent] == [True, False]
+            assert [request.canonical_text for request in actor.requests] == ["hello", "hello"]
+        finally:
+            await channels.stop()
+            await coordinator.close()
