@@ -42,7 +42,9 @@ distribution terms for the exact versions they choose to install.
 [Dependency evidence](third_party/dependencies.json) inventories the direct and
 transitive locked Python/JavaScript versions, scopes, hash-verified archives,
 upstream declarations and hashes of inspected license files. The release-only
-build closure is included. [Full original
+build closure is included independently of `uv.lock`: distinct build versions
+have their own records, and inspected build archives must match the SHA-256
+hashes in `requirements/release-build.txt`. [Full original
 notices](THIRD_PARTY_LICENSES.txt) preserve the package copyright/license texts,
 including vendored-library notices carried by those packages. This is evidence
 of upstream declarations, not an automatic opinion about every integration.

@@ -1,5 +1,5 @@
 {
-  "notices_sha256": "eb03b0f382c566a84d9aae48d02c335081727ceea51986fb2638157190085003",
+  "notices_sha256": "f81b27ea1a9a0d292db9c6ddba47da2ea73e3b40626e3fcdd3b53c4de156e8b7",
   "reviewed_sources_sha256": "b0a3d88ad981b19def4156d8eda60131a78c5a073da826da9d900d1c291fb258",
   "dependencies": [
     {
@@ -6940,6 +6940,9 @@
         "dev",
         "release-build"
       ],
+      "release_build_hashes": [
+        "sha256:13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f"
+      ],
       "artifact_url": "https://files.pythonhosted.org/packages/0d/fe/6bea5c9162869c5beba5d9c8abbed835ec85bf1ec1fba05a3822325c45f3/build-1.5.0-py3-none-any.whl",
       "integrity": "sha256:13f3eecb844759ab66efec90ca17639bbf14dc06cb2fdf37a9010322d9c50a6f",
       "source_url": "https://files.pythonhosted.org/packages/78/e0/df5e171f685f82f37b12e1f208064e24244911079d7b767447d1af7e0d70/build-1.5.0.tar.gz",
@@ -9088,6 +9091,35 @@
     {
       "ecosystem": "python",
       "name": "packaging",
+      "version": "26.2",
+      "scopes": [
+        "release-build"
+      ],
+      "release_build_hashes": [
+        "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e"
+      ],
+      "artifact_url": "https://files.pythonhosted.org/packages/df/b2/87e62e8c3e2f4b32e5fe99e0b86d576da1312593b39f47d8ceef365e95ed/packaging-26.2-py3-none-any.whl",
+      "integrity": "sha256:5fc45236b9446107ff2415ce77c807cee2862cb6fac22b8a73826d0693b0980e",
+      "source_url": "https://files.pythonhosted.org/packages/d7/f1/e7a6dd94a8d4a5626c03e4e99c87f241ba9e350cd9e6d75123f992427270/packaging-26.2.tar.gz",
+      "source_integrity": "sha256:ff452ff5a3e828ce110190feff1178bb1f2ea2281fa2075aadb987c2fb221661",
+      "license": "Apache-2.0 OR BSD-2-Clause",
+      "upstream_urls": [
+        "Documentation, https://packaging.pypa.io/",
+        "Source, https://github.com/pypa/packaging"
+      ],
+      "upstream_authors": {
+        "Author": "",
+        "Author-email": "Donald Stufft <donald@stufft.io>"
+      },
+      "license_files": {
+        "packaging-26.2.dist-info/licenses/LICENSE": "cad1ef5bd340d73e074ba614d26f7deaca5c7940c3d8c34852e65c4909686c48",
+        "packaging-26.2.dist-info/licenses/LICENSE.APACHE": "0d542e0c8804e39aa7f37eb00da5a762149dc682d7829451287e11b938e94594",
+        "packaging-26.2.dist-info/licenses/LICENSE.BSD": "b70e7e9b742f1cc6f948b34c16aa39ffece94196364bc88ff0d2180f0028fac5"
+      }
+    },
+    {
+      "ecosystem": "python",
+      "name": "packaging",
       "version": "26.3",
       "scopes": [
         "agent",
@@ -9733,6 +9765,9 @@
       "scopes": [
         "dev",
         "release-build"
+      ],
+      "release_build_hashes": [
+        "sha256:9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913"
       ],
       "artifact_url": "https://files.pythonhosted.org/packages/bd/24/12818598c362d7f300f18e74db45963dbcb85150324092410c8b49405e42/pyproject_hooks-1.2.0-py3-none-any.whl",
       "integrity": "sha256:9e5c6bfa8dcc30091c74b0cf803c81fdd29d94f01992a7707bc97babb1141913",
@@ -10387,6 +10422,9 @@
         "dev",
         "evaluation",
         "release-build"
+      ],
+      "release_build_hashes": [
+        "sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3"
       ],
       "artifact_url": "https://files.pythonhosted.org/packages/5d/40/e1e72872c6354b306daef1703549e8e83b4d43cfea356311bf722a043752/setuptools-83.0.0-py3-none-any.whl",
       "integrity": "sha256:29b23c360f22f414dc7336bb39178cc7bcbf6021ed2733cde173f09dba19abb3",
@@ -11254,6 +11292,9 @@
         "dev",
         "evaluation",
         "release-build"
+      ],
+      "release_build_hashes": [
+        "sha256:212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced"
       ],
       "artifact_url": "https://files.pythonhosted.org/packages/87/1b/9e33c09813d65e248f7f773119148a612516a4bea93e9c6f545f78455b7c/wheel-0.47.0-py3-none-any.whl",
       "integrity": "sha256:212281cab4dff978f6cedd499cd893e1f620791ca6ff7107cf270781e587eced",

@@ -19,6 +19,7 @@ from chatcopilot.contracts.identity import Role
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.gateway import runtime as runtime_module
 from chatcopilot.gateway.runtime import build_gateway_runtime_host, parse_gateway_runtime_config
+from chatcopilot.project import source_notice
 from chatcopilot.protocols.gateway_client import (
     GatewayClientConfig, GatewayClientError, GatewayRemoteError, GatewayWebSocketClient,
 )
@@ -181,8 +182,10 @@ def test_real_application_materializes_and_reuses_an_owner_client_session(tmp_pa
             client_id="avatar-owner", client_mode="interactive")), client_id="avatar-owner")
         bridge.select_history("character", "history")
         try:
-            assert (await bridge.chat("first")).text == "reply:first"
+            first = await bridge.chat("first")
+            assert first.text == "reply:first\n\n" + source_notice()
             assert (await bridge.chat("second")).text == "reply:second"
+            assert host.state_store.get_run(first.run_id).result["final_text"] == "reply:first"
             assert len(agent.sessions) == 1
             assert [task.text for task in agent.sessions[0].tasks] == ["first", "second"]
             assert agent.creations[0]["caller_role_hint"] == "owner"

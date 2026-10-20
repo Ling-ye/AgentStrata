@@ -7,6 +7,9 @@
 准入后，Gateway 确定性响应 `/source`，所有已获准的用户均可查看许可、署名与对应源码；
 此命令不进入 Agent、工具或自动记忆处理。普通回复在当前会话对每个用户首次成功投递时
 附一行源码提示，群内用户分别记录；提示只进入投递文本，不改写模型结果与会话历史。
+客户端通过事件订阅或 `runs.get` / `runs.latest` 轮询读取相同展示正文；运行记录的
+`display_suffix` 单独保存提示，`final_text` 保留原文。达到执行上限并正常完成的可见回复也
+计作已提示；没有可见回复的失败或取消不计。
 会话或进程重建后可再次提示。配置与对应源码要求见[公开契约](publication.md#许可与对应源码)。
 
 Channel 转换平台帧并负责实际传输；Gateway 采信身份、调用准入策略并协调 session/run 与交付；Application 准备 actor、工作区、上下文并提交交换；Agent 执行模型和工具。
@@ -101,7 +104,7 @@ AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[
 
 去除平台 envelope 后，用户正文去除前导空白并以 ASCII `/name` token 开头、后接空白或正文结束时才识别为斜杠指令；绝对路径、URL、`//name` 和正文中间的 slash 仍是普通输入。
 
-所有已识别指令一律只允许本轮认证 Gateway `Principal`、准入和身份激活共同确认的可信 Owner；统一门禁位于身份激活之后、资源 materialization 及 Session/Agent/模型/工具之前，群准入、昵称、历史回合或共享 session 不得提升权限。
+除公开的 `/source` 外，管理指令只允许本轮认证 Gateway `Principal`、准入和身份激活共同确认的可信 Owner；统一门禁位于身份激活之后、资源 materialization 及 Session/Agent/模型/工具之前，群准入、昵称、历史回合或共享 session 不得提升权限。
 
 `/help` 必须从当前 Bot 实际注册且启用的同一命令目录生成；`/state` 只投影当前会话和可信 runtime 绑定的当前 Bot systemd unit 的有界脱敏状态。
 

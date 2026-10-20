@@ -411,7 +411,7 @@ def _is_private_or_local_host(host: str) -> bool:
 def _relative_scan_path(path: str) -> str:
     for prefix in ("index:", "worktree:", "untracked:", "history-name:"):
         if path.startswith(prefix):
-            return path[len(prefix) :].split("@", 1)[0]
+            return path[len(prefix) :]
     if path.startswith("history:"):
         return path[len("history:") :].rsplit("@", 1)[0]
     return path

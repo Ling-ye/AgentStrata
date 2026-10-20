@@ -399,7 +399,7 @@ def _server_for_dispatcher(
     visibility: GatewaySessionEventVisibility,
 ) -> GatewayWebSocketServer:
     return GatewayWebSocketServer(
-        config=GatewayServerConfig(),
+        config=GatewayServerConfig(port=0),
         dispatcher=dispatcher,
         credential_authority=StaticGatewayCredentialAuthority(
             (
@@ -691,7 +691,7 @@ async def test_runs_get_returns_visible_durable_terminal_output(tmp_path: Path) 
             "sessionId": session_id,
             "runId": run_id,
             "state": "completed",
-            "segments": [{"kind": "text", "text": "answer"}],
+            "segments": [{"kind": "text", "text": "answer\n\n" + source_notice()}],
         }
     }
     latest = await dispatcher.dispatch(
@@ -1167,7 +1167,11 @@ async def test_agent_result_terminal_preserves_execution_and_delivery(
         )
         assert run.state == expected_state
         assert run.error_code == ("agent_llm_error" if stop_reason == "llm_error" else None)
-        assert run.result == {"final_text": final_text, "stop_reason": stop_reason}
+        expected_result = {"final_text": final_text, "stop_reason": stop_reason}
+        if entrypoint == "client" and expected_state == "completed" and final_text:
+            expected_result["display_suffix"] = "\n\n" + source_notice()
+        assert run.result == expected_result
+        assert actor.result.final_text == final_text
         if len(final_text) > 1024 * 1024:
             assert GatewayStateStore(state.root).get_run(run_id).result == run.result
         assert len(actor.requests) == 1
@@ -1185,11 +1189,16 @@ async def test_agent_result_terminal_preserves_execution_and_delivery(
             assert terminals[0].payload["stopReason"] == (
                 "aborted" if stop_reason == "cancelled" else "completed"
             )
-            if entrypoint == "client" and stop_reason == "end_turn" and final_text:
+            if entrypoint == "client" and expected_state == "completed" and final_text:
                 # Long answer previews must still expose the source footer;
                 # persisted results above retain the complete raw answer.
                 assert terminals[0].payload["segments"][0]["text"].endswith(source_notice())
                 assert len(terminals[0].payload["segments"][0]["text"]) <= 64 * 1024
+            if entrypoint == "client":
+                for method, params in [("runs.get", {"sessionId": run.session_id, "runId": run_id}),
+                                       ("runs.latest", {"sessionId": run.session_id})]:
+                    snapshot = await dispatcher.dispatch(RequestFrame(method, method, params), client=client)
+                    assert snapshot["run"]["segments"] == terminals[0].payload["segments"]
         observed = observation_detail(recorder.store, run_id)
         assert observed["run"]["state"] == expected_state
         assert observed["run"]["error_code"] == run.error_code
@@ -1364,4 +1373,76 @@ async def test_rebuilt_host_repeats_first_notice_without_replaying_old_turns(tmp
             assert [request.canonical_text for request in actor.requests] == ["hello", "hello"]
         finally:
             await channels.stop()
+            await coordinator.close()
+
+
+@pytest.mark.parametrize("stop_reason", ["end_turn", "iteration_cap", "timeout_cap", "tool_call_cap",
+                                       "tool_failure_cap", "llm_error", "runtime_error", "cancelled"])
+@_async_test
+async def test_client_notice_is_consumed_by_a_completed_visible_reply_only(tmp_path, stop_reason):
+    state, _, _, _, coordinator, _, _, dispatcher, actor = _runtime(tmp_path)
+    client = _client("client-a")
+    created = await _create(dispatcher, client, "notice-session")
+    session_id = created["session"]["sessionId"]
+    notices = []
+    try:
+        for index, reason in enumerate([stop_reason, "end_turn", "end_turn"]):
+            actor.result = AgentResult("" if reason == "cancelled" else "raw answer", reason)
+            accepted = await dispatcher.dispatch(RequestFrame(f"send-{index}", "chat.send", {
+                "sessionId": session_id, "segments": [{"kind": "text", "text": "fixture input"}],
+            }, idempotency_key=f"turn-{index}"), client=client)
+            run_id = accepted["runId"]
+            for _ in range(100):
+                if state.get_run(run_id).state in {"completed", "failed", "aborted"}:
+                    break
+                await asyncio.sleep(0)
+            snapshot = await dispatcher.dispatch(RequestFrame(f"poll-{index}", "runs.get", {
+                "sessionId": session_id, "runId": run_id,
+            }), client=client)
+            notices.append(any(source_notice() in segment["text"] for segment in snapshot["run"]["segments"]))
+            assert state.get_run(run_id).result["final_text"] == actor.result.final_text
+        completed_first = stop_reason not in {"llm_error", "runtime_error", "cancelled"}
+        assert notices == [completed_first, not completed_first, False]
+        assert [request.canonical_text for request in actor.requests] == ["fixture input"] * 3
+        assert all(outcome.result.final_text in {"raw answer", ""} for _, outcome in actor.discards)
+    finally:
+        await coordinator.close()
+
+
+@_async_test
+async def test_vtuber_polling_and_recovery_preserve_the_actual_display_notice(tmp_path, monkeypatch):
+    from chatcopilot.protocols.gateway_client import GatewayClientConfig, GatewayWebSocketClient
+    from integrations.open_llm_vtuber.agentstrata_vtuber.bridge import ConversationBridge
+
+    first_reply = None
+    for generation in range(2):
+        source_url = f"https://example.org/source-{generation}.tar.gz"
+        monkeypatch.setenv("CHATCOPILOT_SOURCE_URL", source_url)
+        state, writer, _, _, coordinator, _, visibility, dispatcher, actor = _runtime(tmp_path)
+        server = _server_for_dispatcher(state=state, generation=writer, dispatcher=dispatcher, visibility=visibility)
+        await server.start()
+        client = GatewayWebSocketClient(GatewayClientConfig(url=server.url, token="r" * 32,
+                                                            client_id="client-a", client_mode="acp"))
+        bridge = ConversationBridge(client, client_id="client-a")
+        bridge.select_history("character", "history")
+        try:
+            if generation:
+                # Polling a persisted run uses its original source URL, even
+                # after both the host and deployment configuration have changed.
+                assert await bridge.resume() == first_reply
+                assert not actor.requests
+            reply = await asyncio.wait_for(bridge.chat("hello"), timeout=5)
+            assert reply.text == "answer\n\n" + source_notice()
+            assert state.get_run(reply.run_id).result["final_text"] == "answer"
+            assert GatewayStateStore(state.root).get_run(reply.run_id).result["display_suffix"] == "\n\n" + source_notice()
+            await client.close()
+            assert await bridge.resume() == reply
+            assert len(actor.requests) == 1
+            if generation:
+                assert (await bridge.chat("again")).text == "answer"
+            else:
+                first_reply = reply
+        finally:
+            await client.close()
+            await server.stop()
             await coordinator.close()

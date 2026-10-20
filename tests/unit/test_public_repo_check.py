@@ -91,6 +91,18 @@ def test_upstream_attribution_keeps_secret_and_private_identity_checks():
     }
 
 
+@pytest.mark.parametrize("prefix", ["", "index:", "worktree:", "untracked:", "history-name:", "history:"])
+@pytest.mark.parametrize("path", ["THIRD_PARTY_LICENSES.txt" + "@" + "notes.md", "third_party/dependencies.json" + "@" + "copy.py"])
+def test_at_sign_in_filename_cannot_inherit_legal_file_exceptions(prefix, path):
+    checker = _load_checker()
+    scan_path = prefix + path + ("@deadbeef" if prefix == "history:" else "")
+    text = "https://" + "upstream-vendor.org/license\nauthor" + "@upstream-vendor.org"
+    assert checker._relative_scan_path(scan_path) == path
+    assert {finding.rule for finding in checker.scan_text(text, path=scan_path)} == {
+        "url-host-not-allowlisted", "unexpected-email",
+    }
+
+
 def test_markdown_url_labels_scan_both_urls_and_keep_ipv6_support():
     checker = _load_checker()
     assert checker.scan_text(

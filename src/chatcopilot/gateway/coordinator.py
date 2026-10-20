@@ -561,13 +561,13 @@ class GatewayTurnCoordinator:
                     run_id=run_id,
                     cancellation=cancellation,
                 )
-                self._finish_result(
+                replied = self._finish_result(
                     session_id=session_id,
                     run_id=run_id,
                     result=result.result,
-                    display_text=self._reply_text(request, result.result.final_text, preview=True),
+                    display_suffix=self._reply_suffix(request, result.result.final_text),
                 )
-                if result.result.final_text and result.result.stop_reason == "end_turn":
+                if replied:
                     self._source_notice_seen.add((session_id, principal.actor_ref))
             except StaleWriterGeneration:
                 return
@@ -722,18 +722,20 @@ class GatewayTurnCoordinator:
                 "Gateway session already has an active run",
             ) from exc
 
-    def _reply_text(self, request: PreparedTurn, text: str, *, preview: bool = False) -> str:
+    def _reply_suffix(self, request: PreparedTurn, text: str) -> str:
         key = (request.session_id, request.principal.actor_ref)
-        suffix = ""
         if text and key not in self._source_notice_seen and request.canonical_text.strip().lower() != "/source":
-            suffix = "\n\n" + source_notice()
-        return result_preview(text, suffix=suffix) if preview else text + suffix
+            return "\n\n" + source_notice()
+        return ""
+
+    def _reply_text(self, request: PreparedTurn, text: str) -> str:
+        return text + self._reply_suffix(request, text)
 
     def _finish_result(self, *, session_id: str, run_id: str, result: AgentResult,
-                       display_text: str | None = None) -> None:
+                       display_suffix: str = "") -> bool:
         if result.stop_reason == "cancelled":
             self._finish_aborted(session_id=session_id, run_id=run_id)
-            return
+            return False
         final_text = _final_text(result.final_text)
         code = ("agent_llm_error" if result.stop_reason == "llm_error" else
                 "agent_runtime_error" if result.stop_reason == "runtime_error" else None)
@@ -742,7 +744,8 @@ class GatewayTurnCoordinator:
             session_id=session_id,
             run_id=run_id,
             outcome="failed" if code else "completed",
-            result={"final_text": final_text, "stop_reason": result.stop_reason},
+            result={"final_text": final_text, "stop_reason": result.stop_reason,
+                    **({"display_suffix": display_suffix} if display_suffix and not code else {})},
             error_code=code,
             now=self._now(),
         )
@@ -764,8 +767,8 @@ class GatewayTurnCoordinator:
                 ),
                 session_id=session_id,
             )
-            return
-        segments = (TextRpcSegment(display_text if display_text is not None else result_preview(final_text)),) if final_text else ()
+            return False
+        segments = (TextRpcSegment(result_preview(final_text, suffix=display_suffix)),) if final_text else ()
         self._events.emit(
             "chat.final",
             ChatFinalEvent(
@@ -776,6 +779,7 @@ class GatewayTurnCoordinator:
             ),
             session_id=session_id,
         )
+        return bool(final_text)
 
     def _finish_aborted(self, *, session_id: str, run_id: str) -> None:
         current = self._state_store.get_run(run_id)

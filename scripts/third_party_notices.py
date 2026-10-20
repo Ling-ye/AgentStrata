@@ -57,7 +57,45 @@ def _read_url(url: str) -> bytes:
     raise AssertionError("unreachable")
 
 
-def dependencies() -> list[dict]:
+def _release_build_pins() -> dict[str, dict]:
+    """Read the independent, hash-locked build closure without resolving packages."""
+    text = (ROOT / "requirements/release-build.txt").read_text().replace("\\\n", " ")
+    result = {}
+    for line in text.splitlines():
+        line = line.partition("#")[0].strip()
+        if not line:
+            continue
+        match = re.fullmatch(r"([A-Za-z0-9_.-]+)==([^\s;]+)((?:\s+--hash=sha256:[a-f0-9]{64})+)", line)
+        if not match:
+            raise ValueError("release-build.txt requires exact versions and SHA-256 hashes")
+        name = re.sub(r"[-_.]+", "-", match[1]).lower()
+        if name in result:
+            raise ValueError(f"duplicate release-build pin: {name}")
+        result[name] = {"version": match[2], "hashes": sorted(set(re.findall(r"sha256:[a-f0-9]{64}", match[3])))}
+    return result
+
+
+def _archive_fields(artifact: dict, source: dict) -> dict:
+    return {"artifact_url": artifact["url"], "integrity": artifact["hash"],
+            "source_url": source["url"], "source_integrity": source["hash"]}
+
+
+def _build_archive_fields(name: str, version: str, hashes: list[str]) -> dict:
+    """Resolve only during refresh; the selected archive must match a build pin."""
+    from urllib.parse import quote
+
+    published = json.loads(_read_url(f"https://pypi.org/pypi/{quote(name, safe='')}/{quote(version, safe='')}/json"))
+    archives = [{"url": item["url"], "hash": "sha256:" + item["digests"]["sha256"],
+                 "size": item["size"], "type": item["packagetype"]} for item in published["urls"]]
+    candidates = [item for item in archives if item["hash"] in hashes]
+    if not candidates:
+        raise ValueError(f"no PyPI archive matches release-build hashes: {name} {version}")
+    artifact = min(candidates, key=lambda item: item["size"])
+    sources = [item for item in archives if item["type"] == "sdist"]
+    return _archive_fields(artifact, min(sources, key=lambda item: item["size"]) if sources else artifact)
+
+
+def dependencies(*, resolve_build_artifacts: bool = False) -> list[dict]:
     packages = tomllib.loads((ROOT / "uv.lock").read_text())["package"]
     scopes: dict[str, set[str]] = {}
     by_name = {p["name"]: p for p in packages}
@@ -74,22 +112,33 @@ def dependencies() -> list[dict]:
             visited.add(name)
             scopes.setdefault(name, set()).add(group)
             pending.extend(d["name"] for d in by_name.get(name, {}).get("dependencies", []))
-    build = dict(re.findall(r"^([A-Za-z0-9_.-]+)==([^\s\\]+)",
-                           (ROOT / "requirements/release-build.txt").read_text(), re.M))
+    build = _release_build_pins()
     result = []
     for p in packages:
         if p["name"] == "agentstrata":
             continue
         candidates = p.get("wheels", []) + ([p["sdist"]] if "sdist" in p else [])
-        artifact = min(candidates, key=lambda a: a.get("size", float("inf")))
-        source = p.get("sdist", artifact)
         roles = scopes.get(p["name"], set()).copy()
-        if build.get(p["name"]) == p["version"]:
+        pin = build.get(p["name"])
+        fields = {}
+        if pin and pin["version"] == p["version"]:
             roles.add("release-build")
+            fields["release_build_hashes"] = pin["hashes"]
+            candidates = [item for item in candidates if item["hash"] in pin["hashes"]]
+            del build[p["name"]]
+            if not candidates and resolve_build_artifacts:
+                fields.update(_build_archive_fields(p["name"], p["version"], pin["hashes"]))
+        if candidates:
+            artifact = min(candidates, key=lambda a: a.get("size", float("inf")))
+            fields.update(_archive_fields(artifact, p.get("sdist", artifact)))
+        elif "release_build_hashes" not in fields:
+            raise ValueError(f"no locked Python archive: {p['name']} {p['version']}")
         result.append({"ecosystem": "python", "name": p["name"], "version": p["version"],
-                       "scopes": sorted(roles), "artifact_url": artifact["url"],
-                       "integrity": artifact["hash"], "source_url": source["url"],
-                       "source_integrity": source["hash"]})
+                       "scopes": sorted(roles), **fields})
+    for name, pin in build.items():
+        fields = _build_archive_fields(name, pin["version"], pin["hashes"]) if resolve_build_artifacts else {}
+        result.append({"ecosystem": "python", "name": name, "version": pin["version"],
+                       "scopes": ["release-build"], "release_build_hashes": pin["hashes"], **fields})
     for lock_path, scope in [("console/web/package-lock.json", "console")]:
         lock = json.loads((ROOT / lock_path).read_text())
         npm_scopes: dict[str, set[str]] = {}
@@ -281,6 +330,12 @@ def check() -> None:
     if hashlib.sha256((ROOT / "third_party/license_sources.json").read_bytes()).hexdigest() != index["reviewed_sources_sha256"]:
         raise ValueError("reviewed license sources changed; refresh and review evidence")
     for record in actual:
+        if "release-build" in record["scopes"] and record.get("integrity") not in record.get("release_build_hashes", []):
+            raise ValueError(f"release-build archive does not match its locked hashes: {record['name']}")
+        if "release-build" in record["scopes"] and any(
+            not record.get(key) for key in ("artifact_url", "source_url", "source_integrity")
+        ):
+            raise ValueError(f"missing release-build archive/source evidence: {record['name']}")
         if not record.get("license_files"):
             raise ValueError(f"missing license evidence: {record['name']}")
         if record.get("reviewed_evidence", {}).get("review_status") == "pending-maintainer-decision":
@@ -309,7 +364,7 @@ def main() -> None:
             return None
 
     with ThreadPoolExecutor(max_workers=8) as pool:
-        results = list(pool.map(attempt, dependencies()))
+        results = list(pool.map(attempt, dependencies(resolve_build_artifacts=True)))
     inspected = [result for result in results if result is not None]
     if len(inspected) != len(results):
         raise ValueError(f"{len(results) - len(inspected)} dependencies lack complete license evidence; no inventory written")

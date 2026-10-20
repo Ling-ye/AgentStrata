@@ -5,7 +5,8 @@
 ## 界面与数据
 
 固定侧栏的「许可与源码」通过只读 `/api/legal` 显示项目版权、AGPL-3.0-only、无担保
-说明、对应源码和第三方声明。构建附带的许可文本位于 `/third-party-notices.txt`。
+说明、对应源码和第三方声明。`/third-party-notices.txt` 提供第三方全文；该路径及
+`/LICENSE`、`/COPYRIGHT`、`/THIRD_PARTY_NOTICES.md` 在 Vite 开发模式与生产产物中一致。
 未设置部署对应源码时明确提示，配置要求见[公开契约](publication.md#许可与对应源码)。
 
 保持现有 React、Vite/Rollup、Arco Design 和 TanStack Query。共享视觉语义复用样式 tokens、业务组件与状态映射；操作页信息密集、可扫描，优先完整呈现加载、空、错误、禁用和窄屏状态。

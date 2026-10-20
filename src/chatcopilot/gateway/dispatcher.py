@@ -475,7 +475,10 @@ def _run_snapshot(run: RunRecord) -> RunSnapshot:
         final_text = result.get("final_text") if isinstance(result, Mapping) else None
         if not isinstance(final_text, str):
             raise GatewayStateError("completed Gateway run has no final text")
-        segments = (TextRpcSegment(result_preview(final_text)),) if final_text else ()
+        suffix = result.get("display_suffix", "")
+        if not isinstance(suffix, str):
+            raise GatewayStateError("completed Gateway run has an invalid display suffix")
+        segments = (TextRpcSegment(result_preview(final_text, suffix=suffix)),) if final_text else ()
     elif state == "failed":
         error_code = run.error_code
         if not isinstance(error_code, str) or not error_code:
