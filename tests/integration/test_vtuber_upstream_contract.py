@@ -27,7 +27,7 @@ def test_pinned_upstream_input_output_and_speech_preprocessor(monkeypatch):
     from open_llm_vtuber.agent.output_types import SentenceOutput
     from open_llm_vtuber.config_manager.tts_preprocessor import TTSPreprocessorConfig
 
-    config = AdapterConfig.load(root / "integrations/open_llm_vtuber/config.example.json", {
+    config = AdapterConfig.load(root / "integrations/open_llm_vtuber/agentstrata_vtuber/resources/config.example.json", {
         "AGENTSTRATA_AVATAR_GATEWAY_TOKEN": "g" * 48, "AGENTSTRATA_AVATAR_CONTROL_TOKEN": "m" * 48})
     monkeypatch.setattr(runtime, "_services", (config, BrowserAvatarController(config)))
     source = yaml.safe_load((upstream / "config_templates/conf.ZH.default.yaml").read_text())

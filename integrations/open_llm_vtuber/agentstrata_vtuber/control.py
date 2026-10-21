@@ -47,9 +47,10 @@ def install_control(app, config: AdapterConfig, controller: AvatarController) ->
         return
     from mcp.server.fastmcp import FastMCP
     from mcp.types import CallToolResult, TextContent
+    from chatcopilot.project import format_legal_info
 
     mcp = FastMCP("AgentStrata avatar", streamable_http_path="/", stateless_http=True,
-                 json_response=True)
+                 json_response=True, instructions=format_legal_info())
 
     def action_result(result: dict):
         return CallToolResult(content=[TextContent(type="text", text=json.dumps(result))],

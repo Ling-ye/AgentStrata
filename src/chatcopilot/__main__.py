@@ -12,6 +12,10 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     command = args.pop(0)
+    if command == "plugin":
+        from chatcopilot.plugins.cli import main as plugin_main
+
+        return plugin_main(args)
     if command in {"license", "source"}:
         check_source = command == "source" and args == ["--check"]
         if args and not check_source:
@@ -63,6 +67,9 @@ def main(argv: list[str] | None = None) -> int:
 def _print_help() -> None:
     print(
         "AgentStrata commands:\n"
+        "  agentstrata plugin list\n"
+        "  agentstrata plugin install <id> --model-binding <binding>\n"
+        "  agentstrata plugin doctor|start|stop|uninstall <id>\n"
         "  agentstrata license\n"
         "  agentstrata source\n"
         "  agentstrata botspec validate bots/<bot-id>/bot.yaml\n"

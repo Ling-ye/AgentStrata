@@ -96,6 +96,26 @@ Gateway 群共享历史保存完整的用户与助手正文，不再在写入时
 留在客户端，动作经现有 MCP 和工具权限机制执行。播放反馈只记录客户端呈现事实，不改变
 AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[Live2D 接入](../guides/live2d.md)。
 
+## 外部软件插件管理
+
+`agentstrata plugin list/install/doctor/start/stop/uninstall` 是维护者显式调用的运维入口。
+静态清单选择独立发行包；管理器创建环境、保存一个当前安装记录，通过插件命令准备程序
+并管理其返回的 systemd 服务。插件实现不导入 Agent 核心进程。软件下载、版本组合、
+补丁、构建及配置归插件；通用 CLI 将 `--option KEY=VALUE` 原样交给插件解释。
+
+实现分为[清单](../../src/chatcopilot/plugins/catalog.py)、
+[安装记录](../../src/chatcopilot/plugins/repository.py)、
+[管理用例](../../src/chatcopilot/plugins/service.py)和
+[进程与服务适配](../../src/chatcopilot/plugins/runtime.py)。
+只维护受管的当前版本和归属明确的服务；不自动寻找端口，不热加载、不保留多版本或回滚。
+插件包修复随现有发行链交付，第三方本体与用户状态留在安装目录。
+
+VTuber 的独立 Owner BotSpec 是该插件模板，不是所有插件的强制形态。
+模型凭据通过现有连接引用，工作区与记忆独立；播放状态归客户端。
+接入第二个软件时新增插件包与清单即可，运行协议继续使用已有 Gateway/MCP。
+生命周期规则见[插件规格](../../specs/external-software-plugins/spec.md)，操作见
+[Live2D 安装](../guides/live2d.md#安装)。
+
 ## 任务运行四层观测
 
 任务流按真实 Channel/Gateway/Application/Agent 交接分段，运行职责标记与配置 layer 分开。新增边界用成对 Started/Finished 及真实 trace/span，正文走有界详情与现有留存；准入且 run 建立后才归档平台输入，观测投影不进入业务 ingress 序列化/指纹。Agent 公开输出独立于投递保存，交换提交只报告实际结果；Codex 只标适配器可见范围，隐藏推理不采集。观测失败不能改变权限、执行或交付事实。规格见 `docs/reference/observability.md`。 Console 不再从旧事件名补造调用关联或回退读取 Gateway 业务状态库；任务流只消费当前四层观测版本。

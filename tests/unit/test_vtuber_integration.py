@@ -27,7 +27,7 @@ def _config():
 
 
 class _Gateway:
-    def __init__(self, *, lose_ack=False, running=False):
+    def __init__(self, *, lose_ack=False, running=False, text="final answer"):
         self.calls = []
         self.turns = {}
         self.runs = {}
@@ -35,6 +35,7 @@ class _Gateway:
         self.running = running
         self.accepted = asyncio.Event()
         self.closed = False
+        self.text = text
 
     async def ensure_connected(self):
         pass
@@ -50,7 +51,7 @@ class _Gateway:
         if method == "chat.send":
             if idempotency_key not in self.turns:
                 run = RunSnapshot(params.session_id, "run-" + str(len(self.turns)),
-                    "running" if self.running else "completed", (TextRpcSegment("final answer"),))
+                    "running" if self.running else "completed", (TextRpcSegment(self.text),))
                 self.turns[idempotency_key] = run
                 self.runs[params.session_id] = run
             run = self.turns[idempotency_key]
@@ -84,6 +85,22 @@ def test_history_mapping_and_final_reply_do_not_import_upstream():
         assert first == bridge.session_id
         await bridge.close()
         assert gateway.closed
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("user_input,text", [
+    ("/source", "AgentStrata AGPL-3.0-only\nSource: https://example.com/source"),
+    ("hello", "回复。\n\n本服务源码：https://example.com/source"),
+])
+def test_source_response_and_first_notice_remain_complete(user_input, text):
+    async def exercise():
+        gateway = _Gateway(text=text)
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        assert (await bridge.chat(user_input)).text == text
+        sends = [params for method, params, _ in gateway.calls if method == "chat.send"]
+        assert len(sends) == 1
+        assert sends[0].segments == (TextRpcSegment(user_input),)
     asyncio.run(exercise())
 
 

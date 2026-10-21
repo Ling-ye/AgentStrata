@@ -79,6 +79,28 @@ jobs:
           fi
           .venv/bin/python scripts/check_repo.py python --keep-going "${doc_args[@]}"
 
+  vtuber-compatibility:
+    name: VTuber Python 3.12
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      TMPDIR: /tmp
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
+        with:
+          python-version: "3.12"
+      - name: Install hash-locked build tools
+        run: |
+          python -m pip install --isolated --index-url https://pypi.org/simple --no-deps \
+            --require-hashes --only-binary=:all: --requirement requirements/release-build.txt
+      - name: Verify installed plugin and pinned upstream without model credentials
+        run: python scripts/check_vtuber_compat.py
+
   console:
     name: Console
     runs-on: ubuntu-24.04

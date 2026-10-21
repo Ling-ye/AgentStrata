@@ -113,6 +113,12 @@ def main() -> int:
                     check=False,
                 )
                 status = verified.returncode
+        if status == 0:
+            status = subprocess.run(
+                (sys.executable, str(ROOT / "scripts/plugin_artifacts.py"),
+                 "--source-root", str(ROOT), "--output", str(output_dir / "plugin")),
+                cwd=ROOT, check=False,
+            ).returncode
 
     changed = _changed_paths(before, _snapshot(paths))
     if changed:

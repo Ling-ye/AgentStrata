@@ -89,7 +89,7 @@ adapter is AGPL-3.0-only. Patches and upstream context have these exceptions:
   in the patched upstream application.
 - Frontend revision `d176e7df2366952e3bacbf12cf9a8b18a4315932` uses
   [Open-LLM-VTuber License 1.0](third_party/Open-LLM-VTuber-Web-LICENSE.txt).
-  `patches/frontend.patch`, including additions for that frontend, is supplied
+  `agentstrata_vtuber/resources/patches/frontend.patch`, including additions for that frontend, is supplied
   under those terms and excluded from the default AGPL grant. Paid hosting or
   access, commercial redistribution/rebranding and commercial embedding require
   the upstream commercial authorization specified there.

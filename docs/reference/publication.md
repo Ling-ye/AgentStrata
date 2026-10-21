@@ -62,6 +62,11 @@ Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查�
 
 `requirements/release-build.txt` 是手工复核的五包、全哈希、Python 3.11 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
 
+可选 VTuber 插件独立构建 wheel/sdist，由 `scripts/plugin_artifacts.py` 严格比对包身份、
+部署资源和法律文件，并从 sdist 重建。插件与主包分别验证，同入 Release 的 checksum
+和 attestation；安装器从匹配 Release 获取，不引入 PyPI 发布。插件下载的第三方软件和
+依赖留在用户目录，其固定来源、摘要及原始许可随安装记录和下载内容保留。
+
 ## 许可与对应源码
 
 自有代码和文档采用 AGPL-3.0-only，作者与例外以根 [COPYRIGHT](../../COPYRIGHT) 和

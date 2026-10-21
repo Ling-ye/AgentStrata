@@ -49,9 +49,11 @@ uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 
 ## CI 与失败诊断
 
-主分支推送、PR 和手动运行使用同一工作流，固定 Ubuntu 24.04。三个独立 job 分别执行
+主分支推送、PR 和手动运行使用同一工作流，固定 Ubuntu 24.04。独立 job 分别执行
 完整公开历史扫描、Python 3.11/3.13 的 `python` 门禁，以及 Node 22 的 `console` 门禁。
-Python 使用固定 uv 版本和 `uv sync --locked`；前端使用 `npm ci`。
+Python 使用固定 uv 版本和 `uv sync --locked`；前端使用 `npm ci`。VTuber 使用单独的 Python 3.12 job，运行
+`scripts/check_vtuber_compat.py` 检查插件发行资源、固定上游补丁、前端构建和替代语音/Agent
+的真实接口，不取得模型凭据。该检查本地使用同一脚本，不能替代真实语音和模型验收。
 前端检查通过 Vite runner 在内存加载配置，避免向 Harness 的只读依赖目录写入配置 bundle；
 本地 `file:` 包在隔离验证中映射到候选源码，Node 使用调用方已选择的可执行文件。
 失败的矩阵任务不会取消其他版本，`--keep-going` 收集各检查的失败，但最终退出码仍然失败。
@@ -66,7 +68,7 @@ Python job 安装并实际探测 Bubblewrap 与 ripgrep。Ubuntu 的用户命名
 GitHub-hosted runner；不要在部署宿主上运行它。
 
 PR 传入 base SHA，push 传入 before SHA，手动运行可填写 `docs_base`。分支保护应要求
-`Public repository boundary`、`Python 3.11`、`Python 3.13` 和 `Console`。
+`Public repository boundary`、`Python 3.11`、`Python 3.13` 、`Console` 和 `VTuber Python 3.12`。
 新增或更名检查后需由维护者同步 GitHub 设置，workflow 文件本身不会修改保护规则。
 
 本地复现使用对应 profile；需要完整日志时用仓库外私有目录：

@@ -7,6 +7,7 @@ from datetime import date
 from pathlib import Path
 
 import pytest
+import yaml
 
 try:
     import tomllib
@@ -300,12 +301,17 @@ def test_release_build_lock_is_exact_and_matches_pyproject() -> None:
     workflow = (ROOT / ".github" / "workflows" / "release.yml").read_text(
         encoding="utf-8"
     )
-    for argument in (
+    arguments = (
         "--isolated",
         "--index-url https://pypi.org/simple",
         "--no-deps",
         "--require-hashes",
         "--only-binary=:all:",
         "--requirement requirements/release-build.txt",
-    ):
-        assert workflow.count(argument) == 2
+    )
+    jobs = yaml.safe_load(workflow)["jobs"]
+    for name in ("build", "install-test", "verify-vtuber"):
+        install = next(step["run"] for step in jobs[name]["steps"]
+                       if "pip install" in step.get("run", ""))
+        for argument in arguments:
+            assert argument in install

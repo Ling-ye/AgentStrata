@@ -1,109 +1,111 @@
 # Live2D 交互客户端
 
-第一版使用 Open-LLM-VTuber 浏览器客户端，通过独立 Gateway 实例调用 AgentStrata。
-AgentStrata 负责对话、权限、工具与记忆；客户端处理语音、角色及播放状态。
-交互、工具和数据职责见[运行链](../reference/runtime.md#独立交互客户端)。
+安装 `open-llm-vtuber` 插件后，AgentStrata 会准备固定版本的 Open-LLM-VTuber、浏览器页面、
+Mao 模型、SenseVoice INT8 CPU 识别和 Edge TTS 晓晓语音，并启动独立 Gateway。
+AgentStrata 保存对话、权限与记忆；客户端负责语音、角色及播放。
+职责见[运行链](../reference/runtime.md#独立交互客户端)。
 
-## 准备独立客户端
+## 安装
 
-客户端与 AgentStrata 后端可以使用不同 Python 环境。固定的 Open-LLM-VTuber 版本要求
-Python 3.10–3.12；不要复用使用 Python 3.13 的 AgentStrata 虚拟环境。
-
-从 AgentStrata 源仓目录执行，使用新的第三方 checkout：
-
-```bash
-git clone https://github.com/Open-LLM-VTuber/Open-LLM-VTuber.git /tmp/open-llm-vtuber
-git -C /tmp/open-llm-vtuber checkout --detach 992309c0aa19845960228f880013d4685fde93b5
-git clone https://github.com/Open-LLM-VTuber/Open-LLM-VTuber-Web.git /tmp/open-llm-vtuber-web
-git -C /tmp/open-llm-vtuber-web checkout --detach d176e7df2366952e3bacbf12cf9a8b18a4315932
-.venv/bin/python integrations/open_llm_vtuber/prepare_upstream.py \
-  --backend /tmp/open-llm-vtuber --frontend /tmp/open-llm-vtuber-web
-```
-
-在客户端独立环境中按上游安装说明安装依赖，再从该环境使用 pip 安装本源仓和适配包。
-使用 Edge TTS 时还需要能从 PATH 找到 `ffmpeg` 和 `ffprobe`，用于解码其 MP3 输出：
+前提为 Linux/WSL x86_64、可用的 systemd 用户服务、Git、能访问固定下载源的网络，
+以及已安装官方 AgentStrata 发行包和所选 Agent runtime 的依赖。使用 Codex 时需要其
+原生 Linux 可执行文件及已认证的模型连接；模型配置见[配置参考](../reference/configuration.md#llm)。
+认证由已有连接的 `env_file` 引用，部署不会把终端里的临时模型密钥复制进客户端。
 
 ```bash
-# 以下两条在客户端的 Python 3.10–3.12 环境内运行，源仓路径按实际位置替换。
-python -m pip install -e /path/to/AgentStrata-open
-python -m pip install -e /path/to/AgentStrata-open/integrations/open_llm_vtuber
-cd /tmp/open-llm-vtuber-web
-npm ci --ignore-scripts
-npm run build:web
+agentstrata plugin list
+agentstrata plugin install open-llm-vtuber
 ```
 
-将 `dist/web/` 中的内容复制到新后端 checkout 的 `frontend/`，保留资产相对路径。
-不要覆盖已有客户端的私有配置或模型目录。临时目录适合验证，长期使用时换成自己的安装目录。
-补丁同时将 `run_server.py` 的运行入口统一为已安装的 `open_llm_vtuber` 包，避免同一输入类型
-分别以 `src.open_llm_vtuber` 和 `open_llm_vtuber` 加载后，Bridge 无法识别客户端输入。
-
-## 配置客户端与凭据
-
-复制上游 `config_templates/conf.ZH.default.yaml` 为新 checkout 的 `conf.yaml`，修改：
-
-```yaml
-system_config:
-  host: 127.0.0.1
-  port: 12393
-character_config:
-  live2d_model_name: mao_pro
-  agent_config:
-    conversation_agent_choice: agentstrata
-```
-
-只修改对应字段，保留上游 ASR/TTS 配置。第一次使用按上游说明准备识别模型和语音提供者；
-配置默认语音可能需要联网，不代表离线能力。
-
-复制[适配配置](../../integrations/open_llm_vtuber/config.example.json)到自己的私有配置目录，
-将 `AGENTSTRATA_VTUBER_CONFIG` 设为该文件的绝对路径。
-默认动作映射使用上游 Mao 模型已有的表达式及空字符串 motion group；更换模型时按其
-`.model3.json` 中实际的 Expressions/Motions 更新映射，不生成新模型或动作。
-
-[环境模板](../../integrations/open_llm_vtuber/.env.example)不包含秘密。为 Gateway 和头像控制
-分别生成强凭据，放入被忽略的环境文件或进程环境；两个 token 必须不同。AgentStrata 进程的
-`AGENTSTRATA_AVATAR_CONTROL_AUTH` 使用 `Bearer ` 加上头像控制 token，不能写入 YAML。
-浏览器不持有这些凭据。
-
-为独立实例配置 `CHATCOPILOT_GATEWAY_STATE_ROOT`、`CHATCOPILOT_WORKSPACE_ROOT`，并建立
-空的独立工作区；state root 的父目录必须属于当前用户且权限为 `0700`。不使用现有 QQ/微信
-工作区。模型连接继续来自统一模型配置，示例使用 `chat` 与 `research` binding。
-需要 Owner 访问项目时，将 `CHATCOPILOT_DEV_ROOT` 显式指向获准的项目根目录；
-这不改变客户端工作区和记忆的独立归属。
-
-## 启动与交互
-
-先在客户端环境加载私有环境文件，并从新后端 checkout 运行 `python run_server.py`。
-MCP 控制口先就绪，启动时不要求 Gateway 已连接。随后在 AgentStrata 源仓环境启动：
+交互终端会列出已有模型绑定供选择。自动脚本应明确指定：
 
 ```bash
-.venv/bin/python -m chatcopilot botspec validate \
-  integrations/open_llm_vtuber/examples/bot/bot.yaml
-.venv/bin/python -m chatcopilot run \
-  --bot integrations/open_llm_vtuber/examples/bot/bot.yaml
+agentstrata plugin install open-llm-vtuber --model-binding chat
 ```
 
-浏览器打开 `http://localhost:12393`。先发送文字，确认回复由 AgentStrata 产生，再点击
-麦克风按钮说一段话。适配模式关闭自动开麦，识别到一段话后自动停麦；不是持续监听模式。
-回复完成后由客户端合成语音并驱动口型。表情和动作通过 `avatar` MCP 工具调用，MCP 配置
-见[实例示例](../../integrations/open_llm_vtuber/examples/bot/mcp.yaml)。
+默认使用 Codex runtime。其他已配置的执行方式可用 `--option runtime=native` 或
+`--option runtime=langgraph`；ChatGPT 订阅认证仍要求 Codex。插件用独立 Python 3.12
+环境运行，上游依赖不会装入主程序环境。插件 Python 声明为 `>=3.11,<3.13`。
 
-停止按钮终止本地播放并请求取消仍在运行的 Agent。`/resume` 查询原请求，`/stop` 发送
-停止请求；不会把新输入替换成旧 run 的重放，也不撤销已经执行的工具操作。
-切换历史前先完成或停止当前回合。客户端历史删除只清理本地显示记录，不删除 AgentStrata
-的运行证据或长期记忆。
+安装器从匹配的 GitHub Release 取得主包与插件 wheel，并校验 SHA256SUMS 和包身份。
+开发版或未发布的候选使用 `--artifacts /path/to/release-bundle --source-url URL`；目录必须
+包含两份 wheel 和 SHA256SUMS，源码 URL 应提供对应候选的完整源码及构建材料。
+这条路径不表示候选已发布。正式发行自动使用匹配 tag 的完整仓库源码入口。
 
-## 关闭能力与诊断
+默认端口为页面 `12393`、Gateway `18791`。端口被占用时安装失败并报告端口，显式选择：
 
-- 只需文字对话时，可关闭客户端语音设置；语音失败仍保留文字结果。
-- 不需要头像工具时，从适配 JSON 删除 `mcp_token_env`，同时停用示例中的 MCP server。
-  对话仍经原 Gateway 运行，浏览器 Origin 检查仍生效。
-- `browser_not_connected`：浏览器未连接固定头像；`failed`：动作或模型不可用；
-  `unknown`：未观察到完整回执，不能描述为已执行。重复请求可能重复播放动作。
-  motion 的 `executed` 表示观察到 SDK 已开始该动作，不表示循环动作已经播放结束。
-- 所有请求只监听回环地址。使用不同本机端口时同步更新客户端 URL 和明确的 allowed_origins，
-  不添加通配 Origin。头像 MCP 地址为 `http://127.0.0.1:12393/agentstrata/mcp/`。
-- Bridge 日志关联 session/run；播放及动作回执留在客户端组件，不参与 Gateway run 终态。
+```bash
+agentstrata plugin install open-llm-vtuber --model-binding chat \
+  --option port=12493 --option gateway_port=18891
+```
 
-实际验收应覆盖多轮文字、按键语音、声音与口型、一个表情、一个 motion、停止和断线恢复。
-记录使用的 ASR/TTS、模型与音频设备，分别报告真实检查和替代层；代码检查或模拟音频
-不能代替真实麦克风、语音服务与模型往返。
+安装完成输出页面地址；浏览器通过当前页面来源连接后端。客户端先启动，再启动 Gateway，
+避免 MCP 发现与对话连接互相等待。`--no-start` 只准备程序与服务，稍后可显式启动。
+
+## 配置与生命周期
+
+默认目录为 `$XDG_DATA_HOME/agentstrata/plugins`，未设置时为
+`~/.local/share/agentstrata/plugins`；可用 `AGENTSTRATA_PLUGINS_ROOT` 或 `--root` 覆盖。
+同一插件只维护一个受管安装，切换根目录不会接管另一个安装拥有的 systemd unit。
+
+| 安装目录内路径 | 内容与保留方式 |
+| --- | --- |
+| `open-llm-vtuber/runtime/` | 独立 Python、第三方源码、工具及构建产物；卸载删除 |
+| `open-llm-vtuber/config/` | BotSpec、适配配置、ASR/TTS 配置和私有环境文件；卸载保留 |
+| `open-llm-vtuber/data/` | 会话、记忆、独立工作区、模型与下载缓存；卸载保留 |
+| `open-llm-vtuber/logs/` | 安装阶段及客户端日志；卸载保留 |
+| `open-llm-vtuber/installation.json` | 版本、阶段、服务及精确来源记录 |
+
+```bash
+agentstrata plugin doctor open-llm-vtuber
+agentstrata plugin stop open-llm-vtuber
+agentstrata plugin start open-llm-vtuber
+agentstrata plugin uninstall open-llm-vtuber
+```
+
+同版本重复安装检查已有结果，保留配置；不会把新的命令行选项覆盖到现有配置。
+更换版本前先停止，再按当前清单重装；需要重建损坏程序时先停止、卸载再安装。
+没有在线升级、多版本保留或自动回滚。失败阶段写入安装记录，详细原因在私有阶段日志，
+修正后可重新执行安装。既有手工部署不会被迁移、覆盖或删除。
+
+修改模型、动作、端口或语音配置前先停止服务，维护 `config/` 中对应配置的一致性再启动。
+默认两个 token 独立生成，保存在私有 `runtime.env`，浏览器不持有凭据。
+[适配配置模板](../../integrations/open_llm_vtuber/agentstrata_vtuber/resources/config.example.json)只登记
+实际模型中的表达式与 motion，不接受任意文件路径或其他实例目标。
+
+## 交互与诊断
+
+浏览器先发送文字，再点击麦克风说话；识别到一段话后停麦，不自动持续监听。
+完整回复由客户端合成语音并驱动口型。默认 Edge TTS 需要联网。
+`/source` 显示源码入口，首次回复中的源码提示完整保留；显示历史不会回灌为模型记忆。
+
+停止按钮结束本地播放并请求取消仍在运行的 Agent。`/resume` 查询原请求，`/stop` 请求
+停止；结果未知时不提交另一个 Agent 请求。历史切换要求当前回合已完成或停止。
+删除客户端历史只影响显示记录，不删除 AgentStrata 的长期记忆和运行证据。
+
+- `doctor` 分别检查安装资源、Gateway 握手、MCP 和源码入口可获取性；浏览器尚未连接不使安装失败。
+- 语音失败仍保留文字。停用头像 MCP 时，在适配 JSON 删除 `mcp_token_env`，并停用 BotSpec 对应 MCP server。
+- `browser_not_connected` 表示未连接；`failed` 表示明确失败；`unknown` 表示缺少完整回执，重复调用可能重复播放。
+- motion 的 `executed` 表示 SDK 已开始动作，不代表循环动作播放结束。播放记录不会改变 Gateway run 终态。
+- 固定上游的整页刷新会触发旧 Live2D 视图销毁；其背景对象未初始化时，`LAppView.release`
+  可能报告空对象异常。需分别观察旧页销毁和新页的连接、模型就绪状态；此问题归上游 SDK，
+  插件不将旧页销毁错误写为 Agent 失败。
+- 服务只监听回环，明确检查允许的 Origin。服务日志使用 `journalctl --user -u agentstrata-plugin-open-llm-vtuber-client.service`，Gateway unit 后缀为 `gateway.service`。
+- 对应源码 URL 配置存在和网络可获取分别检查；HTTP 可达本身不证明内容完整或法律合规。
+
+## 开发与验收
+
+自有插件源码、版本锁、补丁、模板和法律材料位于[插件包](../../integrations/open_llm_vtuber/README.md)。
+第三方本体、模型、SDK 和页面构建结果不纳入本仓源码或 wheel。
+固定上游契约与构建检查使用 Python 3.12：
+
+```bash
+python scripts/check_vtuber_compat.py
+```
+
+该脚本与 CI 共用，安装发行包、应用固定补丁、构建页面并检查实际 HTTP/WebSocket/MCP；
+语音及 Agent 使用测试替身，不下载识别模型、不调用真实模型，也不需要部署凭据。
+项目完整检查仍为[开发指南](development.md#选择检查范围)中的 `full`。
+
+真实验收单独覆盖多轮文字、按键录音、TTS、口型、表情、动作、停止及断线恢复，记录模型
+与音频设备。录音文件输入、模拟浏览器回执和实体麦克风/扬声器应分别报告。

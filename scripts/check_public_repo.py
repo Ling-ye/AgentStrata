@@ -39,6 +39,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "brave.com",
         "careers.tencent.com",
         "cli.github.com",
+        "codeload.github.com",
         "config.sinataoke.cn",
         "data-api.ecb.europa.eu",
         "data.ecb.europa.eu",
@@ -51,6 +52,7 @@ PUBLIC_URL_HOSTS = frozenset(
         "docs.searxng.org",
         "docs.unity3d.com",
         "download.docker.com",
+        "download-r2.pytorch.org",
         "en.wikipedia.org",
         "example.feishu.cn",
         "files.pythonhosted.org",
@@ -132,6 +134,7 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/astral-sh/uv",
         "github.com/arc53/docsgpt",
         "github.com/brave/brave-search-mcp-server",
+        "github.com/btbn/ffmpeg-builds",
         "github.com/example/docs",
         "github.com/example/sample",
         "github.com/github/github-mcp-server",
@@ -178,6 +181,8 @@ UPSTREAM_ATTRIBUTION_FILES = frozenset(
         "third_party/MIT-REFERENCE-LICENSE.txt",
         "third_party/Open-LLM-VTuber-LICENSE.txt",
         "third_party/Open-LLM-VTuber-Web-LICENSE.txt",
+        "integrations/open_llm_vtuber/Open-LLM-VTuber-LICENSE.txt",
+        "integrations/open_llm_vtuber/Open-LLM-VTuber-Web-LICENSE.txt",
     }
 )
 GITHUB_NON_REPOSITORY_NAMESPACES = frozenset(

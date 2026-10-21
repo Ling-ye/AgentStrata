@@ -1,16 +1,26 @@
 [build-system]
-requires = ["setuptools>=77"]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentstrata-open-llm-vtuber"
-version = "0.1.0"
+version = "0.2.0"
 description = "Optional dialogue and avatar adapter for Open-LLM-VTuber"
 license = "AGPL-3.0-only"
-license-files = ["LICENSE", "COPYRIGHT"]
+license-files = ["LICENSE", "COPYRIGHT", "NOTICE.md", "Open-LLM-VTuber-LICENSE.txt", "Open-LLM-VTuber-Web-LICENSE.txt"]
 authors = [{name = "Lingye", email = "616202172@qq.com"}]
-requires-python = ">=3.10,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = ["agentstrata>=0.1.0.dev0", "fastapi>=0.110", "mcp>=1.27,<2"]
+
+[project.scripts]
+agentstrata-vtuber = "agentstrata_vtuber.manage:main"
+
+[project.urls]
+Repository = "https://github.com/Ling-ye/AgentStrata"
+
+[tool.setuptools.package-data]
+agentstrata_vtuber = ["resources/*.json", "resources/*.lock", "resources/*.in", "resources/.env.example",
+                    "resources/patches/*.patch", "resources/examples/bot/*"]
 
 [tool.setuptools.packages.find]
 where = ["."]

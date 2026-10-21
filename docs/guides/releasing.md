@@ -79,13 +79,16 @@ gh workflow run release.yml --ref v0.1.0 -f tag=v0.1.0
 gh run watch
 ```
 
-workflow 会分别执行验证、构建和创建草稿三个权限隔离的 job：
+workflow 分别执行验证、VTuber 兼容检查、构建、安装测试和创建草稿，各阶段保持权限隔离：
 
 - 核对仓库已公开、输入 tag 与运行 ref 相同、tag 为 GitHub 验证通过的签名 annotated
   tag，并且 tag commit 是 `main` 的祖先。
 - 执行公开历史扫描、Gitleaks、release metadata 检查、完整仓库门禁和 Console 测试。
 - 使用 `requirements/release-build.txt` 的全哈希 build-only 闭包，在 Python 3.11 上两次
   构建 wheel 与 sdist，验证内容、安装、从 sdist 重建 wheel 以及归一化产物一致性。
+- 自有 VTuber 插件独立构建和验证 `agentstrata_open_llm_vtuber` wheel/sdist，随主程序的
+  Release 分发。`scripts/plugin_artifacts.py` 比对完整资源和法律材料，独立检查不会替代
+  主包检查；Python 3.12 的兼容 job 另行验证固定上游与无真实模型的接口。
 - 为 wheel、sdist、release notes 和 checksum 生成校验和与 attestation，并以
   `contents: write` 只创建 draft GitHub Release。
 
@@ -97,8 +100,8 @@ workflow 会分别执行验证、构建和创建草稿三个权限隔离的 job�
 维护者在 GitHub 上逐项核对：
 
 - Release 的 target commit 与签名 tag commit 一致。
-- workflow 的 verify、build、draft jobs 全部成功。
-- wheel、sdist、release notes、checksum 与 attestation 文件齐全。
+- workflow 的验证、兼容、构建、安装测试和草稿 jobs 全部成功。
+- 主包与插件各自的 wheel、sdist，以及 release notes、checksum 与 attestation 文件齐全。
 - `SHA256SUMS` 与下载后的资产一致，release notes 的变更内容来自该版本 Changelog，
   并附带该 tag 的完整仓库源码归档、作者和许可说明；实际下载并核对源码与 tag 一致。
 - 产物中没有本地 env、凭据、私有配置、日志、数据库、缓存或未声明资源。

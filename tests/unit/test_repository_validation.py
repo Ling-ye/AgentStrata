@@ -157,7 +157,7 @@ def test_fast_selection_rejects_invalid_manifest(monkeypatch, tmp_path, selectio
 def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"public-boundary", "python", "console"}
+    assert set(workflow["jobs"]) == {"public-boundary", "python", "console", "vtuber-compatibility"}
     for job in workflow["jobs"].values():
         assert job.get("permissions", workflow["permissions"]) == {"contents": "read"}
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
@@ -184,6 +184,21 @@ def test_ci_console_runs_locked_install_tests_and_build():
         "npm ci --prefix console/web",
         "python3 scripts/check_repo.py console --keep-going",
     ]
+
+
+def test_ci_vtuber_uses_shared_script_without_credentials_or_path_filters():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    job = workflow["jobs"]["vtuber-compatibility"]
+    assert job["name"] == "VTuber Python 3.12"
+    assert next(s for s in job["steps"] if "setup-python@" in s.get("uses", ""))["with"]["python-version"] == "3.12"
+    assert job["steps"][-1]["run"] == "python scripts/check_vtuber_compat.py"
+    assert all("if" not in s for s in job["steps"])
+    assert "secrets." not in str(job)
+    events = workflow.get("on", workflow.get(True))
+    assert all("paths" not in str(event) for event in events.values())
+    release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
+    assert release["jobs"]["verify-vtuber"]["steps"][-1]["run"] == job["steps"][-1]["run"]
+    assert "verify-vtuber" in release["jobs"]["build"]["needs"]
 
 
 def test_ci_python_covers_supported_boundaries_with_locked_dependencies():

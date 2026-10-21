@@ -1411,14 +1411,19 @@ async def test_client_notice_is_consumed_by_a_completed_visible_reply_only(tmp_p
 
 @_async_test
 async def test_vtuber_polling_and_recovery_preserve_the_actual_display_notice(tmp_path, monkeypatch):
+    from itertools import count
     from chatcopilot.protocols.gateway_client import GatewayClientConfig, GatewayWebSocketClient
     from integrations.open_llm_vtuber.agentstrata_vtuber.bridge import ConversationBridge
 
     first_reply = None
+    clock = count(10.0)
     for generation in range(2):
         source_url = f"https://example.org/source-{generation}.tar.gz"
         monkeypatch.setenv("CHATCOPILOT_SOURCE_URL", source_url)
         state, writer, _, _, coordinator, _, visibility, dispatcher, actor = _runtime(tmp_path)
+        # This test observes creation order across restarts. Equal frozen times
+        # would leave runs.latest's tie-break to randomly generated run IDs.
+        monkeypatch.setattr(coordinator, "_clock", lambda: next(clock))
         server = _server_for_dispatcher(state=state, generation=writer, dispatcher=dispatcher, visibility=visibility)
         await server.start()
         client = GatewayWebSocketClient(GatewayClientConfig(url=server.url, token="r" * 32,

@@ -1,0 +1,42 @@
+{
+  "backend": {
+    "url": "https://codeload.github.com/Open-LLM-VTuber/Open-LLM-VTuber/tar.gz/992309c0aa19845960228f880013d4685fde93b5",
+    "sha256": "064549c90d14694139cc91d653a58a5cb4eccb6305214f99c6ba6347325e381a"
+  },
+  "frontend": {
+    "url": "https://codeload.github.com/Open-LLM-VTuber/Open-LLM-VTuber-Web/tar.gz/d176e7df2366952e3bacbf12cf9a8b18a4315932",
+    "sha256": "6105f3eccde24dc8a75cf37d0124a41ef0f5b5656c7e9a7333fe3bf11c227975"
+  },
+  "ffmpeg": {
+    "url": "https://github.com/BtbN/FFmpeg-Builds/releases/download/autobuild-2026-10-19-13-06/ffmpeg-N-127697-g3ebed8c087-linux64-gpl.tar.xz",
+    "sha256": "4fc3dd9b1acfbc42ca3b074285fa0abf729ea7f67d00c36dd88c0faed06500ac",
+    "binary_sha256": "1138b8d7cf873e36bb7868d8686ca44110d0aefb0265981fd088279bdd424cbf"
+  },
+  "node": {
+    "url": "https://nodejs.org/dist/v24.20.0/node-v24.20.0-linux-x64.tar.xz",
+    "sha256": "2f2c0da162318f0de47665410c7c8c2ed3d36c8f3105de4bbc61176c70a7cbf2",
+    "binary_sha256": "89af8424dd53e560b1933f87ba650d8bf57c83ca5a04600eefb31f416aabbae7"
+  },
+  "asr": [
+    {
+      "file": "model.int8.onnx",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/model.int8.onnx",
+      "sha256": "c71f0ce00bec95b07744e116345e33d8cbbe08cef896382cf907bf4b51a2cd51"
+    },
+    {
+      "file": "tokens.txt",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/tokens.txt",
+      "sha256": "f449eb28dc567533d7fa59be34e2abca8784f771850c78a47fb731a31429a1dc"
+    },
+    {
+      "file": "README.md",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/README.md",
+      "sha256": "763991a00edaea534ab36bf1b7cf89e61e911666dcfabbba71f91f9f7c593a63"
+    },
+    {
+      "file": "LICENSE",
+      "url": "https://huggingface.co/csukuangfj/sherpa-onnx-sense-voice-zh-en-ja-ko-yue-2024-07-17/resolve/2365baeacb507f821a0c8120fcee3d484dba7a07/LICENSE",
+      "sha256": "221c6df10b0931a5629adad671ea48fb7747e034c414b6d2bfa275bc3dd4ea17"
+    }
+  ]
+}

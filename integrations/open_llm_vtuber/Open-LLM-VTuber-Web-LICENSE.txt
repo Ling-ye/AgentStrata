@@ -1,0 +1,29 @@
+Open-LLM-VTuber License 1.0
+
+Copyright © 2025 Open LLM Vtuber. All rights reserved.
+
+This software is licensed under the Apache License Version 2.0 (the "Apache License"), subject to the following Additional Conditions.
+
+Additional Conditions
+
+1. Definitions
+
+"Software" refers to the Open-LLM-VTuber project and all of its associated components, including but not limited to source code, executable files, web applications, desktop clients, documentation, and accompanying assets.
+
+2. Permitted Uses (No Additional License Required)
+
+You are granted permission to use the software freely, without requiring a commercial license, under the following circumstances:
+
+Non-commercial Uses: Any non-commercial activity including, but not limited to, personal projects, educational purposes, academic research, and non-profit initiatives.
+
+VTuber Streaming and Content Creation: Activities involving VTuber streaming, content creation, broadcasting, and monetization on platforms such as YouTube, Twitch, Bilibili, or other streaming services, provided revenue primarily derives from content creation and not from direct sale, distribution, or subscription to the software itself.
+
+3. Uses Requiring a Commercial License
+
+You must obtain a separate commercial license from Open LLM Vtuber for any of the following uses:
+
+Monetized Access or Hosting Services: Providing paid access to or hosting of the software—whether original, modified, or derivative—including SaaS, subscription models, pay-per-use, or paid downloads and installations.
+
+Commercial Redistribution or Rebranding: Redistributing, repackaging, renaming, or otherwise commercially providing the software (original or modified versions) under any alternative brand, identity, or project name in exchange for payment or other commercial benefits.
+
+Commercial Embedding or Integration: Incorporating this software, wholly or partially, into any commercial software, hardware, or physical product that is sold, licensed, or otherwise distributed for a fee.

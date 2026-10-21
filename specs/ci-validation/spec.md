@@ -22,7 +22,8 @@ CI 使用固定 Ubuntu 版本、明确的 Python 支持边界和 Node 主版本�
 严格同步，前端从 package-lock.json 安装。检查入口分别提供 Python、Console 和二者组合的
 完整检查，避免 workflow 复制本地门禁命令清单。Python 矩阵失败独立保留结果。
 Python 最低版本为 3.11，覆盖调度运行时使用的任务取消与超时 API；CI 验证 3.11 和 3.13，
-发行构建与安装使用最低支持版本。3.10 不再满足新版安装条件。
+发行构建与安装使用最低支持版本。可选 VTuber 另设 Python 3.12 兼容 job，
+与本地共用脚本验证固定上游和安装包，使用替代语音及 Agent，不取得模型凭据。3.10 不再满足新版安装条件。
 
 Linux 测试依赖必须实际可用。仅在一次性 GitHub runner 上安装系统工具和 Bubblewrap 的
 AppArmor userns profile，不修改部署宿主策略，不用 skip 替代隔离测试。

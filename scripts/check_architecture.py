@@ -207,6 +207,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "channels": frozenset({"contracts", "core", "project"}),
     "tool_packs": frozenset({"contracts"}),
     "component_catalog": frozenset({"contracts", "core", "tool_packs"}),
+    "plugins": frozenset({"core", "project"}),
     "external_tools": frozenset({"contracts", "core", "project"}),
     "platforms": frozenset({"contracts", "core", "project"}),
     "agent": frozenset(
@@ -290,6 +291,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     ),
     "entrypoints": frozenset(
         {
+            "plugins",
             "schedules",
             "harness",
             "agent",

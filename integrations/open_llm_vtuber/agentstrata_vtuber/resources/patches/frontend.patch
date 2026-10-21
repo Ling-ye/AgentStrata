@@ -244,3 +244,17 @@ new file mode 100644
 +    respond('failed');
 +  }
 +}
+diff --git a/src/renderer/src/context/websocket-context.tsx b/src/renderer/src/context/websocket-context.tsx
+--- a/src/renderer/src/context/websocket-context.tsx
++++ b/src/renderer/src/context/websocket-context.tsx
+@@ -3,8 +3,8 @@
+ import { wsService } from '@/services/websocket-service';
+ import { useLocalStorage } from '@/hooks/utils/use-local-storage';
+ 
+-const DEFAULT_WS_URL = 'ws://127.0.0.1:12393/client-ws';
+-const DEFAULT_BASE_URL = 'http://127.0.0.1:12393';
++const DEFAULT_WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/client-ws`;
++const DEFAULT_BASE_URL = window.location.origin;
+ 
+ export interface HistoryInfo {
+   uid: string;
