@@ -60,7 +60,10 @@ Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查�
 
 ## Release 构建边界
 
-`requirements/release-build.txt` 是手工复核的五包、全哈希、Python 3.11 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
+`requirements/release-build.txt` 是手工复核的五包、全哈希、Python 3.12 build-only 闭包，不由兼容 requirements 生成。测试、构建、正常安装和带写权限的 draft Release 必须分 job；原始 sdist 在解包前验证，最终 wheel/sdist/notes/checksum 受校验和与 attestation 绑定。
+
+正常安装探针选择主包已声明的 `acp` extra，覆盖评测模块导入所需的 ACP 接口；
+不取得模型凭据或调用模型。无依赖安装探针继续独立验证包内资源和基础 CLI。
 
 可选 VTuber 插件独立构建 wheel/sdist，由 `scripts/plugin_artifacts.py` 严格比对包身份、
 部署资源和法律文件，并从 sdist 重建。插件与主包分别验证，同入 Release 的 checksum

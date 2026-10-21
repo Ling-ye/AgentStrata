@@ -40,13 +40,9 @@ jobs:
         run: bash scripts/check_secrets.sh history
 
   python:
-    name: Python ${{ matrix.python-version }}
+    name: Python 3.13
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.11", "3.13"]
     env:
       TMPDIR: /tmp
     steps:
@@ -58,7 +54,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
-          python-version: ${{ matrix.python-version }}
+          python-version: "3.13"
       - name: Set up locked uv
         uses: astral-sh/setup-uv@1c37ad07a6a961277cf70c0d37d6f313000f5884 # v10.3.0
         with:
@@ -68,7 +64,7 @@ jobs:
       - name: Prepare Linux sandbox tests
         run: bash scripts/setup_ci_linux.sh
       - name: Install locked Python dependencies
-        run: uv sync --locked --python "${{ matrix.python-version }}" --extra agent --extra acp --extra dev --extra evaluation --extra weixin
+        run: uv sync --locked --python 3.13 --extra agent --extra acp --extra dev --extra evaluation --extra weixin
       - name: Run Python repository gate
         env:
           DOCS_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.docs_base || '' }}

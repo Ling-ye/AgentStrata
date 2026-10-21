@@ -161,8 +161,8 @@ def rebuild_and_probe(wheel: Path, sdist: Path, *, normal_install: bool) -> None
         _compare_wheel_contents(wheel, rebuilt)
         if not normal_install:
             return
-        if sys.version_info[:2] not in {(3, 11), (3, 12)}:
-            raise VerificationError("Plugin installation probe requires Python 3.11 or 3.12")
+        if sys.version_info[:2] != (3, 12):
+            raise VerificationError("Plugin installation probe requires Python 3.12")
         _run_checked((sys.executable, "-m", "venv", str(root / "venv")), cwd=root, label="plugin probe environment")
         python = root / "venv/bin/python"
         env = os.environ.copy()

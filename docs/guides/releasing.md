@@ -84,7 +84,7 @@ workflow 分别执行验证、VTuber 兼容检查、构建、安装测试和创�
 - 核对仓库已公开、输入 tag 与运行 ref 相同、tag 为 GitHub 验证通过的签名 annotated
   tag，并且 tag commit 是 `main` 的祖先。
 - 执行公开历史扫描、Gitleaks、release metadata 检查、完整仓库门禁和 Console 测试。
-- 使用 `requirements/release-build.txt` 的全哈希 build-only 闭包，在 Python 3.11 上两次
+- 使用 `requirements/release-build.txt` 的全哈希 build-only 闭包，在 Python 3.12 上两次
   构建 wheel 与 sdist，验证内容、安装、从 sdist 重建 wheel 以及归一化产物一致性。
 - 自有 VTuber 插件独立构建和验证 `agentstrata_open_llm_vtuber` wheel/sdist，随主程序的
   Release 分发。`scripts/plugin_artifacts.py` 比对完整资源和法律材料，独立检查不会替代

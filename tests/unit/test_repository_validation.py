@@ -201,14 +201,15 @@ def test_ci_vtuber_uses_shared_script_without_credentials_or_path_filters():
     assert "verify-vtuber" in release["jobs"]["build"]["needs"]
 
 
-def test_ci_python_covers_supported_boundaries_with_locked_dependencies():
+def test_ci_python_checks_primary_runtime_with_locked_dependencies():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = workflow["jobs"]["python"]
-    assert job["strategy"] == {
-        "fail-fast": False, "matrix": {"python-version": ["3.11", "3.13"]},
-    }
+    assert job["name"] == "Python 3.13"
+    assert "strategy" not in job
     steps = job["steps"]
+    assert next(s for s in steps if "setup-python@" in s.get("uses", ""))["with"]["python-version"] == "3.13"
     install = next(step["run"] for step in steps if step.get("run", "").startswith("uv sync "))
+    assert "--python 3.13" in install
     assert "--locked" in install and "--frozen" not in install
     for extra in ("agent", "acp", "dev", "evaluation", "weixin"):
         assert f"--extra {extra}" in install
@@ -231,6 +232,10 @@ def test_release_verification_uses_the_same_locked_environment_and_full_gate():
     assert ".venv/bin/python scripts/check_repo.py full --keep-going" in runs
     assert "pip install -e" not in runs
     assert "npm test" not in runs  # The full gate owns this check.
+    for job_id in ("build", "install-test"):
+        setup = next(step for step in workflow["jobs"][job_id]["steps"]
+                     if "setup-python@" in step.get("uses", ""))
+        assert setup["with"]["python-version"] == "3.12"
 
 
 def test_ci_setup_refuses_to_modify_an_operator_host():

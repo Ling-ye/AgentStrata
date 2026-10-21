@@ -9,7 +9,7 @@
 构建与运行 Agent → 发现问题 → 生成改进 → 对照评测 → 独立验收 → 后续任务使用新版本
 
 [![AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
-[![Python](https://img.shields.io/badge/Python-3.11%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
+[![Python](https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
 [![Linux / WSL2](https://img.shields.io/badge/Runtime-Linux%20%2F%20WSL2-informational.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)
 
 [框架总览](#框架总览) · [自我优化](#如何实现自我优化) · [Harness](#harness自研修复与验收体系) · [Eval](#eval自研评测与证据体系) · [快速开始](#快速开始) · [产品界面](#产品界面) · [文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)

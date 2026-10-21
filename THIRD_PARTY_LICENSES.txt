@@ -50563,8 +50563,8 @@ python: pywin32 312
 Scopes: agent, evaluation, runtime
 Declared license: PSF
 Evidence: original package or pinned upstream license text
-Source/archive: https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl
-Integrity: sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c
+Source/archive: https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl
+Integrity: sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c
 Preferred upstream source/build materials: https://github.com/mhammond/pywin32/archive/2a277cb5552756c2b4d42b524dc36d25e0bb6354.tar.gz
 
 --- adodbapi/license.txt ---

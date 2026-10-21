@@ -208,7 +208,7 @@ plan = PromptPlanBuilder().build(
             identity="Release probe assistant",
             response_style="Respond concisely.",
         ),
-        backend="native",
+        runtime_id="native",
         model=None,
         role="owner",
         channel_kind="private",
@@ -1071,7 +1071,11 @@ def install_and_probe_wheel(
                 install_argv.extend(("--no-index", "--find-links", str(wheelhouse)))
         else:
             install_argv.extend(("--no-index", "--no-deps"))
-        install_argv.extend(("--no-compile", str(wheel)))
+        # The Evaluation import in the runtime probe loads the optional ACP adapter.
+        install_argv.extend(("--no-compile",))
+        install_argv.append(
+            f"agentstrata[acp] @ {wheel.as_uri()}" if install_dependencies else str(wheel)
+        )
         _run_checked(
             tuple(install_argv),
             cwd=outside_cwd,
@@ -1175,7 +1179,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--normal-install",
         action="store_true",
-        help="also install declared dependencies in a fresh venv and run runtime probes",
+        help="also install declared base/ACP dependencies in a fresh venv and run runtime probes",
     )
     parser.add_argument(
         "--wheelhouse",

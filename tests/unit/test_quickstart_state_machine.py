@@ -28,10 +28,6 @@ def _fixture(
     script.parent.mkdir(parents=True)
     shutil.copy2(SCRIPT, script)
     shutil.copy2(REPO_ROOT / "deploy" / "wsl" / "install_wsl_env.sh", script.parent)
-    shutil.copytree(
-        REPO_ROOT / "deploy" / "wsl" / "node-tools",
-        script.parent / "node-tools",
-    )
     (root / "src" / "chatcopilot").mkdir(parents=True)
     (root / "pyproject.toml").write_text("[project]\nname='fixture'\n", encoding="utf-8")
     shutil.copy2(REPO_ROOT / "uv.lock", root / "uv.lock")

@@ -25,7 +25,7 @@ agentstrata plugin install open-llm-vtuber --model-binding chat
 
 默认使用 Codex runtime。其他已配置的执行方式可用 `--option runtime=native` 或
 `--option runtime=langgraph`；ChatGPT 订阅认证仍要求 Codex。插件用独立 Python 3.12
-环境运行，上游依赖不会装入主程序环境。插件 Python 声明为 `>=3.11,<3.13`。
+环境运行，上游依赖不会装入主程序环境。插件 Python 声明为 `>=3.12,<3.13`。
 
 安装器从匹配的 GitHub Release 取得主包与插件 wheel，并校验 SHA256SUMS 和包身份。
 开发版或未发布的候选使用 `--artifacts /path/to/release-bundle --source-url URL`；目录必须

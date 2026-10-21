@@ -25,7 +25,7 @@ AgentStrata 提供统一 CLI，将显式选择的官方插件安装在独立环�
 运行客户端。软件下载、资源、补丁、前端构建和 BotSpec 模板均在插件内。执行命令使用
 参数数组；安装依赖不继承模型凭据。仅维护者的 CLI 安装操作可以安装程序。
 
-VTuber 使用 Python 3.12，插件支持 Python >=3.11,<3.13。软件、工具和依赖记录固定版本
+VTuber 使用 Python 3.12，插件支持 Python >=3.12,<3.13。软件、工具和依赖记录固定版本
 及摘要；前后端沿用已验证的 commit。对话沿用 Gateway v1，头像控制沿用 HTTP MCP。
 Gateway、身份、取消和 AgentResult 契约不变。/source 与首次源码提示完整显示。
 

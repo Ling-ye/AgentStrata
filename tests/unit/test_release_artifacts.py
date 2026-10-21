@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import ast
 import base64
 import builtins
 import csv
 import hashlib
 import importlib.util
+import inspect
 import io
 import stat
 import sys
@@ -291,9 +293,49 @@ def test_release_resource_allowlist_is_exact() -> None:
 
 
 def test_release_runtime_probe_uses_canonical_prompt_plan() -> None:
+    from chatcopilot.agent.context.prompt_plan import PromptBuildInput
+
     verifier = _load_verifier()
     assert "builtin_prompts" not in verifier._RUNTIME_PROBE
     assert "PromptPlanBuilder" in verifier._RUNTIME_PROBE
+    constructor = next(
+        node for node in ast.walk(ast.parse(verifier._RUNTIME_PROBE))
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Name)
+        and node.func.id == "PromptBuildInput"
+    )
+    inspect.signature(PromptBuildInput).bind(
+        **{keyword.arg: None for keyword in constructor.keywords}
+    )
+
+
+@pytest.mark.parametrize("install_dependencies", (False, True))
+def test_installed_probe_selects_acp_only_for_runtime_checks(tmp_path, monkeypatch, install_dependencies):
+    verifier = _load_verifier()
+    wheel = tmp_path / "agentstrata-1.0-py3-none-any.whl"
+    wheel.touch()
+    calls = []
+
+    def record(argv, **kwargs):
+        calls.append(argv)
+        if argv[1:3] == ("-m", "venv"):
+            root = Path(argv[-1])
+            python = verifier._venv_python(root)
+            python.parent.mkdir(parents=True)
+            python.touch()
+            (root / "pyvenv.cfg").write_text("include-system-site-packages = false\n")
+
+    monkeypatch.setattr(verifier, "_run_checked", record)
+    verifier.install_and_probe_wheel(wheel, label="candidate", install_dependencies=install_dependencies)
+    install = next(argv for argv in calls if argv[1:4] == ("-m", "pip", "install"))
+    if install_dependencies:
+        requirement = verifier.Requirement(install[-1])
+        assert requirement.name == "agentstrata"
+        assert requirement.extras == {"acp"}
+        assert requirement.url == wheel.as_uri()
+        assert "--no-deps" not in install
+    else:
+        assert install[-1] == str(wheel)
+        assert "--no-index" in install and "--no-deps" in install
 
 
 def test_release_resource_allowlist_rejects_drift() -> None:

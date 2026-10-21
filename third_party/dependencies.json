@@ -1,5 +1,5 @@
 {
-  "notices_sha256": "f81b27ea1a9a0d292db9c6ddba47da2ea73e3b40626e3fcdd3b53c4de156e8b7",
+  "notices_sha256": "268b5e76b651c3843b9e2de6ea4696be348ec75f32eccd7bf1cef3e191a1ec50",
   "reviewed_sources_sha256": "b0a3d88ad981b19def4156d8eda60131a78c5a073da826da9d900d1c291fb258",
   "dependencies": [
     {
@@ -7020,8 +7020,8 @@
       "scopes": [
         "weixin"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/db/e2/7e8109f65445bdc673a7b54f02c677de462db75674220fd1335efc8eb598/cffi-2.1.1-cp311-cp311-win32.whl",
-      "integrity": "sha256:f8ec5e643a9a937f64e1999eb9f75d072263751912dc5cd06d3c85f8f44be7c3",
+      "artifact_url": "https://files.pythonhosted.org/packages/70/ea/839b50531021a647fb5e929f72cf97bc1ff702b5472166164b5b6e76b851/cffi-2.1.1-cp313-cp313-win32.whl",
+      "integrity": "sha256:334644fbac4eff73d985a17a91226df55d0f394160c4cfb880e084c8f7161cac",
       "source_url": "https://files.pythonhosted.org/packages/9e/ef/008a1939e372c06329a3fce4279c02f328488f3526744906eeec3da7ad5f/cffi-2.1.1.tar.gz",
       "source_integrity": "sha256:dd31f52ea1086513bb9df30f8fcee9b8918323ae067a3d5b78bc826a000712be",
       "license": "MIT-0",
@@ -10062,10 +10062,10 @@
         "evaluation",
         "runtime"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl",
-      "integrity": "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c",
-      "source_url": "https://files.pythonhosted.org/packages/1f/f5/10a6e845a00fc5e7afd0a988b744f403d4d57162a28d160a093c4d9322f0/pywin32-312-cp311-cp311-win32.whl",
-      "source_integrity": "sha256:17948aeadbdb091f0ced6ef0841620794e68327b94ee415571c1203594b7215c",
+      "artifact_url": "https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl",
+      "integrity": "sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c",
+      "source_url": "https://files.pythonhosted.org/packages/2d/41/12fbfd7f36ed2146d8bc9de96c2741296bf0d490b98508496cff322e274c/pywin32-312-cp313-cp313-win32.whl",
+      "source_integrity": "sha256:7a27df850933d16a8eabfbaeb73d52b273e2da667f80d70b01a89d1f6828d02c",
       "license": "PSF",
       "upstream_urls": [
         "Homepage, https://github.com/mhammond/pywin32",
@@ -10235,8 +10235,8 @@
       "scopes": [
         "evaluation"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/60/96/04bb3dabe9ac7aa64ff758dc34ae0378d60f5279ccb66788e1f837a0cac0/regex-2026.9.10-cp311-cp311-win32.whl",
-      "integrity": "sha256:7f8f10015866608fe4c043cec2e4fe4c39a94bb50e45091de4cdf4004b9ae4b0",
+      "artifact_url": "https://files.pythonhosted.org/packages/63/03/c28a6bebedc3e2d86ee27ec2de16f7ec0419dcd10e771d43dcc9c58a2e99/regex-2026.9.10-cp313-cp313-win32.whl",
+      "integrity": "sha256:7abb38b8c40f3a235235a44da452c64b7b5c1d650ec6351027db0e090804f2e5",
       "source_url": "https://files.pythonhosted.org/packages/b9/5c/f403115361de25809e8f785686ec7096e30fef73be9ae35aa51da4e80abb/regex-2026.9.10.tar.gz",
       "source_integrity": "sha256:1e321e2c84f0e52c457f5ea5944f796d6e8e09cb99738ea98dcc1bfe402a128d",
       "license": "Apache-2.0 AND CNRI-Python",
@@ -11378,8 +11378,8 @@
       "scopes": [
         "agent"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/7b/a3/732893eab0a3a7aecff8b99052fecf9f605cf0fb5fb6d0290e36beee47a4/zstandard-0.25.0-cp311-cp311-win32.whl",
-      "integrity": "sha256:f5aeea11ded7320a84dcdd62a3d95b5186834224a9e55b92ccae35d21a8b63d4",
+      "artifact_url": "https://files.pythonhosted.org/packages/ff/8d/0309daffea4fcac7981021dbf21cdb2e3427a9e76bafbcdbdf5392ff99a4/zstandard-0.25.0-cp312-cp312-win32.whl",
+      "integrity": "sha256:23ebc8f17a03133b4426bcc04aabd68f8236eb78c3760f12783385171b0fd8bd",
       "source_url": "https://files.pythonhosted.org/packages/fd/aa/3e0508d5a5dd96529cdc5a97011299056e14c6505b678fd58938792794b1/zstandard-0.25.0.tar.gz",
       "source_integrity": "sha256:7713e1179d162cf5c7906da876ec2ccb9c3a9dcbdffef0cc7f70c3667a205f0b",
       "license": "BSD-3-Clause",

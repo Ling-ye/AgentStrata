@@ -44,6 +44,9 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Changed
 
+- Drop Python 3.11 support. The main package requires Python 3.12–3.13, while
+  the VTuber plugin requires Python 3.12. Daily CI runs the full Python gate on
+  3.13; release builds and installation checks use 3.12.
 - Harness repair and acceptance now use separate LangGraph core and AgentStrata
   integration modules, with injected execution dependencies, operation receipts,
   and shared acceptance for initial repair and delivery revalidation.
@@ -60,11 +63,11 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Xiaohongshu deployment now uses a pinned official upstream container image
   while retaining the existing login, search, console, and Bot integration.
 - Fuzzy file editing keeps its runtime fallback but no longer advertises a
-  Python 3.14-only package extra to the supported Python 3.10–3.13 range.
+  Python 3.14-only package extra to the supported Python 3.12–3.13 range.
 - Python distributions now contain the core CLI/runtime only; Console and
   deployment surfaces remain available from tagged source checkouts.
-- Python package metadata now matches the tested Python 3.10–3.13 support
-  window instead of accepting unverified newer interpreters.
+- Python package metadata now declares Python 3.12–3.13 support
+  instead of accepting unverified newer interpreters.
 - Release gates verify exact wheel and sdist resources, install wheels outside
   the repository, and rebuild a second validated wheel from the final sdist.
 
