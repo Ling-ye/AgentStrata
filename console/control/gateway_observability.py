@@ -99,9 +99,12 @@ def inspection(inst: BotInstance, *, run_id: str | None = None, event_seq: int |
     root, values = _context(inst)
     errors = []
     try:
-        local_env = Path(inst.bot_spec).parent / "local.env"
-        saved = read_private_env_file(local_env, allowed_parent=local_env.parent) if local_env.exists() or local_env.is_symlink() else values
-        current = expected_configuration(Path(inst.bot_spec), saved, home=Path.home())
+        if inst.read_only:
+            current = expected_configuration(Path(inst.bot_spec), values, home=Path.home(), deployment_defaults=False)
+        else:
+            local_env = Path(inst.bot_spec).parent / "local.env"
+            saved = read_private_env_file(local_env, allowed_parent=local_env.parent) if local_env.exists() or local_env.is_symlink() else values
+            current = expected_configuration(Path(inst.bot_spec), saved, home=Path.home())
     except (ValueError, OSError, RuntimeError) as exc:
         current = None
         errors.append({"source": "current", "code": type(exc).__name__, "message": "实例配置读取或校验失败"})

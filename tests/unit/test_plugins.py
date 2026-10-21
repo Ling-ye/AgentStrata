@@ -17,6 +17,7 @@ from chatcopilot.core.install_artifacts import InstallError, download, extract_a
 from chatcopilot.plugins.repository import InstallRepository
 from chatcopilot.plugins.runtime import UserServices, dependency_environment, require_free_port
 from chatcopilot.plugins.service import PluginManager
+from chatcopilot.plugins.service import observable_agents
 from chatcopilot.plugins.types import PluginDefinition, ServiceDefinition
 
 
@@ -44,7 +45,7 @@ def harness(tmp_path):
             self.stop(plugin, services, root)
             calls.append("remove")
 
-    state = SimpleNamespace(fail=False)
+    state = SimpleNamespace(fail=False, agent_ids=())
 
     def bootstrap(entry, root, artifacts, uv):
         write_private(root / "runtime/program", "program")
@@ -62,7 +63,14 @@ def harness(tmp_path):
         if operation == "prepare":
             write_private(root / "data/user-history", "preserve")
             write_private(root / "config/runtime.env", "FIXTURE=value\n")
+            agents = []
+            for name in state.agent_ids:
+                write_private(root / f"config/{name}.yaml", f"id: {name}\ngateway: {{}}\n")
+                write_private(root / f"config/{name}.env", f"CHATCOPILOT_GATEWAY_STATE_ROOT={root / 'data' / name}\n")
+                agents.append({"id": name, "display_name": name, "bot_spec": f"config/{name}.yaml",
+                               "env_file": f"config/{name}.env"})
             return {"url": "http://localhost:19600", "provenance": {"revision": "fixture"},
+                    "observable_agents": agents,
                     "services": [{"name": "server", "command": ["/usr/bin/true"],
                                   "cwd": str(root), "environment_file": str(root / "config/runtime.env"),
                                   "port": 19600}]}
@@ -73,6 +81,120 @@ def harness(tmp_path):
         toolchain=lambda root: Path("/bin/uv"), progress=lambda _: None)
     return SimpleNamespace(manager=manager, entry=entry, calls=calls, running=running,
                            state=state, root=tmp_path / "plugins/fixture")
+
+
+@pytest.mark.parametrize("agent_ids", [(), ("main",), ("main", "second")])
+def test_installed_agents_are_optional_and_discovery_is_read_only(harness, agent_ids):
+    h = harness
+    h.state.agent_ids = agent_ids
+    h.manager.install("fixture", options={}, host={})
+    before = list(h.calls)
+    agents = observable_agents(h.manager.root, definitions=h.manager.definitions)
+    assert [agent.id for agent in agents] == list(agent_ids)
+    assert [agent.console_id for agent in agents] == [f"plugin:fixture:{name}" for name in agent_ids]
+    assert all(agent.plugin_version == "1.0.0" for agent in agents)
+    assert h.calls == before
+    assert all(not (h.root / "data" / name).exists() for name in agent_ids)
+    record = InstallRepository(h.manager.root, "fixture").read()
+    assert all(set(item) == {"id", "display_name", "bot_spec", "env_file"} for item in record["observable_agents"])
+    assert "FIXTURE=value" not in json.dumps(record)
+
+
+def test_agent_registration_survives_stop_and_start_failure_but_not_uninstall(harness, monkeypatch):
+    h = harness
+    h.state.agent_ids = ("main",)
+    h.manager.install("fixture", options={}, host={})
+    before = (h.root / "config/main.env").read_bytes()
+    h.manager.stop("fixture")
+    assert len(observable_agents(h.manager.root, definitions=h.manager.definitions)) == 1
+    monkeypatch.setattr(h.manager.services, "start", lambda *args: (_ for _ in ()).throw(InstallError("service failed")))
+    with pytest.raises(InstallError):
+        h.manager.start("fixture")
+    assert len(observable_agents(h.manager.root, definitions=h.manager.definitions)) == 1
+    h.manager.uninstall("fixture")
+    assert observable_agents(h.manager.root, definitions=h.manager.definitions) == []
+    assert (h.root / "config/main.env").read_bytes() == before
+    assert (h.root / "data/user-history").read_text() == "preserve"
+
+
+def test_failed_initial_service_start_keeps_published_agent(harness, monkeypatch):
+    h = harness
+    h.state.agent_ids = ("main",)
+    monkeypatch.setattr(h.manager.services, "start", lambda *args: (_ for _ in ()).throw(InstallError("service failed")))
+    with pytest.raises(InstallError):
+        h.manager.install("fixture", options={}, host={})
+    assert InstallRepository(h.manager.root, "fixture").read()["status"] == "failed"
+    assert len(observable_agents(h.manager.root, definitions=h.manager.definitions)) == 1
+
+
+@pytest.mark.parametrize("failure", ["check", "duplicate"])
+def test_agent_registration_is_not_published_before_installation_checks(harness, failure):
+    h = harness
+    h.state.agent_ids = ("main", "main") if failure == "duplicate" else ("main",)
+    driver = h.manager.driver
+    if failure == "check":
+        h.manager.driver = lambda e, r, op: {"ok": False} if op == "check" else driver(e, r, op)
+    with pytest.raises(InstallError):
+        h.manager.install("fixture", options={}, host={})
+    assert observable_agents(h.manager.root, definitions=h.manager.definitions) == []
+    assert "register" not in h.calls
+
+
+@pytest.mark.parametrize("unsafe", ["absolute", "traversal", "spec_symlink", "env_symlink", "state_symlink", "state_loop", "outside_state", "public_file", "owner", "corrupt_record"])
+def test_discovery_revalidates_and_isolates_unsafe_plugin_records(harness, monkeypatch, caplog, unsafe):
+    h = harness
+    h.state.agent_ids = ("main",)
+    h.manager.install("fixture", options={}, host={})
+    repo = InstallRepository(h.manager.root, "fixture")
+    record = repo.read()
+    if unsafe in {"absolute", "traversal"}:
+        record["observable_agents"][0]["bot_spec"] = "/etc/passwd" if unsafe == "absolute" else "../outside.yaml"
+        repo.save(record)
+    elif unsafe in {"spec_symlink", "env_symlink"}:
+        path = h.root / ("config/main.yaml" if unsafe == "spec_symlink" else "config/main.env")
+        saved = h.root / "config/saved"
+        path.rename(saved)
+        path.symlink_to(saved)
+    elif unsafe == "state_symlink":
+        (h.root / "data/main").symlink_to(h.root / "config", target_is_directory=True)
+    elif unsafe == "state_loop":
+        (h.root / "data/main").symlink_to("main", target_is_directory=True)
+    elif unsafe == "outside_state":
+        write_private(h.root / "config/main.env", "CHATCOPILOT_GATEWAY_STATE_ROOT=/tmp/outside-state\n")
+    elif unsafe == "public_file":
+        (h.root / "config/main.yaml").chmod(0o644)
+    elif unsafe == "owner":
+        import os
+        monkeypatch.setattr(os, "getuid", lambda uid=os.getuid(): uid + 1)
+    else:
+        write_private(repo.path, '{"secret": "do-not-log-this", broken')
+    definitions = {**h.manager.definitions, "not-installed": h.entry}
+    assert observable_agents(h.manager.root, definitions=definitions) == []
+    assert "plugin=fixture" in caplog.text and "do-not-log-this" not in caplog.text
+
+
+def test_reinstallation_revokes_old_agent_descriptions_before_prepare(harness):
+    h = harness
+    h.state.agent_ids = ("main",)
+    h.manager.install("fixture", options={}, host={})
+    h.manager.stop("fixture")
+    h.manager.definitions["fixture"] = replace(h.entry, version="2.0.0")
+    h.state.fail = True
+    with pytest.raises(InstallError):
+        h.manager.install("fixture", options={}, host={})
+    assert observable_agents(h.manager.root, definitions=h.manager.definitions) == []
+
+
+def test_corrupt_registration_does_not_hide_another_plugin(harness, caplog):
+    h = harness
+    h.state.agent_ids = ("main",)
+    h.manager.install("fixture", options={}, host={})
+    h.manager.definitions["healthy"] = replace(h.entry, id="healthy")
+    h.manager.install("healthy", options={}, host={})
+    write_private(h.root / "installation.json", '{"secret": "do-not-log-this", broken')
+    agents = observable_agents(h.manager.root, definitions=h.manager.definitions)
+    assert [agent.console_id for agent in agents] == ["plugin:healthy:main"]
+    assert "plugin=fixture" in caplog.text and "do-not-log-this" not in caplog.text
 
 
 def test_generic_install_is_idempotent_and_uninstall_retains_data(harness):

@@ -5,7 +5,7 @@ cc_home / 日志文件等运行时位置，供上层（status/logs/jobs）复用
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import date
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -38,14 +38,23 @@ class BotInstance:
     cc_home: str = ""
     project_name: str = ""
     runtime_kind: str = "legacy"
+    origin: dict[str, str] = field(default_factory=lambda: {"kind": "repository"})
+
+    @property
+    def read_only(self) -> bool:
+        return self.origin["kind"] == "plugin"
 
     # systemd 模板服务名
     @property
     def unit(self) -> str:
+        if self.read_only:
+            return ""
         return f"chatcopilot@{self.instance_id}.service"
 
     @property
     def unit_short(self) -> str:
+        if self.read_only:
+            return ""
         return f"chatcopilot@{self.instance_id}"
 
     def deploy_script(self, name: str) -> str:

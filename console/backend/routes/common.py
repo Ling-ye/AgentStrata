@@ -9,7 +9,7 @@ from chatcopilot.evals.service import (
     EvaluationServiceError,
 )
 from console.backend.tasks import TaskManager
-from console.control.discovery import find_instance
+from console.control.discovery import find_instance, find_observable_instance
 from console.control.instances import BotInstance
 
 
@@ -57,9 +57,19 @@ def raise_evaluation_service_error(exc: EvaluationServiceError) -> None:
 
 
 def get_instance(instance_id: str) -> BotInstance:
-    inst = find_instance(instance_id)
+    inst = get_observable_instance(instance_id)
+    if inst.read_only:
+        raise HTTPException(status_code=403, detail={"code": "plugin_instance_read_only",
+            "message": "该实例由插件管理；Console 仅提供任务和配置查看。"},
+            headers={"Cache-Control": "no-store"})
+    return inst
+
+
+def get_observable_instance(instance_id: str) -> BotInstance:
+    inst = find_instance(instance_id) or find_observable_instance(instance_id)
     if inst is None:
-        raise HTTPException(status_code=404, detail=f"instance not found: {instance_id}")
+        raise HTTPException(status_code=404, detail=f"instance not found: {instance_id}",
+                            headers={"Cache-Control": "no-store"})
     return inst
 
 

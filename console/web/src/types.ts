@@ -28,6 +28,7 @@ export interface ToolPackGroup {
 }
 
 export interface BotInstance {
+  origin: { kind: "repository" } | { kind: "plugin"; plugin_id: string; version: string; agent_id: string };
   instance_id: string;
   display_name: string;
   platform: string;

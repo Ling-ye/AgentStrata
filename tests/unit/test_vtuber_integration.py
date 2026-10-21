@@ -26,6 +26,17 @@ def _config():
         ("http://localhost:12393",))
 
 
+def test_vtuber_service_description_exports_its_observable_agent(tmp_path):
+    from chatcopilot.core.install_artifacts import write_private
+    from integrations.open_llm_vtuber.agentstrata_vtuber.deployment import service_definitions
+
+    write_private(tmp_path / "config/configured.json", json.dumps({"port": 12393, "gateway_port": 18791}))
+    result = service_definitions({"root": str(tmp_path), "host": {"python": "/usr/bin/python3"}})
+    assert result["observable_agents"] == [{"id": "main", "display_name": "Live2D Assistant",
+        "bot_spec": "config/bot.yaml", "env_file": "config/runtime.env"}]
+    assert [s["name"] for s in result["services"]] == ["client", "gateway"]
+
+
 class _Gateway:
     def __init__(self, *, lose_ack=False, running=False, text="final answer"):
         self.calls = []

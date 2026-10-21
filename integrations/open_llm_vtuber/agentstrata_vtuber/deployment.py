@@ -145,7 +145,10 @@ def service_definitions(request: dict) -> dict:
     settings = json.loads((root / "config/configured.json").read_text())
     port, gateway_port = settings["port"], settings["gateway_port"]
     env = str(root / "config/runtime.env")
-    return {"url": f"http://localhost:{port}", "services": [
+    return {"url": f"http://localhost:{port}", "observable_agents": [
+        {"id": "main", "display_name": "Live2D Assistant", "bot_spec": "config/bot.yaml",
+         "env_file": "config/runtime.env"},
+    ], "services": [
         {"name": "client", "command": [str(root / "runtime/venv/bin/python"), "-m", "agentstrata_vtuber.manage",
              "run", "--request", str(root / "config/request.json")],
          "cwd": str(root / "runtime/apps/backend"), "environment_file": env,

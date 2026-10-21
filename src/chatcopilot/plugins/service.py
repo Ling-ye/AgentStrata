@@ -3,14 +3,40 @@ from __future__ import annotations
 
 from dataclasses import asdict
 import json
+import logging
 from pathlib import Path
 import shutil
 import sys
 from typing import Callable
 
 from chatcopilot.core.install_artifacts import InstallError, sha256, write_private
-from chatcopilot.plugins.repository import InstallRepository
-from chatcopilot.plugins.types import PluginDefinition, ServiceDefinition
+from chatcopilot.plugins.repository import InstallRepository, validate_observable_agents
+from chatcopilot.plugins.types import InstalledAgent, PluginDefinition, ServiceDefinition
+
+_LOG = logging.getLogger(__name__)
+
+
+def observable_agents(root: Path | None = None, *, definitions: dict[str, PluginDefinition] | None = None) -> list[InstalledAgent]:
+    """Public read-only view of installed Agent registrations; never runs plugin code."""
+    from chatcopilot.plugins.catalog import PLUGINS, default_root
+
+    root = (root if root is not None else default_root()).expanduser().absolute()
+    result = []
+    for plugin_id in (PLUGINS if definitions is None else definitions):
+        try:
+            repository = InstallRepository(root, plugin_id)
+            record = repository.read()
+            if not record or record.get("status") in {"installing", "uninstalled"}:
+                continue
+            agents = validate_observable_agents(record.get("observable_agents", []), root=repository.root)
+            version = record["version"]
+            if not isinstance(version, str) or not version:
+                raise InstallError("Installation version is unavailable")
+            result.extend(InstalledAgent(plugin_id, version, a.id, a.display_name,
+                str(repository.root / a.bot_spec), str(repository.root / a.env_file)) for a in agents)
+        except (OSError, ValueError, TypeError, KeyError, RuntimeError) as exc:
+            _LOG.warning("Plugin Agent registration unavailable | plugin=%s code=%s", plugin_id, type(exc).__name__)
+    return result
 
 
 class PluginManager:
@@ -74,7 +100,8 @@ class PluginManager:
                     raise InstallError("Refusing to replace a symlinked runtime")
                 if program.exists():
                     shutil.rmtree(program)
-            record = {**(record or {}), "version": entry.version, "status": "installing", "stage": "artifacts"}
+            record = {**(record or {}), "version": entry.version, "status": "installing", "stage": "artifacts",
+                      "observable_agents": []}
             repository.save(record)
             try:
                 def stage(name):
@@ -117,9 +144,10 @@ class PluginManager:
                 health = self.driver(entry, repository.root, "check")
                 if not health.get("ok"):
                     raise InstallError("Plugin installation check failed: " + str(health.get("checks", {})))
+                agents = validate_observable_agents(prepared.get("observable_agents", []), root=repository.root)
                 stage("services")
                 self.services.register(plugin_id, services, repository.root)
-                record.update(status="ready", stage="installed")
+                record.update(status="ready", stage="installed", observable_agents=[asdict(agent) for agent in agents])
                 record.pop("error", None)
                 repository.save(record)
                 if start:
@@ -186,6 +214,6 @@ class PluginManager:
                 raise InstallError("Refusing to remove a symlinked runtime")
             if program.exists():
                 shutil.rmtree(program)
-            record.update(status="uninstalled", stage="uninstalled", services=[])
+            record.update(status="uninstalled", stage="uninstalled", services=[], observable_agents=[])
             repository.save(record)
             return {"id": plugin_id, "status": "uninstalled", "retained": str(repository.root)}

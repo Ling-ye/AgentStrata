@@ -51,8 +51,9 @@ def _error(error):
 @router.get("/{instance_id}/channels/weixin/status")
 async def status(request: Request, instance_id: str):
     _local_request(request)
+    inst = get_instance(instance_id)
     try:
-        return await _control(request).status(get_instance(instance_id))
+        return await _control(request).status(inst)
     except (WeixinError, ValueError, OSError) as error:
         raise _error(error) from None
 
@@ -60,8 +61,9 @@ async def status(request: Request, instance_id: str):
 @router.post("/{instance_id}/channels/weixin/login")
 async def start(request: Request, instance_id: str):
     _local_request(request)
+    inst = get_instance(instance_id)
     try:
-        return _control(request).start(get_instance(instance_id), get_task_manager(request))
+        return _control(request).start(inst, get_task_manager(request))
     except (WeixinError, ValueError, OSError, RuntimeError) as error:
         raise _error(error) from None
 
@@ -69,6 +71,7 @@ async def start(request: Request, instance_id: str):
 @router.get("/{instance_id}/channels/weixin/login/{login_id}")
 async def login_status(request: Request, instance_id: str, login_id: str):
     _local_request(request)
+    get_instance(instance_id)
     try:
         return _control(request).login.get(instance_id, login_id).public()
     except WeixinError as error:
@@ -78,6 +81,7 @@ async def login_status(request: Request, instance_id: str, login_id: str):
 @router.post("/{instance_id}/channels/weixin/login/{login_id}/verify")
 async def verify(request: Request, instance_id: str, login_id: str, body: Verification):
     _local_request(request)
+    get_instance(instance_id)
     try:
         return _control(request).login.verify(instance_id, login_id, body.code)
     except WeixinError as error:
@@ -87,6 +91,7 @@ async def verify(request: Request, instance_id: str, login_id: str, body: Verifi
 @router.delete("/{instance_id}/channels/weixin/login/{login_id}")
 async def cancel(request: Request, instance_id: str, login_id: str):
     _local_request(request)
+    get_instance(instance_id)
     try:
         return await _control(request).login.cancel(instance_id, login_id)
     except WeixinError as error:

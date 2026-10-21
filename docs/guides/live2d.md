@@ -69,6 +69,28 @@ agentstrata plugin uninstall open-llm-vtuber
 修正后可重新执行安装。既有手工部署不会被迁移、覆盖或删除。
 
 修改模型、动作、端口或语音配置前先停止服务，维护 `config/` 中对应配置的一致性再启动。
+
+## Console 任务与配置查看
+
+插件 `0.2.1` 起，安装成功会登记 `plugin:open-llm-vtuber:main`。Console 的机器人实例
+列表刷新后即可选择它，查看历史任务、模型与工具调用、上下文和只读分层配置。
+启停及修改配置仍使用插件管理器。未登记的 `0.2.0` 安装先停止，再按新版安装流程重装；
+现有配置、凭据、客户端历史、Agent 会话、工作区及模型继续保留。
+
+Console 和 CLI 默认读取同一个插件目录。若安装使用了 `--root`，Console 进程也必须
+设置同值的 `AGENTSTRATA_PLUGINS_ROOT`。systemd 部署可在用户服务 drop-in 中配置：
+
+```ini
+[Service]
+Environment=AGENTSTRATA_PLUGINS_ROOT=/absolute/plugins-root
+```
+
+保存后执行 `systemctl --user daemon-reload` 并重启 Console。只读取当前用户显式配置的
+一个根目录，不扫描其他用户或任意安装目录。页面只显示已经采集的 Agent 执行；ASR、
+TTS、口型与播放过程仍由客户端管理，未新增到任务流。
+
+## 凭据与动作边界
+
 默认两个 token 独立生成，保存在私有 `runtime.env`，浏览器不持有凭据。
 [适配配置模板](../../integrations/open_llm_vtuber/agentstrata_vtuber/resources/config.example.json)只登记
 实际模型中的表达式与 motion，不接受任意文件路径或其他实例目标。

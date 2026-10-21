@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Dict, List, Optional
 
 from console.control.instances import BotInstance
+from chatcopilot.plugins.service import observable_agents
 
 
 @functools.lru_cache(maxsize=1)
@@ -88,3 +89,20 @@ def find_instance(instance_id: str, root: Optional[Path] = None) -> Optional[Bot
         if inst.instance_id == instance_id:
             return inst
     return None
+
+
+def discover_observable_instances(root: Optional[Path] = None) -> List[BotInstance]:
+    """Console's read-only view; deployment/health discovery remains repository-owned."""
+    instances = discover_instances(root)
+    for agent in observable_agents():
+        instances.append(BotInstance(
+            instance_id=agent.console_id, bot_spec=agent.bot_spec, display_name=agent.display_name,
+            env_file=agent.env_file, runtime_kind="gateway",
+            origin={"kind": "plugin", "plugin_id": agent.plugin_id,
+                    "version": agent.plugin_version, "agent_id": agent.id},
+        ))
+    return instances
+
+
+def find_observable_instance(instance_id: str) -> Optional[BotInstance]:
+    return next((inst for inst in discover_observable_instances() if inst.instance_id == instance_id), None)

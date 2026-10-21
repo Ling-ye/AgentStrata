@@ -113,6 +113,10 @@ AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[
 VTuber 的独立 Owner BotSpec 是该插件模板，不是所有插件的强制形态。
 模型凭据通过现有连接引用，工作区与记忆独立；播放状态归客户端。
 接入第二个软件时新增插件包与清单即可，运行协议继续使用已有 Gateway/MCP。
+插件可通过 `observable_agents` 声明零个或多个可观测实例，由管理器校验并登记。
+Console 使用插件领域的只读查询发现实例，复用任务、配置与 SSE；部署和服务健康扫描
+仍只枚举仓库受管实例。登记契约见[插件规格](../../specs/external-software-plugins/spec.md#可观测-agent-登记)，
+页面边界见[插件实例观测](observability.md#插件实例)。
 生命周期规则见[插件规格](../../specs/external-software-plugins/spec.md)，操作见
 [Live2D 安装](../guides/live2d.md#安装)。
 

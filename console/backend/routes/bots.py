@@ -6,10 +6,10 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, Request, Response
 
-from console.backend.routes.common import get_instance, start_task
+from console.backend.routes.common import get_instance, get_observable_instance, start_task
 from console.backend.sse import sse
 from console.control import catalog, inventory, observability, operations
-from console.control.discovery import discover_instances, repo_root
+from console.control.discovery import discover_observable_instances, repo_root
 
 router = APIRouter(prefix="/api/bots", tags=["bots"])
 
@@ -22,8 +22,9 @@ def _task_flow_http_error(exc: observability.TaskFlowUnavailableError) -> HTTPEx
 
 
 @router.get("")
-def list_bots():
-    return [i.to_dict() for i in discover_instances()]
+def list_bots(response: Response):
+    response.headers["Cache-Control"] = "no-store"
+    return [i.to_dict() for i in discover_observable_instances()]
 
 
 @router.get("/{instance_id}/status")
@@ -33,7 +34,7 @@ def bot_status(instance_id: str):
 
 @router.get("/{instance_id}/inventory")
 def bot_inventory(instance_id: str):
-    return inventory.bot_inventory(get_instance(instance_id))
+    return inventory.bot_inventory(get_observable_instance(instance_id))
 
 
 @router.get("/{instance_id}/jobs")
@@ -211,7 +212,7 @@ def _bot_yaml_path(inst) -> Path:
 
 @router.get("/{instance_id}/tools")
 def bot_tools(instance_id: str):
-    inst = get_instance(instance_id)
+    inst = get_observable_instance(instance_id)
     return catalog.bot_tool_config(_bot_yaml_path(inst))
 
 

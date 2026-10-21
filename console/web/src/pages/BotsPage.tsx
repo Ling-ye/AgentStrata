@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Alert, Button, Drawer, Empty, Message, Space, Spin, Select, Tabs, Tag, Tooltip, Typography } from "@arco-design/web-react";
 import BotToolEditor from "../components/BotToolEditor";
+import ReadOnlyBotConfiguration from "../components/ReadOnlyBotConfiguration";
 import ProvisionWizard from "../components/ProvisionWizard";
 import { useBotActions } from "../features/bots/useBotActions";
 import { useBotsOverview } from "../features/bots/useBotsOverview";
@@ -25,7 +26,8 @@ function tabFromLocation() {
   return botTabFromParams(new URLSearchParams(window.location.hash.split("?")[1] ?? ""));
 }
 
-function rosterState(status: BotStatus | undefined) {
+function rosterState(bot: BotInstance, status: BotStatus | undefined) {
+  if (bot.origin.kind === "plugin") return { label: "由插件管理", color: "gray" };
   if (!status) return { label: "加载中", color: "gray" };
   if (status.active_state === "failed") return { label: "失败", color: "red" };
   if (!status.systemd_available) return { label: "systemd 不可用", color: "orange" };
@@ -90,6 +92,15 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const selectedBot = bots.find((bot) => bot.instance_id === selectedBotId) ?? null;
   const selectedStatus = selectedBot ? statuses[selectedBot.instance_id] : undefined;
   const selectedInventory = selectedBot ? inventoryMap[selectedBot.instance_id] : undefined;
+  const pluginInstance = selectedBot?.origin.kind === "plugin";
+
+  useEffect(() => {
+    if (!pluginInstance || activeTab !== "runtime") return;
+    setActiveTab("tasks");
+    const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
+    params.set("tab", "tasks");
+    window.history.replaceState(null, "", "#bots?" + params);
+  }, [pluginInstance, activeTab]);
 
   const navigateTab = (tab: string) => {
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
@@ -223,13 +234,13 @@ export default function BotsPage({ loadError, visible = true }: Props) {
         {loading ? (
           <Spin size={28} style={{ display: "block", marginTop: 80 }} />
         ) : bots.length === 0 ? (
-          <Empty description="未发现机器人，检查仓库 bots/*/bot.yaml" style={{ marginTop: 80 }} />
+          <Empty description="未发现机器人，请检查仓库 BotSpec 或插件安装目录" style={{ marginTop: 80 }} />
         ) : (
           <div className="bot-instance-workspace obs-instance-workspace">
             <div className="obs-instance-selector"><span>机器人实例</span><Select aria-label="选择机器人实例" value={selectedBotId} onChange={(id) => {
               window.location.hash = "bots?" + new URLSearchParams({ instance: id, tab: activeTab });
             }}
-              options={bots.map((bot) => ({ value: bot.instance_id, label: `${bot.display_name} · ${rosterState(statuses[bot.instance_id]).label}` }))} />
+              options={bots.map((bot) => ({ value: bot.instance_id, label: `${bot.display_name} · ${rosterState(bot, statuses[bot.instance_id]).label}` }))} />
               <Tag>{bots.length} 个实例</Tag></div>
 
             {selectedBot && (
@@ -238,14 +249,15 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                   <div className="bot-instance-detail-summary">
                     <Space wrap size={8}>
                       <Title heading={4}>{selectedBot.display_name}</Title>
-                      <Tag className="cc-status-tag" color={rosterState(selectedStatus).color}>
-                        {rosterState(selectedStatus).label}
+                      <Tag className="cc-status-tag" color={rosterState(selectedBot, selectedStatus).color}>
+                        {rosterState(selectedBot, selectedStatus).label}
                       </Tag>
-                      <Tag className="cc-tag-meta">{selectedBot.platform || "?"}</Tag>
+                      <Tag className="cc-tag-meta">{selectedBot.origin.kind === "plugin"
+                        ? `${selectedBot.origin.plugin_id} · ${selectedBot.origin.version}` : selectedBot.platform || "?"}</Tag>
                       <Button size="small" onClick={() => setInstanceInfoOpen(true)}>实例信息</Button>
                     </Space>
                   </div>
-                  <div className="bot-instance-detail-actions">
+                  {!pluginInstance && <div className="bot-instance-detail-actions">
                     {!selectedBot.is_deployed ? (
                       <Button type="primary" onClick={() => setProvisionBot(selectedBot)}>首次部署</Button>
                     ) : (
@@ -288,24 +300,26 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                       </Space>
                     )}
                     <Button onClick={() => openLogs(selectedBot)}>服务日志</Button>
-                  </div>
+                  </div>}
                 </header>
 
                 <Tabs type="line" activeTab={activeTab} onChange={navigateTab} className="bot-instance-tabs">
                   <Tabs.TabPane title="任务" key="tasks" />
-                  <Tabs.TabPane title="分层配置" key="configuration" />
-                  <Tabs.TabPane title="运行状态" key="runtime">
+                  <Tabs.TabPane title={pluginInstance ? "只读分层配置" : "分层配置"} key="configuration" />
+                  {!pluginInstance && <Tabs.TabPane title="运行状态" key="runtime">
                     <BotRuntimePanel
                       bot={selectedBot}
                       status={selectedStatus}
                     />
-                  </Tabs.TabPane>
+                  </Tabs.TabPane>}
                 </Tabs>
-                <BotToolEditor key={`config:${selectedBot.instance_id}`} instanceId={selectedBot.instance_id}
+                {pluginInstance ? <ReadOnlyBotConfiguration key={`config:${selectedBot.instance_id}`} instanceId={selectedBot.instance_id}
+                  visible={visible && activeTab === "configuration"} infoVisible={visible && instanceInfoOpen}
+                  onInfoClose={() => setInstanceInfoOpen(false)} /> : <BotToolEditor key={`config:${selectedBot.instance_id}`} instanceId={selectedBot.instance_id}
                   isDeployed={selectedBot.is_deployed} inventory={selectedInventory} running={selectedStatus?.running}
                   visible={visible && activeTab === "configuration"}
                   infoVisible={visible && instanceInfoOpen} onInfoClose={() => setInstanceInfoOpen(false)}
-                  onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)} />
+                  onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)} />}
                 <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot} visible={visible && activeTab === "tasks"} />
               </section>
             )}

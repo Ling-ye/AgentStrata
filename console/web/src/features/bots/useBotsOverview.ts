@@ -16,8 +16,8 @@ export function useBotsOverview(visible = true) {
     queries: bots.map((bot) => ({
       queryKey: ["bot-status", bot.instance_id],
       queryFn: () => api.status(bot.instance_id),
-      enabled: visible,
-      refetchInterval: visible ? 15_000 : false,
+      enabled: visible && bot.origin.kind === "repository",
+      refetchInterval: visible && bot.origin.kind === "repository" ? 15_000 : false,
     })),
   });
 
@@ -25,8 +25,8 @@ export function useBotsOverview(visible = true) {
     queries: bots.map((bot) => ({
       queryKey: ["bot-inventory", bot.instance_id],
       queryFn: () => api.inventory(bot.instance_id),
-      enabled: visible && bots.length > 0,
-      refetchInterval: visible ? 30_000 : false,
+      enabled: visible && bot.origin.kind === "repository",
+      refetchInterval: visible && bot.origin.kind === "repository" ? 30_000 : false,
     })),
   });
 
@@ -67,8 +67,8 @@ export function useBotsOverview(visible = true) {
   }, [bots, taskQueries]);
 
   const refreshStatuses = useCallback(async (_list?: BotInstance[]) => {
-    await Promise.all(statusQueries.map((query) => query.refetch()));
-  }, [statusQueries]);
+    await Promise.all(statusQueries.filter((_, index) => bots[index]?.origin.kind === "repository").map((query) => query.refetch()));
+  }, [bots, statusQueries]);
 
   const reloadBots = useCallback(async () => {
     const result = await botsQuery.refetch();
@@ -80,7 +80,7 @@ export function useBotsOverview(visible = true) {
     [bots, statuses],
   );
   const deployedBotCount = useMemo(
-    () => bots.filter((bot) => bot.is_deployed).length,
+    () => bots.filter((bot) => bot.origin.kind === "repository" && bot.is_deployed).length,
     [bots],
   );
 

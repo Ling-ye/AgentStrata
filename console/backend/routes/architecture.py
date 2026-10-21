@@ -10,7 +10,7 @@ from fastapi.responses import StreamingResponse
 
 from chatcopilot.gateway.state_store import GatewayStateError
 from chatcopilot.gateway.observation_queries import RunFilter
-from console.backend.routes.common import get_instance
+from console.backend.routes.common import get_observable_instance as get_instance
 from console.control import gateway_observability
 from console.control.observation_stream import stream_page
 

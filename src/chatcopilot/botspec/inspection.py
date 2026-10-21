@@ -205,11 +205,12 @@ def declared_configuration(path: Path, environment: Mapping[str, str], *,
     return public_configuration(projection, secrets=collect_observability_secrets(environment))
 
 
-def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) -> dict[str, Any]:
+def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path,
+                           deployment_defaults: bool = True) -> dict[str, Any]:
     spec = load_botspec(path)
     source_root = _source_root(path)
-    provisioned = deployment_environment(spec, saved, source_root=source_root, home=home)
-    exported = exported_environment(provisioned, runtime_environment_keys(spec, environment=provisioned))
+    provisioned = deployment_environment(spec, saved, source_root=source_root, home=home) if deployment_defaults else dict(saved)
+    exported = exported_environment(provisioned, runtime_environment_keys(spec, environment=provisioned)) if deployment_defaults else provisioned
     effective = resolve_runtime_environment(spec, exported, source_root=source_root)
     current = declared_configuration(path, saved)
     expected = declared_configuration(path, effective, saved_environment=saved)
@@ -227,10 +228,11 @@ def expected_configuration(path: Path, saved: Mapping[str, str], *, home: Path) 
                 item[field] = resolved[field]
     current["model"] = expected["model"]
     by_id = {item["id"]: item for item in current["entities"]}
-    service = by_id["service:instance"]["effective_config"]
-    service.update({"instance_id": provisioned["CHATCOPILOT_INSTANCE_ID"], "wsl_home": provisioned["CHATCOPILOT_HOME"], "env_file": provisioned["CHATCOPILOT_ENV_FILE"],
-                    "workspace_root": provisioned["CHATCOPILOT_WORKSPACE_ROOT"], "log_dir": provisioned["CHATCOPILOT_LOG_DIR"],
-                    "source_spec": str(path), "source_root": str(source_root)})
+    if deployment_defaults:
+        service = by_id["service:instance"]["effective_config"]
+        service.update({"instance_id": provisioned["CHATCOPILOT_INSTANCE_ID"], "wsl_home": provisioned["CHATCOPILOT_HOME"], "env_file": provisioned["CHATCOPILOT_ENV_FILE"],
+                        "workspace_root": provisioned["CHATCOPILOT_WORKSPACE_ROOT"], "log_dir": provisioned["CHATCOPILOT_LOG_DIR"],
+                        "source_spec": str(path), "source_root": str(source_root)})
     code = by_id["model-slot:code"]
     prefix = spec.llm.env_prefix + "_CODE_"
     code["effective_environment"] = {key: value for key, value in effective.items() if key.startswith(prefix)}

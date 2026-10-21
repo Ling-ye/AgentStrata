@@ -12,7 +12,7 @@ import "../features/schedules/schedules.css";
 export default function SchedulesPage() {
   const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots, retry: false });
   const [selected, setSelected] = useState("");
-  const supported = bots.data?.filter(bot => bot.runtime_kind === "gateway" && bot.platform === "qq") ?? [];
+  const supported = bots.data?.filter(bot => bot.origin.kind === "repository" && bot.runtime_kind === "gateway" && bot.platform === "qq") ?? [];
   const bot = supported.find(bot => bot.instance_id === selected) ?? supported[0];
   const [editing, setEditing] = useState(false);
   return <div className="schedules-page">
