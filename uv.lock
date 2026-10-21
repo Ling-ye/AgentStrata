@@ -111,7 +111,7 @@ requires-dist = [
     { name = "langdetect", marker = "extra == 'evaluation'", specifier = "==1.0.9" },
     { name = "langgraph", marker = "extra == 'agent'", specifier = ">=1.2,<2" },
     { name = "langgraph-checkpoint-sqlite", marker = "extra == 'agent'", specifier = ">=3.1.2,<4" },
-    { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.27,<2" },
+    { name = "mcp", marker = "extra == 'agent'", specifier = ">=1.27,<3" },
     { name = "mcp-server-git", specifier = ">=0.6" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=1.16,<2" },
     { name = "nltk", marker = "extra == 'evaluation'", specifier = ">=3.9.2,<4" },
@@ -942,15 +942,6 @@ wheels = [
 ]
 
 [[package]]
-name = "httpx-sse"
-version = "0.4.3"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/0f/4c/751061ffa58615a32c31b2d82e8482be8dd4a89154f003147acee90f2be9/httpx_sse-0.4.3.tar.gz", hash = "sha256:9b1ed0127459a66014aec3c56bebd93da3c1bc8bb6618c8082039a44889a755d", size = 15943, upload-time = "2025-10-10T21:48:22.271Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/d2/fd/6668e5aec43ab844de6fc74927e155a3b37bf40d7c3790e49fc0406b6578/httpx_sse-0.4.3-py3-none-any.whl", hash = "sha256:0ac1c9fe3c0afad2e0ebb25a934a59f4c7823b60792691f779fad2c5568830fc", size = 8960, upload-time = "2025-10-10T21:48:21.158Z" },
-]
-
-[[package]]
 name = "httpx2"
 version = "2.12.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1396,15 +1387,15 @@ wheels = [
 
 [[package]]
 name = "mcp"
-version = "1.29.1"
+version = "2.3.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
-    { name = "httpx" },
-    { name = "httpx-sse" },
+    { name = "httpx2" },
     { name = "jsonschema" },
+    { name = "mcp-types" },
+    { name = "opentelemetry-api" },
     { name = "pydantic" },
-    { name = "pydantic-settings" },
     { name = "pyjwt", extra = ["crypto"] },
     { name = "python-multipart" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
@@ -1414,14 +1405,14 @@ dependencies = [
     { name = "typing-inspection" },
     { name = "uvicorn", marker = "sys_platform != 'emscripten'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/b5/48/0bb26fdfe7ac16875f534a101ce2405eae192bdef37e7451f2f4507c13ec/mcp-1.29.1.tar.gz", hash = "sha256:1967ba4c315f7a375146209949f45950d18b0efd2f913d7cf3400bc723ee5f04", size = 646823, upload-time = "2026-08-24T18:30:41.161Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/8d/e0d339616f4810e9051d4aba6887afab289ab1f81875fe908b606cdfd0e3/mcp-2.3.0.tar.gz", hash = "sha256:8b147a50441cf059dc88c684e0aeed3687f0aa0f39c6cde7b90330effd2b34d8", size = 4171955, upload-time = "2026-10-02T22:06:56.091Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/0b/04/d6b4fb82eefe9e81807aabca1ac98f460ae0883974b83a997aaa20c52545/mcp-1.29.1-py3-none-any.whl", hash = "sha256:b6310eeb59153300c4ab8b9aec4c52f4819a2d6a8e429eb43d908bed7c783648", size = 224653, upload-time = "2026-08-24T18:30:39.573Z" },
+    { url = "https://files.pythonhosted.org/packages/20/d7/4a2878f128df729db3ca04e71bfce26405cc2e0c9ebe19c592feeb4c61b9/mcp-2.3.0-py3-none-any.whl", hash = "sha256:dd0c44c089d16453e8ae31a3877a0054d7a2314caaa81f5e0541b9b1734b2377", size = 368664, upload-time = "2026-10-02T22:06:52.119Z" },
 ]
 
 [[package]]
 name = "mcp-server-git"
-version = "2026.8.18"
+version = "2026.10.19"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "click" },
@@ -1429,9 +1420,22 @@ dependencies = [
     { name = "mcp" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/c1/40/df8626a07853166320547045a719cef66ff31c91dda13e8b988ec4cf08ea/mcp_server_git-2026.8.18.tar.gz", hash = "sha256:96894ca661cfda45174a8882d4ca97d1f5261301c72ccad006ff04f4108f173f", size = 64961, upload-time = "2026-08-18T16:06:13.164Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/be/af/f15002d89ab067114ec6b33b3f832395faa4ed716949ea6d9ec5086618be/mcp_server_git-2026.10.19.tar.gz", hash = "sha256:386b8a6de78623d046c37779a20cdf7741669567fcaab28e717327eb7c190e27", size = 102837, upload-time = "2026-10-19T06:48:46.774Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/64/6b/2c03a87808ab787d568f4405ad79f27ea7b0498d9eea5086f01c25b153bc/mcp_server_git-2026.8.18-py3-none-any.whl", hash = "sha256:6c32a8e771564122a9bafac373cf871fb3ab540ddc1ba0ee8e9c8c6e9878aef7", size = 11001, upload-time = "2026-08-18T16:06:11.947Z" },
+    { url = "https://files.pythonhosted.org/packages/26/40/cb927161eccb5da10fc582ba99072bb2f7bab816ebf02f72d4a50f125c7e/mcp_server_git-2026.10.19-py3-none-any.whl", hash = "sha256:d4bfe88847089ed93d8e2dfc7ec97a23e5d067cfd165ee811e42675b614ab409", size = 16307, upload-time = "2026-10-19T06:48:45.427Z" },
+]
+
+[[package]]
+name = "mcp-types"
+version = "2.3.0"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "pydantic" },
+    { name = "typing-extensions" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/9e/2d/7c251e34207f6c51000312fc8839111ac45cfe02023f90b44e7f1051dd8e/mcp_types-2.3.0.tar.gz", hash = "sha256:d1e46549edb35ee19a94940fcee6d1addd7e589ab7ea92dda83f5d84781fc362", size = 65898, upload-time = "2026-10-02T22:06:57.863Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/ce/48/32583066b155bb5d4507e7887dc88ee23118cc4de8e2a12870c49719e2a8/mcp_types-2.3.0-py3-none-any.whl", hash = "sha256:968efdbdaedfab06adae40d378a34395f1090c5921d4be3c9cde283aaf76d91d", size = 69108, upload-time = "2026-10-02T22:06:54.099Z" },
 ]
 
 [[package]]
