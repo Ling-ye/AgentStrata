@@ -96,6 +96,11 @@ Gateway 群共享历史保存完整的用户与助手正文，不再在写入时
 留在客户端，动作经现有 MCP 和工具权限机制执行。播放反馈只记录客户端呈现事实，不改变
 AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[Live2D 接入](../guides/live2d.md)。
 
+`integrations/live2d_generator` 是独立资产制作插件，通过图片/拆层服务和自动绑定器输出
+标准模型包，不参与 AgentRuntime 或 Gateway 回合。生成结果由维护者显式导入停止的
+VTuber 客户端，模型和动作白名单保存在客户端持久数据目录；导入不修改 Agent 身份或
+模型连接。职责与交付边界见[生成规格](../../specs/live2d-generation/spec.md)。
+
 ## 外部软件插件管理
 
 `agentstrata plugin list/install/doctor/start/stop/uninstall` 是维护者显式调用的运维入口。

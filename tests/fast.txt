@@ -121,3 +121,4 @@ tests/unit/test_console_schedules.py
 tests/unit/test_weixin_channel.py
 tests/unit/test_weixin_console.py
 tests/unit/test_weixin_gateway_integration.py
+tests/unit/test_live2d_generation.py

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build and verify the independently distributed first-party VTuber plugin."""
+"""Build and verify explicitly catalogued first-party plugin distributions."""
 from __future__ import annotations
 
 import argparse
@@ -33,18 +33,31 @@ RESOURCES = {"upstream.json", "artifacts.json", "requirements.lock", "build.lock
              "examples/bot/response-style.md", "config.example.json", ".env.example"}
 
 
+GENERATOR_RESOURCES = {"config.example.json", "isekaijoucho.example.json", ".env.example",
+                       "requirements.lock", "build.lock", "index.html", "app.js", "style.css"}
+
+
+def layout(source: Path) -> tuple[str, set[str], set[str], str]:
+    if source.name == "open_llm_vtuber":
+        return PACKAGE, LEGAL, RESOURCES, "agentstrata-vtuber = agentstrata_vtuber.manage:main"
+    if source.name == "live2d_generator":
+        return "agentstrata_live2d", {"LICENSE", "COPYRIGHT", "NOTICE.md"}, GENERATOR_RESOURCES, "agentstrata-live2d = agentstrata_live2d.cli:main"
+    raise VerificationError("Unknown first-party plugin source")
+
+
 def source_files(source: Path) -> dict[str, bytes]:
+    package, legal, required_resources, _ = layout(source)
     project = tomllib.loads((source / "pyproject.toml").read_text())["project"]
-    if set(project["license-files"]) != LEGAL:
+    if set(project["license-files"]) != legal:
         raise VerificationError("Plugin legal file contract is incomplete")
-    files = {str(p.relative_to(source)): p.read_bytes() for p in (source / PACKAGE).rglob("*")
+    files = {str(p.relative_to(source)): p.read_bytes() for p in (source / package).rglob("*")
              if p.is_file() and "__pycache__" not in p.parts and p.suffix != ".pyc"}
     for name in ("pyproject.toml", "README.md", *project["license-files"]):
         files[name] = (source / name).read_bytes()
-    resources = {p for p in files if p.startswith(PACKAGE + "/") and not p.endswith(".py")}
-    if resources != {f"{PACKAGE}/resources/{p}" for p in RESOURCES}:
+    resources = {p for p in files if p.startswith(package + "/") and not p.endswith(".py")}
+    if resources != {f"{package}/resources/{p}" for p in required_resources}:
         raise VerificationError("Plugin deployment resources contain missing or unexpected files")
-    for name in ("Open-LLM-VTuber-LICENSE.txt", "Open-LLM-VTuber-Web-LICENSE.txt"):
+    for name in sorted(legal & {"Open-LLM-VTuber-LICENSE.txt", "Open-LLM-VTuber-Web-LICENSE.txt"}):
         if files[name] != (source.parents[1] / "third_party" / name).read_bytes():
             raise VerificationError("Plugin upstream license differs from the reviewed copy")
     if files["LICENSE"] != (source.parents[1] / "LICENSE").read_bytes():
@@ -64,6 +77,7 @@ def check_metadata(payload: bytes, project: dict) -> None:
 
 
 def verify(wheel: Path, sdist: Path, *, source: Path) -> None:
+    package, _, _, entry_point = layout(source)
     files = source_files(source)
     project = tomllib.loads(files["pyproject.toml"].decode())["project"]
     stem = project["name"].replace("-", "_") + "-" + project["version"]
@@ -76,7 +90,7 @@ def verify(wheel: Path, sdist: Path, *, source: Path) -> None:
             _validate_member_path(member.filename, archive_label="plugin wheel")
             _validate_zip_member(member)
         names = frozenset(v.filename for v in archive.infolist() if not v.is_dir())
-        expected = {p: v for p, v in files.items() if p.startswith(PACKAGE + "/")}
+        expected = {p: v for p, v in files.items() if p.startswith(package + "/")}
         expected.update({info + "/licenses/" + n: files[n] for n in project["license-files"]})
         allowed = set(expected) | {info + "/" + n for n in (
             "METADATA", "WHEEL", "RECORD", "entry_points.txt", "top_level.txt")}
@@ -88,7 +102,7 @@ def verify(wheel: Path, sdist: Path, *, source: Path) -> None:
                 raise VerificationError("Plugin wheel content differs: " + name)
         check_metadata(archive.read(info + "/METADATA"), project)
         if archive.read(info + "/entry_points.txt").decode() != (
-                "[console_scripts]\nagentstrata-vtuber = agentstrata_vtuber.manage:main\n"):
+                "[console_scripts]\n" + entry_point + "\n"):
             raise VerificationError("Plugin entry point differs")
         _validate_wheel_record(archive, file_names=names, record_path=info + "/RECORD")
     with tarfile.open(sdist) as archive:
@@ -125,7 +139,8 @@ def build(source: Path, output: Path) -> tuple[Path, Path]:
             path.write_bytes(payload)
         _run_checked((sys.executable, "-m", "build", "--no-isolation", "--sdist", "--wheel",
                       "--outdir", str(output.resolve())), cwd=copy, label="plugin build")
-    wheels, sdists = list(output.glob("agentstrata_open_llm_vtuber-*.whl")), list(output.glob("agentstrata_open_llm_vtuber-*.tar.gz"))
+    stem = tomllib.loads((source / "pyproject.toml").read_text())["project"]["name"].replace("-", "_")
+    wheels, sdists = list(output.glob(stem + "-*.whl")), list(output.glob(stem + "-*.tar.gz"))
     if len(wheels) != 1 or len(sdists) != 1:
         raise VerificationError("Expected one plugin wheel and sdist")
     verify(wheels[0], sdists[0], source=source)
@@ -170,15 +185,19 @@ def rebuild_and_probe(wheel: Path, sdist: Path, *, normal_install: bool) -> None
         # Dependency installation and server boot are exercised by the 3.12 compatibility job.
         _run_checked((str(python), "-m", "pip", "install", "--no-index", "--no-deps", str(wheel.resolve())),
                      cwd=root, env=env, label="plugin wheel installation")
-        _run_checked((str(python), "-c", "from agentstrata_vtuber.resources import artifact_lock, resource; "
-                      "assert artifact_lock()['backend']['sha256']; "
-                      "assert resource('patches/frontend.patch').read_text()"),
+        probe = ("from agentstrata_vtuber.resources import artifact_lock, resource; "
+                 "assert artifact_lock()['backend']['sha256']; assert resource('patches/frontend.patch').read_text()"
+                 if "open_llm_vtuber" in wheel.name else
+                 "from importlib.resources import files; from agentstrata_live2d.config import Config; "
+                 "assert Config().port == 12394; assert files('agentstrata_live2d').joinpath('resources/index.html').read_text()")
+        _run_checked((str(python), "-c", probe),
                      cwd=root, env=env, label="installed plugin resources")
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--source-root", type=Path, default=ROOT)
+    parser.add_argument("--plugin", choices=("open-llm-vtuber", "live2d-generator"), default="open-llm-vtuber")
     parser.add_argument("--output", type=Path)
     parser.add_argument("--wheel", type=Path)
     parser.add_argument("--sdist", type=Path)
@@ -187,7 +206,7 @@ def main() -> int:
     args = parser.parse_args()
     if args.reproducible:
         os.environ.setdefault("SOURCE_DATE_EPOCH", "315532800")
-    source = args.source_root.resolve() / PLUGIN
+    source = args.source_root.resolve() / "integrations" / args.plugin.replace("-", "_")
     try:
         if args.output:
             wheel, sdist = build(source, args.output)

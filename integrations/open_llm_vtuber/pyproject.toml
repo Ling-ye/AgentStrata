@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentstrata-open-llm-vtuber"
-version = "0.2.1"
+version = "0.3.0"
 description = "Optional dialogue and avatar adapter for Open-LLM-VTuber"
 license = "AGPL-3.0-only"
 license-files = ["LICENSE", "COPYRIGHT", "NOTICE.md", "Open-LLM-VTuber-LICENSE.txt", "Open-LLM-VTuber-Web-LICENSE.txt"]

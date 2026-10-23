@@ -166,3 +166,13 @@ the unmodified package declaration and standard MIT reference terms, and does
 not invent a copyright year or claim an original notice was supplied. The
 production build's `third-party-packages.json` allows checking its absence from
 emitted browser modules. See [reviewed sources](third_party/license_sources.json).
+
+## Optional Live2D generator
+
+The optional [generator](integrations/live2d_generator/README.md) installs image2live2d at
+714e7cc9191f1ef6c9a1732c80e8b566ec127d6b with SHA256-pinned dependencies. It does not embed
+upstream source, Cubism SDK, weights, official character artwork or generated models in
+its wheel. The upstream repository declares Apache-2.0; its moc3 codec documents the
+OpenL2D/moc3ingbird format research (FDPL). Preserve its original notices and consult its
+Live2D target notes. See-through is a separately configured provider. Software, inference
+service, model and character-asset terms remain separate; see the plugin [notice](integrations/live2d_generator/NOTICE.md).

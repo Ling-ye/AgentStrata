@@ -53,7 +53,9 @@ uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 完整公开历史扫描、Python 3.13 的 `python` 门禁，以及 Node 22 的 `console` 门禁。
 Python 使用固定 uv 版本和 `uv sync --locked`；前端使用 `npm ci`。VTuber 使用单独的 Python 3.12 job，运行
 `scripts/check_vtuber_compat.py` 检查插件发行资源、固定上游补丁、前端构建和替代语音/Agent
-的真实接口，不取得模型凭据。该检查本地使用同一脚本，不能替代真实语音和模型验收。
+的真实接口，不取得模型凭据。相同 Python 3.12 job 通过 `scripts/check_live2d_generator.py` 安装独立生成器并用
+合成分层素材导出真实 moc3；不调用绘图/拆层服务，不证明真实角色质量或 Cubism SDK 加载。
+这些检查本地使用同一脚本，不能替代真实语音和模型验收。
 前端检查通过 Vite runner 在内存加载配置，避免向 Harness 的只读依赖目录写入配置 bundle；
 本地 `file:` 包在隔离验证中映射到候选源码，Node 使用调用方已选择的可执行文件。
 `--keep-going` 收集各检查的失败，但最终退出码仍然失败。

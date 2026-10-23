@@ -57,6 +57,7 @@ logs/
 *.lock
 !uv.lock
 !integrations/open_llm_vtuber/agentstrata_vtuber/resources/*.lock
+!integrations/live2d_generator/agentstrata_live2d/resources/*.lock
 
 # 本地环境变量 / 凭证（禁止提交）
 .env

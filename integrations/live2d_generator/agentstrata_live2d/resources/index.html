@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <meta name="generator-token" content="__SESSION_TOKEN__" />
+    <title>Live2D Studio · AgentStrata</title>
+    <link rel="stylesheet" href="/assets/style.css" />
+    <script src="/assets/app.js" defer></script>
+  </head>
+  <body>
+    <header>
+      <a class="brand" href="/">A<span class="brand-dot">·</span></a>
+      <div>
+        <b>Live2D Studio</b><span class="subtitle">AgentStrata / 角色工坊</span>
+      </div>
+      <span class="local">● 本地工作台</span>
+    </header>
+    <main>
+      <section class="intro">
+        <p class="eyebrow">FROM AN IDEA TO A CHARACTER</p>
+        <h1>让你的角色，开始呼吸。</h1>
+        <p>
+          描述一个形象，上传一张立绘，或带来已经分好的图层。<br />生成可接入
+          AgentStrata 的 Live2D 模型。
+        </p>
+      </section>
+      <div id="notice" role="status" class="notice" hidden></div>
+      <div class="workspace">
+        <section class="card input-card">
+          <div class="card-heading">
+            <span class="step-number">01</span>
+            <h2>定义角色</h2>
+            <button id="example" class="text-button" type="button">
+              填入参考示例 ↗
+            </button>
+          </div>
+          <form id="form">
+            <label for="name">角色名称</label
+            ><input
+              id="name"
+              maxlength="80"
+              value="我的新角色"
+              required
+              autocomplete="off"
+            />
+            <label for="prompt">描述你心中的形象</label
+            ><textarea
+              id="prompt"
+              maxlength="12000"
+              rows="5"
+              placeholder="银白长发，灰绿色眼睛，白色与明黄色的服装。安静、温柔，带一点异世界的神秘感……"
+            ></textarea>
+            <details>
+              <summary>补充角色资料 <span>可选</span></summary>
+              <label for="information">JSON 文本键值表</label
+              ><textarea
+                id="information"
+                rows="3"
+                placeholder='{"性格":"温柔", "服装":"白色长外套"}'
+              ></textarea>
+            </details>
+            <label for="file"
+              >参考图片或分层素材 <span class="optional">可选</span></label
+            ><label class="upload" for="file"
+              ><svg viewBox="0 0 24 24" aria-hidden="true">
+                <path d="M12 16V4m-4 4 4-4 4 4M4 15v5h16v-5" /></svg
+              ><strong id="file-label">选择一份素材</strong
+              ><span>PNG / JPG / WebP / PSD / 图层 ZIP · 最大 48 MiB</span
+              ><input
+                id="file"
+                type="file"
+                accept=".png,.jpg,.jpeg,.webp,.psd,.zip"
+            /></label>
+            <button id="clear-file" type="button" class="text-button" hidden>
+              移除素材
+            </button>
+            <label class="checkbox"
+              ><input
+                id="redraw"
+                type="checkbox"
+              />依据提示词重新绘制参考图片</label
+            >
+            <p class="hint">
+              直接上传图片时保留原图并自动拆层。PSD / ZIP 会直接进入模型绑定。
+            </p>
+            <button id="generate" class="primary" type="submit">
+              生成 Live2D <span>→</span>
+            </button>
+            <p id="provider" class="provider">正在读取服务配置…</p>
+          </form>
+        </section>
+        <section class="card result-card">
+          <div class="card-heading">
+            <span class="step-number">02</span>
+            <h2>角色与模型</h2>
+            <span id="badge" class="badge">等待创作</span>
+          </div>
+          <div id="preview-stage" class="preview-stage">
+            <div id="empty" class="empty">
+              <div class="orb">✦</div>
+              <h3>故事从这里开始</h3>
+              <p>你的角色将在这里出现</p>
+            </div>
+            <img id="preview" alt="生成角色的静态合成预览" hidden /><span
+              class="preview-caption"
+              >静态合成预览 · 动画请在 Live2D 客户端中查看</span
+            >
+          </div>
+          <div class="result-footer">
+            <h3 id="result-title">尚未开始生成</h3>
+            <ol id="stages" class="stages">
+              <li data-stage="illustration">立绘</li>
+              <li data-stage="decomposition">拆层</li>
+              <li data-stage="rigging">绑定</li>
+              <li data-stage="validation">校验</li>
+              <li data-stage="packaging">打包</li>
+            </ol>
+            <p id="result-message" class="hint">
+              自动模型包含网格、基础表情、动作及物理参数，可继续精修。
+            </p>
+            <div class="actions">
+              <button id="download" class="primary" type="button" hidden>
+                下载模型包 ↓</button
+              ><button id="cancel" class="secondary" type="button" hidden>
+                取消生成
+              </button>
+            </div>
+            <p id="import-help" class="hint" hidden>
+              接入已有客户端：先停止 open-llm-vtuber，再使用
+              <code
+                >agentstrata-live2d install --bundle 模型.zip --vtuber-root
+                插件目录</code
+              >，然后启动客户端。
+            </p>
+          </div>
+        </section>
+      </div>
+      <section class="history">
+        <div class="history-heading">
+          <h2>最近的创作</h2>
+          <span>结果保存在本机</span>
+        </div>
+        <div id="jobs" class="jobs"><p class="hint">暂无生成记录</p></div>
+      </section>
+      <footer>
+        生成器独立于 AgentRuntime · 自动绑定初稿 · 图片仅发送给已配置服务<br /><a
+          id="source-link"
+          href="/legal"
+          >许可与源码 · AGPL-3.0-only</a
+        ><span id="source-status"></span>
+      </footer>
+    </main>
+  </body>
+</html>

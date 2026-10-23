@@ -96,6 +96,8 @@ jobs:
             --require-hashes --only-binary=:all: --requirement requirements/release-build.txt
       - name: Verify installed plugin and pinned upstream without model credentials
         run: python scripts/check_vtuber_compat.py
+      - name: Verify independent Live2D generator without model credentials
+        run: python scripts/check_live2d_generator.py
 
   console:
     name: Console

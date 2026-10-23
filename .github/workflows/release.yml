@@ -139,6 +139,8 @@ jobs:
             --require-hashes --only-binary=:all: --requirement requirements/release-build.txt
       - name: Verify installed plugin and pinned upstream
         run: python scripts/check_vtuber_compat.py
+      - name: Verify independent Live2D generator without model credentials
+        run: python scripts/check_live2d_generator.py
 
   build:
     name: Build hermetic release candidate
@@ -296,12 +298,13 @@ jobs:
           cmp "release-build-a/${wheels_a[0]}" "release-bundle/${wheels_a[0]}"
           cmp "release-build-a/${sdists_a[0]}" "release-bundle/${sdists_a[0]}"
           python scripts/plugin_artifacts.py --output release-bundle --reproducible
+          python scripts/plugin_artifacts.py --plugin live2d-generator --output release-bundle --reproducible
           cp /tmp/release-notes.md release-bundle/RELEASE_NOTES.md
           printf '\n<!-- agentstrata-release-run:%s -->\n' \
             "$GITHUB_RUN_ID" >> release-bundle/RELEASE_NOTES.md
           (
             cd release-bundle
-            sha256sum agentstrata-* agentstrata_open_llm_vtuber-* RELEASE_NOTES.md > SHA256SUMS
+            sha256sum agentstrata-* agentstrata_open_llm_vtuber-* agentstrata_live2d_generator-* RELEASE_NOTES.md > SHA256SUMS
           )
       - name: Upload verified release candidate
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -312,6 +315,8 @@ jobs:
             release-bundle/agentstrata-*.tar.gz
             release-bundle/agentstrata_open_llm_vtuber-*.whl
             release-bundle/agentstrata_open_llm_vtuber-*.tar.gz
+            release-bundle/agentstrata_live2d_generator-*.whl
+            release-bundle/agentstrata_live2d_generator-*.tar.gz
             release-bundle/SHA256SUMS
             release-bundle/RELEASE_NOTES.md
           if-no-files-found: error
@@ -381,6 +386,12 @@ jobs:
           test "${#plugin_sdists[@]}" -eq 1
           python scripts/plugin_artifacts.py \
             --wheel "${plugin_wheels[0]}" --sdist "${plugin_sdists[0]}" --normal-install
+          mapfile -t generator_wheels < <(find release-test-copy -maxdepth 1 -type f -name 'agentstrata_live2d_generator-*.whl')
+          mapfile -t generator_sdists < <(find release-test-copy -maxdepth 1 -type f -name 'agentstrata_live2d_generator-*.tar.gz')
+          test "${#generator_wheels[@]}" -eq 1
+          test "${#generator_sdists[@]}" -eq 1
+          python scripts/plugin_artifacts.py --plugin live2d-generator \
+            --wheel "${generator_wheels[0]}" --sdist "${generator_sdists[0]}" --normal-install
 
   release:
     name: Attest and create draft release
@@ -433,6 +444,7 @@ jobs:
           subject-path: |
             release-bundle/agentstrata-*
             release-bundle/agentstrata_open_llm_vtuber-*
+            release-bundle/agentstrata_live2d_generator-*
             release-bundle/SHA256SUMS
             release-bundle/RELEASE_NOTES.md
       - name: Reverify tag and create draft GitHub release
@@ -459,6 +471,7 @@ jobs:
           gh release create "$RELEASE_TAG" \
             release-bundle/agentstrata-* \
             release-bundle/agentstrata_open_llm_vtuber-* \
+            release-bundle/agentstrata_live2d_generator-* \
             release-bundle/SHA256SUMS \
             release-bundle/RELEASE_NOTES.md \
             --draft \

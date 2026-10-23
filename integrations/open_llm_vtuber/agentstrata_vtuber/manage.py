@@ -49,6 +49,9 @@ def installation_checks(request: dict) -> dict:
     AdapterConfig.load(root / "config/adapter.json", environment)
     load_botspec(root / "config/bot.yaml")
     checks["configuration"] = bool(environment.get("CHATCOPILOT_SOURCE_URL"))
+    from .assets import runtime_assets
+    runtime_assets(root)
+    checks["model_assets"] = True
     return {"ok": all(checks.values()), "checks": checks}
 
 
@@ -106,7 +109,9 @@ def load_upstream(request: dict):
     """Resolve the installed upstream; never search an AgentStrata checkout."""
     from chatcopilot.core.settings import load_local_env_values
     root = Path(request["root"])
+    from .assets import runtime_assets
     os.environ.update(load_local_env_values(root / "config/runtime.env", expand_home=True))
+    os.environ.update(runtime_assets(root))
     backend = root / "runtime/apps/backend"
     os.chdir(backend)
     sys.path[:0] = [str(backend / "src"), str(backend)]

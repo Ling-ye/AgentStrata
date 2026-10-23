@@ -1002,3 +1002,18 @@ def test_apache_license_host_is_exactly_allowed():
     checker = _load_checker()
     assert not checker._scan_uri_candidate('http://www.apache.org/licenses/LICENSE-2.0', path='LICENSE.txt', line_number=1)
     assert checker._scan_uri_candidate('https://' + 'www.apache.org.other.tld/key', path='LICENSE.txt', line_number=1)
+
+
+def test_live2d_sources_are_exact_public_integrations():
+    checker = _load_checker()
+    for url in (
+        "https://github.com/Wzhang3912/image2live2d",
+        "https://github.com/shitagaki-lab/see-through",
+        "https://kamitsubaki.jp/artist/isekaijoucho/",
+        "https://ja.wikipedia.org/wiki/ヰ世界情緒",
+    ):
+        assert checker.scan_text(url, path="README.md") == []
+    unreviewed = "https://github.com/Wzhang3912/" + "unreviewed-project"
+    assert "unexpected-code-repository" in {
+        finding.rule for finding in checker.scan_text(unreviewed, path="README.md")
+    }

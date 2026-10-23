@@ -1,0 +1,17 @@
+AgentStrata
+Copyright (C) 2026 Lingye
+Contact: 616202172@qq.com
+
+AgentStrata's original source code and documentation are licensed under the GNU
+Affero General Public License, version 3 only (SPDX: AGPL-3.0-only). The complete
+license is in LICENSE. Contributors retain copyright in their contributions.
+
+Third-party code, data, adapted documents and independently licensed integration
+patches retain their original licenses and notices. See THIRD_PARTY_NOTICES.md
+and THIRD_PARTY_LICENSES.txt. In particular, the Open-LLM-VTuber frontend patch
+is governed separately by its upstream license and is not relicensed as AGPL.
+
+This change does not revoke MIT permissions already granted for earlier
+published versions. The transition is recorded in CHANGELOG.md and the commit
+introducing this notice. The first applicable release is recorded when released;
+no commit identifier or release version is assigned here in advance.

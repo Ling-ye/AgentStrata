@@ -120,6 +120,13 @@ def main() -> int:
                 cwd=ROOT, check=False,
             ).returncode
 
+        if status == 0:
+            status = subprocess.run(
+                (sys.executable, str(ROOT / "scripts/plugin_artifacts.py"), "--plugin", "live2d-generator",
+                 "--source-root", str(ROOT), "--output", str(output_dir / "generator")),
+                cwd=ROOT, check=False,
+            ).returncode
+
     changed = _changed_paths(before, _snapshot(paths))
     if changed:
         print("distribution build modified tracked files:", file=sys.stderr)

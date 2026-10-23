@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools==83.0.0", "wheel==0.47.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agentstrata-live2d-generator"
+version = "0.1.0"
+description = "Independent prompt, image and layered-art to Live2D asset production plugin"
+readme = "README.md"
+license = "AGPL-3.0-only"
+license-files = ["LICENSE", "COPYRIGHT", "NOTICE.md"]
+authors = [{name = "Lingye", email = "616202172@qq.com"}]
+requires-python = ">=3.12,<3.13"
+dependencies = ["fastapi>=0.141,<1", "uvicorn>=0.52,<1", "httpx>=0.28,<1", "Pillow>=12,<14",
+                "numpy>=2,<3", "psd-tools>=1.26,<2", "gradio-client>=2.7,<3", "PyYAML>=6,<7",
+                "image2live2d @ https://github.com/Wzhang3912/image2live2d/archive/714e7cc9191f1ef6c9a1732c80e8b566ec127d6b.tar.gz"]
+
+[project.scripts]
+agentstrata-live2d = "agentstrata_live2d.cli:main"
+
+[project.urls]
+Repository = "https://github.com/Ling-ye/AgentStrata"
+
+[tool.setuptools.package-data]
+agentstrata_live2d = ["resources/*.json", "resources/*.in", "resources/*.lock", "resources/.env.example",
+                    "resources/*.html", "resources/*.css", "resources/*.js"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["agentstrata_live2d*"]

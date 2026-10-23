@@ -54,6 +54,15 @@ diff --git a/src/open_llm_vtuber/server.py b/src/open_llm_vtuber/server.py
          self.default_context_cache = (
              default_context_cache or ServiceContext()
          )  # Use provided context or initialize a new empty one waiting to be loaded
+@@ -120,7 +123,7 @@
+         # Mount static files with CORS-enabled handlers
+         self.app.mount(
+             "/live2d-models",
+-            CORSStaticFiles(directory="live2d-models"),
++            CORSStaticFiles(directory=os.environ.get("AGENTSTRATA_VTUBER_MODELS", "live2d-models")),
+             name="live2d-models",
+         )
+         self.app.mount(
 diff --git a/src/open_llm_vtuber/service_context.py b/src/open_llm_vtuber/service_context.py
 --- a/src/open_llm_vtuber/service_context.py
 +++ b/src/open_llm_vtuber/service_context.py
@@ -106,7 +115,17 @@ diff --git a/src/open_llm_vtuber/service_context.py b/src/open_llm_vtuber/servic
  
          # init agent from character config
          await self.init_agent(
-@@ -391,6 +400,7 @@
+@@ -314,7 +323,8 @@
+     def init_live2d(self, live2d_model_name: str) -> None:
+         logger.info(f"Initializing Live2D: {live2d_model_name}")
+         try:
+-            self.live2d_model = Live2dModel(live2d_model_name)
++            self.live2d_model = Live2dModel(live2d_model_name, model_dict_path=os.environ.get(
++                "AGENTSTRATA_VTUBER_MODEL_DICT", "model_dict.json"))
+             self.character_config.live2d_model_name = live2d_model_name
+         except Exception as e:
+             logger.critical(f"Error initializing Live2D: {e}")
+@@ -391,6 +401,7 @@
                  tool_manager=self.tool_manager,
                  tool_executor=self.tool_executor,
                  mcp_prompt_string=self.mcp_prompt,

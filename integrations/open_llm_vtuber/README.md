@@ -23,8 +23,12 @@
 默认 AGPL 授权；收费访问/托管、商业重分发/改名及商业嵌入须取得上游规定的商业授权。
 完整原文、固定 revision 与后端 MIT 声明见[第三方声明](../../THIRD_PARTY_NOTICES.md)。
 
-插件版本为 `0.2.1`，受管环境固定 Python 3.12，支持声明为 `>=3.12,<3.13`。
+插件版本为 `0.3.0`，受管环境固定 Python 3.12，支持声明为 `>=3.12,<3.13`。
 prepare 声明一个 `main` 可观测 Agent，由管理器登记后供 Console 只读发现；登记接口见
 [插件规格](../../specs/external-software-plugins/spec.md#可观测-agent-登记)。
 构建检查使用 `scripts/plugin_artifacts.py`；wheel/sdist 携带本目录的 LICENSE、COPYRIGHT、
 NOTICE.md 和两份上游许可原文，安装时不依赖源码 checkout。
+
+`assets.py` 将模型和字典保存在 `data/live2d`，运行时通过固定补丁读取该目录。
+模型导入不改写固定上游源码，导入 journal 未恢复时拒绝启动。生成和导入见
+[Live2D 指南](../../docs/guides/live2d.md#生成自己的角色)。

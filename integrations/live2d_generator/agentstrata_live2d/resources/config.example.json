@@ -1,0 +1,11 @@
+{
+  "image_base_url": "",
+  "image_model": "",
+  "image_key_env": "AGENTSTRATA_LIVE2D_IMAGE_KEY",
+  "decompose_url": "",
+  "decompose_space": "",
+  "decompose_key_env": "AGENTSTRATA_LIVE2D_DECOMPOSE_KEY",
+  "resolution": 768,
+  "timeout_seconds": 1800,
+  "port": 12394
+}

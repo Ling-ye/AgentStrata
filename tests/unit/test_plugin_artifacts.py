@@ -14,7 +14,7 @@ def test_plugin_catalog_package_and_resource_locks_agree():
     root = Path(__file__).resolve().parents[2]
     project = tomllib.loads((root / "integrations/open_llm_vtuber/pyproject.toml").read_text())["project"]
     entry = PLUGINS["open-llm-vtuber"]
-    assert entry.version == project["version"] == "0.2.1"
+    assert entry.version == project["version"] == "0.3.0"
     assert project["requires-python"] == ">=3.12,<3.13"
     assert entry.python == "3.12.14"
     lock = artifact_lock()
@@ -59,6 +59,8 @@ def test_deployment_workspace_can_be_bound_by_the_existing_identity_flow(tmp_pat
     templates.mkdir(parents=True)
     (templates / "conf.ZH.default.yaml").write_text(
         "system_config: {}\ncharacter_config:\n  agent_config: {}\n")
+    (backend / "model_dict.json").write_text("[]")
+    (backend / "live2d-models").mkdir()
     model = tmp_path / "model.json"
     model.write_text(json.dumps(test_model_document()))
     request = {"root": str(root), "host": {"python": sys.executable,

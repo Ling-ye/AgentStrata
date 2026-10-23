@@ -16,6 +16,7 @@
 
 ## 待确认的设计条件
 
+- [独立 Live2D 生成插件](live2d-generation/spec.md)：多模态输入、模型资产交付及独立于 AgentRuntime 的生成流程。
 - [外部软件插件与受管部署](external-software-plugins/spec.md)：固定版本自动安装、独立发行与部署验收。
 
 - [独立交互客户端与角色适配](interactive-client/spec.md)：独立客户端宿主及可选 Live2D Bridge；真实语音与角色交互需独立验收。

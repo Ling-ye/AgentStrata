@@ -4,8 +4,13 @@ import os
 from pathlib import Path
 
 PLUGINS = {
+    "live2d-generator": PluginDefinition(
+        id="live2d-generator", package="agentstrata-live2d-generator", version="0.1.0",
+        module="agentstrata_live2d.manage", python="3.12.14",
+        description="Prompt, image or layered artwork to Live2D models; independent asset studio",
+    ),
     "open-llm-vtuber": PluginDefinition(
-        id="open-llm-vtuber", package="agentstrata-open-llm-vtuber", version="0.2.1",
+        id="open-llm-vtuber", package="agentstrata-open-llm-vtuber", version="0.3.0",
         module="agentstrata_vtuber.manage", python="3.12.14",
         description="Live2D browser, text/push-to-talk dialogue, speech and avatar actions",
         requires_agent=True,

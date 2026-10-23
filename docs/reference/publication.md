@@ -65,7 +65,7 @@ Gitleaks 的私有主机规则只匹配有合法左边界的主机，敏感查�
 正常安装探针选择主包已声明的 `acp` extra，覆盖评测模块导入所需的 ACP 接口；
 不取得模型凭据或调用模型。无依赖安装探针继续独立验证包内资源和基础 CLI。
 
-可选 VTuber 插件独立构建 wheel/sdist，由 `scripts/plugin_artifacts.py` 严格比对包身份、
+可选 VTuber 与 Live2D 生成插件分别独立构建 wheel/sdist，由 `scripts/plugin_artifacts.py` 严格比对包身份、
 部署资源和法律文件，并从 sdist 重建。插件与主包分别验证，同入 Release 的 checksum
 和 attestation；安装器从匹配 Release 获取，不引入 PyPI 发布。插件下载的第三方软件和
 依赖留在用户目录，其固定来源、摘要及原始许可随安装记录和下载内容保留。

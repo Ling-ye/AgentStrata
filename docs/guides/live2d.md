@@ -131,3 +131,119 @@ python scripts/check_vtuber_compat.py
 
 真实验收单独覆盖多轮文字、按键录音、TTS、口型、表情、动作、停止及断线恢复，记录模型
 与音频设备。录音文件输入、模拟浏览器回执和实体麦克风/扬声器应分别报告。
+
+## 生成自己的角色
+
+`live2d-generator` 是独立的资产制作插件，默认工作台端口为 `12394`，不需要 Agent 模型绑定。
+生成器与对话执行解耦；绘图、拆层使用单独配置的服务，自动绑定在 CPU 上完成。
+
+```bash
+agentstrata plugin install live2d-generator
+```
+
+未发布的源码候选与客户端一样使用 `--artifacts`、`--source-url`。候选包构建与安装验证：
+
+```bash
+python scripts/plugin_artifacts.py --plugin live2d-generator --output /tmp/live2d-artifacts
+python scripts/check_live2d_generator.py
+```
+
+两条命令使用 Python 3.12 及仓库声明的构建依赖。构建输出只包含插件 wheel/sdist；受管
+安装的 `--artifacts` 目录还须包含匹配的主包 wheel 和 `SHA256SUMS`。第二条命令在独立
+环境安装主包与插件，验证合成分层素材到真实模型包，不调用图片服务或下载 GPU 权重。
+
+安装后打开终端输出的工作台地址，填写名称、提示词或角色资料，也可上传图片、PSD 或
+PNG 图层 ZIP。资料使用 JSON 文本键值表。示例按钮填入ヰ世界情緒的外观描述及用户提供的
+[官方参考](https://kamitsubaki.jp/artist/isekaijoucho/)，生成结果是参考创作，不是官方模型。
+参考链接只是资料，不会自动抓取网页图片；指定外观参考时应上传图片。
+
+### 配置生成服务
+
+安装目录的 `config/generator.json` 保存非秘密配置，`config/runtime.env` 保存私有凭据。
+受管安装将 `CHATCOPILOT_SOURCE_URL` 写入同一环境文件，工作台页脚和 `/legal` 展示许可
+与运行版本的源码入口；独立 CLI 使用者须自行设置。缺失时明确显示未配置，不能据此通过
+对外部署验收。编辑前停止生成器，编辑后重新启动。完整字段见
+[配置示例](../../integrations/live2d_generator/agentstrata_live2d/resources/config.example.json)。
+
+| 输入 | 所需配置 | 行为 |
+| --- | --- | --- |
+| 提示词 / 资料 | `image_base_url`、`image_model`，以及一个拆层服务 | Images generation → 立绘 → 拆层 → 绑定 |
+| PNG/JPEG/WebP | 一个拆层服务 | 默认保留图片直接拆层 |
+| 图片 + 重新绘制 | 绘图与拆层服务 | Images edit 根据提示词和参考图重绘，再拆层 |
+| PSD / PNG 图层 ZIP | 无图片或拆层服务 | 直接在本地绑定 |
+
+绘图服务实现 [Images API](https://developers.openai.com/api/docs/guides/image-generation) 的
+`POST /images/generations` 和 multipart `POST /images/edits`，返回 `data[0].b64_json`。
+`image_base_url` 包含 API 前缀，例如 `https://api.openai.com/v1`；`image_model` 显式填写
+该服务支持的模型。插件不从 AgentStrata 的聊天模型连接推断图片能力，也不使用聊天订阅
+凭据替代图片 API 凭据。默认凭据变量为 `AGENTSTRATA_LIVE2D_IMAGE_KEY`。
+
+拆层服务二选一，默认均未设置，不会隐式向公共服务上传图片：
+
+- `decompose_url`：See-through HTTP 服务地址，支持 `POST /decompose` → `job_id`、
+  `GET /jobs/{id}` → `queued/running/done/error`、`GET /jobs/{id}/result` → PSD。
+  自托管实现参考 [image2live2d 服务](https://github.com/Wzhang3912/image2live2d/tree/714e7cc9191f1ef6c9a1732c80e8b566ec127d6b/service/seethrough)。
+- `decompose_space`：实现 See-through `/inference` 的 Gradio Space，例如
+  `24yearsold/see-through-demo`。公共演示有配额与可用性限制；只有显式配置后才会上传。
+
+拆层凭据变量为 `AGENTSTRATA_LIVE2D_DECOMPOSE_KEY`：HTTP 使用 `X-Auth-Token`，Space 使用
+指定的 Hugging Face token，不继承本机缓存身份。服务 URL 只接受 HTTPS 或回环 HTTP，
+不得把 token 放在 URL。工作台会显示数据将发送到的服务；参数不能由单次任务更改。
+
+### 模型与质量
+
+模型包包含真实 `.moc3`、`.model3.json`、纹理图集、基础表情、Idle 动作、可用物理和
+`generation.json` 证据清单。文件完整性检查只验证格式、引用和摘要，清单不会自动宣称
+Cubism SDK 加载已通过。工作台展示的是静态合成预览，实际动画在客户端检验。
+
+自动绑定是可继续精修的初稿。正面、完整身体、手臂不遮挡脸部的立绘更适合自动处理；
+三分之二侧脸、复杂遮挡及拆层错误会影响转头、口型或衣物变形。PNG 图层必须使用相同
+画布，文件名为 `00_hair_back.png`、`10_face_base.png`、`11_eye_l.png` 等语义角色；
+ZIP 仅包含一个图层目录。PSD 保留像素图层和原画布，自动识别 See-through 图层名。
+
+输入文件最多 48 MiB，图像/PSD 画布最多 16777216 像素，ZIP 最多 256 个条目及 256 MiB
+展开体积，图层展开像素内存最多 256 MiB。工作台每次只执行一个任务，默认超时 1800 秒，
+可通过 `timeout_seconds` 调整。取消会终止本地工作进程，远端已提交推理可能继续运行。
+重启后的未完成任务标为失败，不自动重复调用收费服务。失败任务保留已生成立绘和阶段，
+可在私有任务目录取出素材后重新提交。
+
+### 导入和恢复
+
+客户端 `0.3.0` 起将模型与字典保存在 `data/live2d`，卸载程序时保留。旧版客户端先停止，
+按新版本安装流程重装。生成完成后显式导入；生成过程不会自动切换正在使用的角色。
+以下以默认插件根目录为例：
+
+```bash
+plugin_root="${XDG_DATA_HOME:-$HOME/.local/share}/agentstrata/plugins"
+generator="$plugin_root/live2d-generator/runtime/venv/bin/agentstrata-live2d"
+agentstrata plugin stop open-llm-vtuber
+"$generator" install --bundle /path/to/model.zip \
+  --vtuber-root "$plugin_root/open-llm-vtuber"
+agentstrata plugin start open-llm-vtuber
+```
+
+使用过 `--root` 或 `AGENTSTRATA_PLUGINS_ROOT` 时将 `plugin_root` 设为对应目录。导入只更新
+模型字典、当前角色显示名和模型动作白名单，保留 BotSpec、对话身份、提示词及模型连接。
+命令返回 `backup` 标识；恢复之前的角色配置：
+
+```bash
+agentstrata plugin stop open-llm-vtuber
+"$generator" restore --backup BACKUP_ID --vtuber-root "$plugin_root/open-llm-vtuber"
+agentstrata plugin start open-llm-vtuber
+```
+
+普通写入失败自动恢复。进程中断留下 `config/pending-model-import.json` 时客户端拒绝启动，
+使用其中的 backup 标识恢复。若配置已被后续编辑，恢复会拒绝覆盖；先人工核对差异。
+恢复保留导入模型，备份和任务没有自动清理策略，由安装者管理私有数据目录。
+
+也可直接使用 CLI：
+
+```bash
+"$generator" generate --config "$plugin_root/live2d-generator/config/generator.json" \
+  --root "$plugin_root/live2d-generator/data/jobs" --name "我的角色" \
+  --input /path/to/character.psd
+```
+
+同一任务目录不能同时运行工作台和 CLI 生成，请先停止工作台，或为 CLI 选择独立目录。
+模块职责见[生成器包](../../integrations/live2d_generator/README.md)，设计见
+[生成规格](../../specs/live2d-generation/spec.md)。

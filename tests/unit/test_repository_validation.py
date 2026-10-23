@@ -191,13 +191,16 @@ def test_ci_vtuber_uses_shared_script_without_credentials_or_path_filters():
     job = workflow["jobs"]["vtuber-compatibility"]
     assert job["name"] == "VTuber Python 3.12"
     assert next(s for s in job["steps"] if "setup-python@" in s.get("uses", ""))["with"]["python-version"] == "3.12"
-    assert job["steps"][-1]["run"] == "python scripts/check_vtuber_compat.py"
+    run_commands = {step.get("run") for step in job["steps"]}
+    assert "python scripts/check_vtuber_compat.py" in run_commands
+    assert "python scripts/check_live2d_generator.py" in run_commands
     assert all("if" not in s for s in job["steps"])
     assert "secrets." not in str(job)
     events = workflow.get("on", workflow.get(True))
     assert all("paths" not in str(event) for event in events.values())
     release = yaml.safe_load((ROOT / ".github/workflows/release.yml").read_text())
-    assert release["jobs"]["verify-vtuber"]["steps"][-1]["run"] == job["steps"][-1]["run"]
+    release_commands = {step.get("run") for step in release["jobs"]["verify-vtuber"]["steps"]}
+    assert {"python scripts/check_vtuber_compat.py", "python scripts/check_live2d_generator.py"} <= release_commands
     assert "verify-vtuber" in release["jobs"]["build"]["needs"]
 
 

@@ -56,6 +56,8 @@ def _persistent_link(path: Path, target: Path) -> None:
 
 def configure(request: dict, sources: dict[str, Path]) -> dict:
     root = Path(request["root"])
+    from .assets import prepare_assets
+    prepare_assets(root, sources["backend"])
     config = private_directory(root / "config")
     data = private_directory(root / "data")
     host, options = request["host"], request["options"]
