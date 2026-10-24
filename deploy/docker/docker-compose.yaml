@@ -42,7 +42,7 @@ services:
 
   # ---------- Xiaohongshu (browser-backed, account state, single concurrency)
   xiaohongshu-mcp:
-    image: xpzouying/xiaohongshu-mcp:v1.2.6@sha256:59fa30292e0c994cb2267c2d16b4ec119af800287a735c7386de1cd9c755bc6d
+    image: xpzouying/xiaohongshu-mcp:v2.5.0@sha256:88e2603f324f567e0a254ed7a1e24d632a16eccc30e84ef3fb887e34a03d0fe3
     container_name: chatcopilot-xiaohongshu-mcp
     profiles: [experience]
     init: true
