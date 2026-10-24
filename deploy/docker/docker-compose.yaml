@@ -8,7 +8,7 @@
 services:
   # ---------- SearXNG no-key web/image search engine -------------------------
   searxng:
-    image: searxng/searxng:latest@sha256:f4c8e59de166ed71f6380c0847c312ca51f0d41996e31d0559163b6b09ecde52
+    image: searxng/searxng:latest@sha256:b36af7984b87191b595bc5301418ed6432c047668a4547ab531a7439b816fac3
     container_name: chatcopilot-searxng
     profiles: [search]
     init: true
