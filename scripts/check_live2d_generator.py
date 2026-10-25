@@ -46,9 +46,29 @@ def probe(request: dict) -> None:
             model = json.loads(archive.read("avatar.model3.json"))
             assert model["FileReferences"]["Motions"]["Idle"]
             assert model["FileReferences"]["Expressions"]
+        assert state.get("character_version") == 1, state
+        characters = runtime.characters
+        role = characters.get(state["character_id"])
+        assert role["draft_jobs"] == [state["id"]]
+        details = role["draft"] | {"author": "Example", "license": "Synthetic acceptance fixture only",
+                                  "source": "image2live2d sample layers"}
+        characters.save_draft(role["id"], details)
+        second = characters.save_version(role["id"], 1)
+        assert second["version"] == 2
+        preset = root / "data/acceptance-preset.zip"
+        characters.export(role["id"], 2, preset)
+        backup = root / "data/acceptance-backup"
+        characters.backup(backup)
+        from agentstrata_live2d.runtime import character_services
+        restored, _ = character_services(root / "data/restored/jobs")
+        assert restored.restore(backup)["restored"] == [role["id"]]
+        assert restored.get(role["id"])["versions"] == [1, 2]
+        imported, _ = character_services(root / "data/imported/jobs")
+        assert imported.import_preset(preset)["version"] == 2
+        assert imported.get(role["id"])["read_only"]
         forbidden = {"chatcopilot.agent", "chatcopilot.gateway", "agentstrata_vtuber"}
         assert not any(module in sys.modules for module in forbidden)
-    print("Installed generator: real synthetic layer-to-moc3 package verified; no SDK or image-service claim")
+    print("Installed generator: real synthetic moc3, character revisions, preset and backup roundtrip verified; no SDK or image-service claim")
 
 
 def main() -> int:

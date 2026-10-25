@@ -5,7 +5,7 @@ from pathlib import Path
 
 PLUGINS = {
     "live2d-generator": PluginDefinition(
-        id="live2d-generator", package="agentstrata-live2d-generator", version="0.1.0",
+        id="live2d-generator", package="agentstrata-live2d-generator", version="0.2.3",
         module="agentstrata_live2d.manage", python="3.12.14",
         description="Prompt, image or layered artwork to Live2D models; independent asset studio",
     ),

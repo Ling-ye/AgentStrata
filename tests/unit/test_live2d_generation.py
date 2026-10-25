@@ -463,3 +463,46 @@ def test_source_notice_exposes_no_credential_url(monkeypatch):
     monkeypatch.setenv('CHATCOPILOT_SOURCE_URL', 'https://' + 'user:' + 'secret' + '@example.com/source')
     assert not source_notice()['source_configured']
     assert 'secret' not in json.dumps(source_notice())
+
+
+@pytest.mark.parametrize("side", ["l", "r"])
+def test_psd_eye_order_keeps_iris_visible_and_preserves_hair_occlusion(side):
+    from types import SimpleNamespace
+    from integrations.live2d_generator.agentstrata_live2d.rigging import order_eye_layers
+    Image = pytest.importorskip("PIL.Image")
+    white = Image.new("RGBA", (5, 5), "white")
+    pupil = Image.new("RGBA", (5, 5))
+    pupil.putpixel((2, 2), (110, 70, 40, 255))
+    lashes = Image.new("RGBA", (5, 5))
+    lashes.putpixel((2, 0), (0, 0, 0, 255))
+    hair = Image.new("RGBA", (5, 5))
+    hair.putpixel((4, 2), (200, 180, 80, 255))
+    def layer(role, order, image):
+        return SimpleNamespace(semantic_role=SimpleNamespace(value=role), draw_order=order, image=image)
+    layers = [layer(f"eye_{side}", 1, lashes), layer(f"pupil_{side}", 2, pupil),
+              layer(f"eye_white_{side}", 3, white), layer("hair_front", 4, hair)]
+    def render():
+        image = Image.new("RGBA", (5, 5))
+        for part in sorted(layers, key=lambda part: part.draw_order):
+            image.alpha_composite(part.image)
+        return image
+    assert render().getpixel((2, 2)) == (255, 255, 255, 255)
+    order_eye_layers(SimpleNamespace(layers=layers))
+    result = render()
+    assert result.getpixel((2, 2)) == (110, 70, 40, 255)
+    assert result.getpixel((2, 0)) == (0, 0, 0, 255)
+    assert result.getpixel((4, 2)) == (200, 180, 80, 255)
+    assert layers[-1].draw_order == 4
+
+
+@pytest.mark.parametrize("missing", ["eye_white_l", "pupil_l"])
+def test_psd_eye_order_preserves_incomplete_and_already_ordered_eyes(missing):
+    from types import SimpleNamespace
+    from integrations.live2d_generator.agentstrata_live2d.rigging import order_eye_layers
+    values = [("pupil_l", 1), ("eye_l", 3), ("eye_white_l", 4),
+              ("eye_white_r", 10), ("pupil_r", 11), ("eye_r", 12), ("accessory", 5)]
+    layers = [SimpleNamespace(semantic_role=SimpleNamespace(value=role), draw_order=order)
+              for role, order in values if role != missing]
+    before = [part.draw_order for part in layers]
+    order_eye_layers(SimpleNamespace(layers=layers))
+    assert [part.draw_order for part in layers] == before

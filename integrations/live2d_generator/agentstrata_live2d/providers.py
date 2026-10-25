@@ -102,6 +102,46 @@ class SeeThroughHTTP:
                 raise GenerationError("拆层服务返回无效协议数据") from None
 
 
+def space_failure(exc: Exception, *, authenticated: bool, key_env: str,
+                  connected: bool = True) -> GenerationError:
+    """Project known service failures without exposing remote HTML, URLs or credentials."""
+    message = str(exc)
+    lower = message.lower()
+    status = getattr(getattr(exc, "response", None), "status_code", None)
+    if "quota" in lower and ("gpu" in lower or "exceeded" in lower):
+        amounts = re.search(r"(\d{1,8}(?:\.\d{1,3})?)s requested vs\.?\s*(\d{1,8}(?:\.\d{1,3})?)s left", message, re.I)
+        delay = re.search(r"try again in\s+(\d{1,3}):([0-5]\d):([0-5]\d)", message, re.I)
+        seconds = sum(int(part) * scale for part, scale in zip(delay.groups(), (3600, 60, 1))) if delay else None
+        detail = f"（本次申请 {amounts[1]} 秒，当前剩余 {amounts[2]} 秒）" if amounts else ""
+        action = ("当前为匿名调用；可在生成器 config/runtime.env 配置 " + key_env +
+                  " 后重启，使用自己的 Hugging Face 账户配额。") if not authenticated else (
+                  "已配置 Hugging Face 凭据，请检查该账户的可用额度。")
+        return GenerationError("See-through Space 的 ZeroGPU 配额不足" + detail + "。" + action +
+            "也可按服务建议稍后手动重试；本次请求不会自动重复提交。",
+            code="space_quota_exhausted", retry_after_seconds=seconds)
+    if type(exc).__name__ == "AuthenticationError" or status in {401, 403}:
+        action = "凭据无效或没有该 Space 的访问权限" if authenticated else "尚未配置 Hugging Face 访问凭据"
+        return GenerationError(f"See-through Space 认证失败：{action}；检查 {key_env} 后重启生成器。",
+                               code="space_auth_failed")
+    if status == 429:
+        return GenerationError("See-through Space 请求被限流，请稍后手动重试；不会自动重复提交。",
+                               code="space_rate_limited")
+    if isinstance(exc, (TimeoutError, httpx.TimeoutException)):
+        if not connected:
+            return GenerationError("连接 See-through Space 时超时；尚未上传图片或提交拆层任务。",
+                                   code="space_timeout")
+        return GenerationError("See-through Space 请求超时；远端任务可能仍在执行，请先确认服务状态再重试。",
+                               code="space_timeout")
+    if isinstance(exc, httpx.NetworkError) or status in {404, 502, 503, 504}:
+        return GenerationError("无法连接 See-through Space，或服务尚未就绪；请检查配置的 Space 页面后重试。",
+                               code="space_unavailable")
+    if "api_name" in lower or type(exc).__name__ == "SerializationSetupError":
+        return GenerationError("See-through Space 的 /inference 接口不匹配；请检查服务是否仍使用约定的拆层接口。",
+                               code="space_protocol_error")
+    return GenerationError("See-through Space 远端执行失败；服务未提供可安全展示的具体原因，请检查 Space 页面。",
+                           code="space_execution_failed")
+
+
 class SeeThroughSpace:
     def __init__(self, config: Config):
         self.config = config
@@ -114,7 +154,8 @@ class SeeThroughSpace:
         client = None
         try:
             client = Client(self.config.decompose_space, token=token, verbose=False,
-                            download_files=False, analytics_enabled=False)
+                            download_files=False, analytics_enabled=False,
+                            httpx_kwargs={"timeout": self.config.timeout_seconds})
             job = client.submit(handle_file(str(image)), self.config.resolution, 42, True,
                                 api_name="/inference")
             try:
@@ -125,6 +166,10 @@ class SeeThroughSpace:
             except BaseException:
                 job.cancel()
                 raise
+            if (not isinstance(result, (list, tuple)) or not result or not isinstance(result[0], dict)
+                    or not isinstance(result[0].get("url"), str)):
+                raise GenerationError("See-through Space 没有返回有效的 PSD 下载地址；请检查拆层接口。",
+                                      code="space_protocol_error")
             url = result[0]["url"]
             target, origin = urlsplit(url), urlsplit(client.src)
             if (target.scheme != "https" or target.netloc != origin.netloc
@@ -136,8 +181,9 @@ class SeeThroughSpace:
                 destination.write_bytes(response_bytes(http, "GET", url))
         except GenerationError:
             raise
-        except Exception:
-            raise GenerationError("See-through Space 调用失败；检查服务可用性、GPU 配额及凭据") from None
+        except Exception as exc:
+            raise space_failure(exc, authenticated=bool(token), key_env=self.config.decompose_key_env,
+                                connected=client is not None) from None
         finally:
             if client is not None:
                 client.close()

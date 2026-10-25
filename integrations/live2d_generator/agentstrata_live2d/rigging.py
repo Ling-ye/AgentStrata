@@ -11,6 +11,20 @@ from .types import GenerationError, MAX_EXPANDED, MAX_FILES, MAX_PIXELS
 REVISION = "714e7cc9191f1ef6c9a1732c80e8b566ec127d6b"
 
 
+def order_eye_layers(stack) -> None:
+    """Keep a PSD iris above its eye white and below its lashes, without moving other parts."""
+    for side in ("l", "r"):
+        rank = {f"eye_white_{side}": 0, f"pupil_{side}": 1, f"eye_{side}": 2}
+        eyes = sorted((layer for layer in stack.layers if layer.semantic_role.value in rank),
+                      key=lambda layer: layer.draw_order)
+        roles = {layer.semantic_role.value for layer in eyes}
+        if not {f"eye_white_{side}", f"pupil_{side}"}.issubset(roles):
+            continue
+        orders = [layer.draw_order for layer in eyes]
+        for layer, order in zip(sorted(eyes, key=lambda layer: rank[layer.semantic_role.value]), orders):
+            layer.draw_order = order
+
+
 def prepare_layers(source: Path, work: Path):
     from image2live2d.core import decompose
 
@@ -42,7 +56,9 @@ def prepare_layers(source: Path, work: Path):
     if (len(layers) > MAX_FILES or len(layers) * width * height * 4 > MAX_EXPANDED
             or any(p.width * p.height > MAX_PIXELS for p in layers)):
         raise GenerationError("PSD 图层数量或尺寸超限")
-    return decompose.from_psd(source, work), work
+    stack = decompose.from_psd(source, work)
+    order_eye_layers(stack)
+    return stack, work
 
 
 class AutomaticRigger:

@@ -18,6 +18,11 @@ TERMINAL = {"completed", "failed", "cancelled"}
 class GenerationError(ValueError):
     """A public, credential-free diagnostic suitable for the workbench."""
 
+    def __init__(self, message: str, *, code: str | None = None, retry_after_seconds: int | None = None):
+        super().__init__(message)
+        self.code = code
+        self.retry_after_seconds = retry_after_seconds
+
 
 class Cancelled(GenerationError):
     pass

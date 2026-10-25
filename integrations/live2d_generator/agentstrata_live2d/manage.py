@@ -27,7 +27,7 @@ def prepare(request: dict) -> dict:
     target = root / "config/generator.json"
     config = Config.load(target) if target.is_file() else Config.parse(request.get("options", {}))
     require_free_port(config.port)
-    for folder in ("config", "data/jobs", "logs", "runtime"):
+    for folder in ("config", "data/jobs", "data/characters", "logs", "runtime"):
         private_directory(root / folder)
     lock = resource("requirements.lock")
     digest = hashlib.sha256(lock.read_bytes()).hexdigest()

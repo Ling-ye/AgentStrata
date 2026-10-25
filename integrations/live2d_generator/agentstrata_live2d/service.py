@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 import json
 import time
@@ -76,6 +77,11 @@ class GenerationService:
             state.update(status="cancelled", error=str(exc))
         except GenerationError as exc:
             state.update(status="failed", error=str(exc))
+            if exc.code:
+                state["error_code"] = exc.code
+            if exc.retry_after_seconds is not None:
+                state["retry_at"] = datetime.fromtimestamp(
+                    time.time() + exc.retry_after_seconds, timezone.utc).isoformat()
         except Exception as exc:
             # Provider/library exceptions may contain credentials, URLs or source image contents.
             state.update(status="failed", error=f"{state['stage']} 阶段失败（{type(exc).__name__}）")

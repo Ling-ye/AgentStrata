@@ -14,12 +14,15 @@ from .types import GenerationError, GenerationRequest, TERMINAL
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="agentstrata-live2d")
     commands = parser.add_subparsers(dest="operation", required=True)
-    for name in ("serve", "generate"):
+    for name in ("serve", "generate", "retry"):
         command = commands.add_parser(name)
         command.add_argument("--config", type=Path, required=True)
         command.add_argument("--root", type=Path, required=True, help="Private generation job directory")
+        if name == "retry":
+            command.add_argument("--job", required=True, help="使用已保存输入创建新的重试任务")
         if name == "generate":
             command.add_argument("--name", required=True)
+            command.add_argument("--character-id", help="将生成结果保存为已有角色的新版本")
             command.add_argument("--prompt", default="")
             command.add_argument("--information", type=Path, help="JSON text fields describing the character")
             command.add_argument("--input", type=Path)
@@ -31,6 +34,8 @@ def main(argv: list[str] | None = None) -> int:
             command.add_argument("--bundle", type=Path, required=True)
         else:
             command.add_argument("--backup", required=True)
+    from .character_cli import add_commands
+    add_commands(commands)
     child = commands.add_parser("_worker", help=argparse.SUPPRESS)
     child.add_argument("--root", type=Path, required=True)
     child.add_argument("--job", required=True)
@@ -38,7 +43,10 @@ def main(argv: list[str] | None = None) -> int:
     try:
         if args.operation == "_worker":
             return worker(args.root, args.job)
-        if args.operation in {"install", "restore"}:
+        if args.operation == "characters":
+            from .character_cli import run
+            result = run(args)
+        elif args.operation in {"install", "restore"}:
             from .install import install_bundle, restore_bundle
             result = (install_bundle(args.bundle, args.vtuber_root) if args.operation == "install"
                       else restore_bundle(args.vtuber_root, args.backup))
@@ -49,11 +57,14 @@ def main(argv: list[str] | None = None) -> int:
                 from .web import create_app
                 uvicorn.run(create_app(runtime), host="127.0.0.1", port=runtime.config.port, log_level="warning")
                 return 0
-            request = GenerationRequest.parse({"name": args.name, "prompt": args.prompt,
-                "information": json.loads(args.information.read_text()) if args.information else {},
-                "redraw": args.redraw})
             with runtime:
-                state = runtime.start(request, args.input)
+                if args.operation == "retry":
+                    state = runtime.retry(args.job)
+                else:
+                    request = GenerationRequest.parse({"name": args.name, "prompt": args.prompt,
+                        "information": json.loads(args.information.read_text()) if args.information else {},
+                        "redraw": args.redraw})
+                    state = runtime.start(request, args.input, character_id=args.character_id)
                 identifier, last_stage = state["id"], ""
                 while state["status"] not in TERMINAL:
                     if state["stage"] != last_stage:

@@ -26,6 +26,12 @@
         </p>
       </section>
       <div id="notice" role="status" class="notice" hidden></div>
+      <nav class="studio-tabs" aria-label="角色工坊导航">
+        <button type="button" data-view="generation" aria-current="page">创作</button>
+        <button type="button" data-view="library">我的角色</button>
+        <button type="button" data-view="presets">预设目录</button>
+      </nav>
+      <div id="generation-view">
       <div class="workspace">
         <section class="card input-card">
           <div class="card-heading">
@@ -36,6 +42,8 @@
             </button>
           </div>
           <form id="form">
+            <label for="generation-character">保存到角色</label>
+            <select id="generation-character"><option value="">新建角色</option></select>
             <label for="name">角色名称</label
             ><input
               id="name"
@@ -119,9 +127,12 @@
             <p id="result-message" class="hint">
               自动模型包含网格、基础表情、动作及物理参数，可继续精修。
             </p>
+            <p id="retry-advice" class="hint" hidden></p>
             <div class="actions">
+              <button id="retry-job" class="secondary" type="button" hidden>使用已保存输入重试</button>
               <button id="download" class="primary" type="button" hidden>
                 下载模型包 ↓</button
+              ><button id="collect-job" class="secondary" type="button" hidden>收录到角色库</button
               ><button id="cancel" class="secondary" type="button" hidden>
                 取消生成
               </button>
@@ -142,6 +153,56 @@
           <span>结果保存在本机</span>
         </div>
         <div id="jobs" class="jobs"><p class="hint">暂无生成记录</p></div>
+      </section>
+      </div>
+      <section id="library-view" hidden>
+        <div class="section-heading"><div><h2>我的角色</h2><p class="hint">原稿和历史版本保存在本机。任务清理不会删除已收录角色。</p></div>
+          <button id="new-character" class="primary" type="button">新建角色</button></div>
+        <div class="library-layout">
+          <aside><div id="characters" class="character-list"></div>
+            <label for="preset-upload">导入完整角色预设</label><input id="preset-upload" type="file" accept=".zip" />
+            <p class="hint">模型、人设、声音一起导入。下载的预设可创建本地副本后编辑。</p>
+          </aside>
+          <section class="card character-editor">
+            <p id="character-status" class="hint">选择一个角色，或先新建角色。</p>
+            <div class="character-preview"><img id="character-preview" alt="角色版本静态预览" hidden /></div>
+            <label for="character-version">查看版本</label><select id="character-version" disabled></select>
+            <form id="character-form">
+              <fieldset id="character-fields" disabled>
+                <label for="character-name">名称</label><input id="character-name" maxlength="80" required />
+                <label for="character-description">简介</label><textarea id="character-description" rows="2" maxlength="12000"></textarea>
+                <label for="character-identity">身份与人设</label><textarea id="character-identity" rows="4" maxlength="12000" placeholder="角色是谁、性格与相处方式"></textarea>
+                <label for="character-style">表达风格</label><textarea id="character-style" rows="3" maxlength="12000" placeholder="语气、语言和表达习惯"></textarea>
+                <label for="character-voice">Edge TTS 音色</label><input id="character-voice" value="zh-CN-XiaoxiaoNeural" required />
+                <details><summary>作者、许可与来源 <span>导出预设时填写</span></summary>
+                  <label for="character-author">作者</label><input id="character-author" maxlength="12000" />
+                  <label for="character-license">许可</label><input id="character-license" maxlength="12000" placeholder="例如 CC BY 4.0，或仅限个人使用" />
+                  <label for="character-source">来源说明</label><textarea id="character-source" rows="2" maxlength="12000"></textarea>
+                </details>
+                <div class="actions"><button id="save-draft" class="secondary" type="submit">保存草稿</button>
+                  <button id="save-version" class="primary" type="button">保存新版本</button></div>
+                <label for="model-upload">为此角色导入模型 ZIP</label><input id="model-upload" type="file" accept=".zip" />
+              </fieldset>
+            </form>
+            <div class="actions version-actions">
+              <button id="fork-character" class="secondary" type="button" disabled>创建本地副本</button>
+              <button id="export-character" class="secondary" type="button" disabled>导出预设</button>
+              <button id="apply-character" class="primary" type="button" disabled>应用此版本</button>
+            </div>
+            <p class="hint">应用前先停止 Live2D 客户端，完成后再启动。应用使用已保存版本；聊天与记忆继续由原 Agent 管理。</p>
+            <details><summary>撤回应用与工程备份</summary>
+              <label for="application-backup">应用备份 ID</label><input id="application-backup" autocomplete="off" />
+              <button id="restore-application" class="secondary" type="button">恢复应用前配置</button>
+              <p class="hint">完整原稿与整库搬家使用 CLI 的 characters backup / restore；预设导出只携带成品资料，不包含原稿和生成记录。</p>
+            </details>
+          </section>
+        </div>
+      </section>
+      <section id="presets-view" hidden>
+        <div class="section-heading"><div><h2>预设目录</h2><p id="catalog-status" class="hint">从本机缓存读取目录。</p></div>
+          <button id="refresh-catalog" class="secondary" type="button">刷新目录</button></div>
+        <p class="hint">模型按需下载，版本更新由你选择。私有仓库的访问凭据仅在本机配置。</p>
+        <div id="presets" class="preset-grid"></div>
       </section>
       <footer>
         生成器独立于 AgentRuntime · 自动绑定初稿 · 图片仅发送给已配置服务<br /><a

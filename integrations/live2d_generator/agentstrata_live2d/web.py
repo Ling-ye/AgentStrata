@@ -52,6 +52,10 @@ def create_app(runtime: JobRuntime) -> FastAPI:
     async def missing(request, exc):
         return JSONResponse({"error": "任务或产物不存在"}, status_code=404)
 
+    @app.exception_handler(OSError)
+    async def io_failure(request, exc):
+        return JSONResponse({"error": "文件操作失败；检查本机目录权限和可用空间"}, status_code=400)
+
     @app.get("/")
     def index():
         html = files(__package__).joinpath("resources/index.html").read_text(encoding="utf-8")
@@ -86,7 +90,7 @@ def create_app(runtime: JobRuntime) -> FastAPI:
                 return JSONResponse({"error": "请求体积超限（文件最多 48 MiB）"}, status_code=413)
         try:
             payload = json.loads(body)
-            if not isinstance(payload, dict) or set(payload) - {"request", "input"}:
+            if not isinstance(payload, dict) or set(payload) - {"request", "input", "character_id"}:
                 raise GenerationError("请求字段无效")
             value = GenerationRequest.parse(payload["request"])
             upload = payload.get("input")
@@ -103,7 +107,7 @@ def create_app(runtime: JobRuntime) -> FastAPI:
                         raise GenerationError("文件为空或超过 48 MiB")
                     source = Path(temporary) / ("input" + suffix)
                     source.write_bytes(data)
-                return runtime.start(value, source)
+                return runtime.start(value, source, character_id=payload.get("character_id"))
         except (ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, GenerationError):
                 raise
@@ -112,6 +116,10 @@ def create_app(runtime: JobRuntime) -> FastAPI:
     @app.get("/api/jobs/{identifier}")
     def job(identifier: str):
         return runtime.get(identifier)
+
+    @app.post("/api/jobs/{identifier}/retry")
+    def retry(identifier: str):
+        return runtime.retry(identifier)
 
     @app.post("/api/jobs/{identifier}/cancel")
     def cancel(identifier: str):
@@ -123,4 +131,6 @@ def create_app(runtime: JobRuntime) -> FastAPI:
         return FileResponse(path, media_type="image/png" if artifact == "preview.png" else "application/zip",
                             filename=None if artifact == "preview.png" else f"live2d-{identifier[:8]}.zip")
 
+    from .character_web import register
+    register(app, runtime)
     return app

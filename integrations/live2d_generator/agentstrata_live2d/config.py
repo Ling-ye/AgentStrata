@@ -70,6 +70,8 @@ class Config:
                 "image_service": self.image_base_url,
                 "decompose_service": self.decompose_url or self.decompose_space,
                 "image_key_configured": bool(os.environ.get(self.image_key_env)),
+                "decompose_provider": "space" if self.decompose_space else "http" if self.decompose_url else "",
+                "decompose_key_configured": bool(os.environ.get(self.decompose_key_env)),
                 "timeout_seconds": self.timeout_seconds}
 
 

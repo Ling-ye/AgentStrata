@@ -19,9 +19,10 @@ from .repository import extract_zip, private_directory, relative_file, validate_
 from .types import GenerationError, job_id
 
 CONFIG_FILES = ("data/live2d/model_dict.json", "config/adapter.json", "config/upstream.yaml")
+CHARACTER_CONFIG_FILES = (*CONFIG_FILES, "config/identity.md", "config/response-style.md")
 
 
-def _check_target(root: Path) -> dict:
+def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> dict:
     if root.resolve() != root or not root.is_dir():
         raise GenerationError("目标必须是现有插件安装的绝对路径，不得包含符号链接")
     record = json.loads(relative_file(root, "installation.json").read_text())
@@ -36,7 +37,7 @@ def _check_target(root: Path) -> dict:
             or {s.get("name") for s in services if isinstance(s, dict)} != {"client", "gateway"}
             or any(type(s.get("port")) is not int or not 1 <= s["port"] <= 65535 for s in services)):
         raise GenerationError("客户端服务登记不完整")
-    for relative in CONFIG_FILES:
+    for relative in config_files:
         path = relative_file(root, relative)
         info = path.stat()
         if info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
@@ -76,10 +77,30 @@ def target_lock(root: Path):
 
 
 def install_bundle(bundle: Path, root: Path) -> dict:
+    return _install(bundle, root)
+
+
+def install_character(bundle: Path, details: dict, root: Path, *, identifier: str, version: int) -> dict:
+    from .character_types import character_id, profile, revision_number
+    identifier, version = character_id(identifier), revision_number(version)
+    result = _install(bundle, root, details=profile(details))
+    return result | {"character_id": identifier, "version": version}
+
+
+def _install(bundle: Path, root: Path, *, details: dict | None = None) -> dict:
     root = root.expanduser().absolute()
     with target_lock(root):
-        record = _check_target(root)
+        config_files = CHARACTER_CONFIG_FILES if details is not None else CONFIG_FILES
+        record = _check_target(root, config_files)
         require_stopped(root, record)
+        if details is not None:
+            bot = yaml.safe_load(relative_file(root, "config/bot.yaml").read_text())
+            prompts = bot.get("prompts", {}) if isinstance(bot, dict) else {}
+            if (prompts.get("schema_version") != 2 or prompts.get("identity") != "identity.md"
+                    or prompts.get("response_style") != "response-style.md"):
+                raise GenerationError("客户端人设文件绑定已修改，请先恢复标准 identity/style 绑定")
+            if not details["identity"].strip():
+                raise GenerationError("应用角色前请填写身份描述并保存版本")
         journal = root / "config/pending-model-import.json"
         if journal.exists():
             raise GenerationError("存在中断的模型导入，请先执行 restore 恢复备份")
@@ -89,38 +110,55 @@ def install_bundle(bundle: Path, root: Path) -> dict:
             metadata = validate_bundle(extracted)
             name = "generated-" + hashlib.sha256(bundle.read_bytes()).hexdigest()[:16]
             target = relative_file(root, "data/live2d/models/" + name)
-            if target.exists():
-                raise GenerationError("该模型已导入；如需恢复角色配置，请使用备份恢复命令")
+            reused = target.exists()
+            if reused:
+                if details is None:
+                    raise GenerationError("该模型已导入；如需恢复角色配置，请使用备份恢复命令")
+                if validate_bundle(target)["sha256"] != metadata["sha256"]:
+                    raise GenerationError("已安装模型内容与当前版本不一致")
             dictionary = json.loads((root / CONFIG_FILES[0]).read_text())
-            if not isinstance(dictionary, list) or any(item.get("name") == name for item in dictionary):
-                raise GenerationError("客户端模型清单无效或名称重复")
+            if not isinstance(dictionary, list) or any(not isinstance(item, dict) for item in dictionary):
+                raise GenerationError("客户端模型清单无效")
+            existing = [item for item in dictionary if item.get("name") == name]
+            if len(existing) > 1 or (existing and (not reused or existing[0].get("url") !=
+                    f"/live2d-models/{name}/{metadata['model']}")):
+                raise GenerationError("客户端模型清单名称重复或引用不一致")
             display_name = name
             manifest = extracted / "generation.json"
             if manifest.is_file():
                 candidate = json.loads(manifest.read_text()).get("name")
                 if isinstance(candidate, str) and 0 < len(candidate) <= 80:
                     display_name = candidate
+            if details is not None:
+                display_name = details["name"]
             expression_names = metadata["expressions"]
             # The upstream emotion mapper consumes expression indices.
             neutral = expression_names.get("neutral", 0)
             emotions = {key: expression_names.get(key, neutral) for key in
                         ("neutral", "joy", "sadness", "surprise", "anger", "fear", "disgust", "smirk")} if expression_names else {}
-            dictionary.append({"name": name, "description": display_name,
-                "url": f"/live2d-models/{name}/{metadata['model']}", "kScale": 0.5,
-                "initialXshift": 0, "initialYshift": 0, "kXOffset": 0,
-                "idleMotionGroupName": "Idle", "emotionMap": emotions, "tapMotions": {}})
+            if not existing:
+                dictionary.append({"name": name, "description": display_name,
+                    "url": f"/live2d-models/{name}/{metadata['model']}", "kScale": 0.5,
+                    "initialXshift": 0, "initialYshift": 0, "kXOffset": 0,
+                    "idleMotionGroupName": "Idle", "emotionMap": emotions, "tapMotions": {}})
             adapter = json.loads((root / CONFIG_FILES[1]).read_text())
             adapter.update(model_name=name, expressions=expression_names, motions=metadata["motions"])
             upstream = yaml.safe_load((root / CONFIG_FILES[2]).read_text())
             upstream["character_config"].update(live2d_model_name=name, character_name=display_name)
+            if details is not None:
+                tts = upstream["character_config"].setdefault("tts_config", {})
+                tts["tts_model"] = "edge_tts"
+                tts.setdefault("edge_tts", {})["voice"] = details["voice"]["voice"]
             values = [json.dumps(dictionary, ensure_ascii=False, indent=2).encode(),
                       json.dumps(adapter, ensure_ascii=False, indent=2).encode(),
                       yaml.safe_dump(upstream, allow_unicode=True, sort_keys=False).encode()]
+            if details is not None:
+                values.extend([details["identity"].encode(), details["response_style"].encode()])
             backup_id = uuid4().hex
             backup = private_directory(root / "data/live2d/backups" / backup_id)
             before = {}
             after = {}
-            for relative, value in zip(CONFIG_FILES, values, strict=True):
+            for relative, value in zip(config_files, values, strict=True):
                 original = (root / relative).read_bytes()
                 write_bytes(backup / relative, original)
                 before[relative] = hashlib.sha256(original).hexdigest()
@@ -130,16 +168,17 @@ def install_bundle(bundle: Path, root: Path) -> dict:
             write_json(journal, {"backup": backup_id})
             try:
                 private_directory(target.parent)
-                extracted.rename(target)
-                for relative, value in zip(CONFIG_FILES, values, strict=True):
+                if not reused:
+                    extracted.rename(target)
+                for relative, value in zip(config_files, values, strict=True):
                     write_bytes(root / relative, value)
                 journal.unlink()
             except BaseException:
                 # Keep the journal if recovery itself fails; the client refuses startup while pending.
-                for relative in CONFIG_FILES:
+                for relative in config_files:
                     write_bytes(root / relative, (backup / relative).read_bytes())
                 journal.unlink()
-                if target.exists():
+                if not reused and target.exists():
                     shutil.rmtree(target)
                 raise
             return {"model": name, "name": display_name, "backup": backup_id,
@@ -153,10 +192,14 @@ def restore_bundle(root: Path, identifier: str) -> dict:
         require_stopped(root, record)
         backup = relative_file(root, "data/live2d/backups/" + job_id(identifier))
         receipt = json.loads((backup / "receipt.json").read_text())
-        if receipt.get("root") != str(root) or set(receipt.get("before", {})) != set(CONFIG_FILES):
+        config_files = tuple(receipt.get("before", {}))
+        if (receipt.get("root") != str(root) or set(config_files) not in (
+                set(CONFIG_FILES), set(CHARACTER_CONFIG_FILES))
+                or set(receipt.get("after", {})) != set(config_files)):
             raise GenerationError("备份身份不匹配")
+        _check_target(root, config_files)
         originals = {}
-        for relative in CONFIG_FILES:
+        for relative in config_files:
             payload = relative_file(backup, relative).read_bytes()
             current = hashlib.sha256((root / relative).read_bytes()).hexdigest()
             if (hashlib.sha256(payload).hexdigest() != receipt["before"][relative]

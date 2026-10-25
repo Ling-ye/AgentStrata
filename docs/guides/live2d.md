@@ -157,6 +157,10 @@ PNG 图层 ZIP。资料使用 JSON 文本键值表。示例按钮填入ヰ世界
 [官方参考](https://kamitsubaki.jp/artist/isekaijoucho/)，生成结果是参考创作，不是官方模型。
 参考链接只是资料，不会自动抓取网页图片；指定外观参考时应上传图片。
 
+`0.2.0` 起生成任务会先建立角色草稿，成功后复制独立版本到持久角色库；工作台也可选择
+已有本地角色继续生成。保存失败会单独提示并保留任务产物，可手动收录。
+人设、声音、历史版本、完整备份与私有预设目录见[角色预设指南](character-presets.md)。
+
 ### 配置生成服务
 
 安装目录的 `config/generator.json` 保存非秘密配置，`config/runtime.env` 保存私有凭据。
@@ -187,8 +191,17 @@ PNG 图层 ZIP。资料使用 JSON 文本键值表。示例按钮填入ヰ世界
   `24yearsold/see-through-demo`。公共演示有配额与可用性限制；只有显式配置后才会上传。
 
 拆层凭据变量为 `AGENTSTRATA_LIVE2D_DECOMPOSE_KEY`：HTTP 使用 `X-Auth-Token`，Space 使用
-指定的 Hugging Face token，不继承本机缓存身份。服务 URL 只接受 HTTPS 或回环 HTTP，
+指定的 Hugging Face token，不继承本机缓存身份。未配置时是匿名调用，公共 GPU 配额可能
+不足以满足一次拆层申请；登录凭据的存在不等于额度充足，额度仍由 Hugging Face 账户决定。服务 URL 只接受 HTTPS 或回环 HTTP，
 不得把 token 放在 URL。工作台会显示数据将发送到的服务；参数不能由单次任务更改。
+
+`0.2.1` 起工作台会显示匿名调用或凭据已配置状态。Space 配额不足、认证失败、限流、
+连接/超时与接口异常分别报告；配额错误保留服务提供的申请时长、剩余额度和建议重试时间，
+不透传远端错误正文、URL 或凭据。额度由远端服务控制，本地修复不能增加第三方配额。
+
+若要使用自己的 Hugging Face 账户额度，在生成器的私有 `config/runtime.env` 设置
+`AGENTSTRATA_LIVE2D_DECOMPOSE_KEY`，再重启生成器；不在聊天、角色包或源码中填写 token。
+权限应覆盖配置的 Space，配额规则以 [Hugging Face ZeroGPU 文档](https://huggingface.co/docs/hub/spaces-zerogpu)为准。
 
 ### 模型与质量
 
@@ -200,12 +213,20 @@ Cubism SDK 加载已通过。工作台展示的是静态合成预览，实际动
 三分之二侧脸、复杂遮挡及拆层错误会影响转头、口型或衣物变形。PNG 图层必须使用相同
 画布，文件名为 `00_hair_back.png`、`10_face_base.png`、`11_eye_l.png` 等语义角色；
 ZIP 仅包含一个图层目录。PSD 保留像素图层和原画布，自动识别 See-through 图层名。
+`0.2.3` 起 PSD 导入会在每只眼睛已有的层级位置内按“眼白 → 瞳孔 → 睫毛”排序，避免
+瞳孔被眼白遮住；其他部件的层级与遮挡保留。旧角色版本不变，可使用已保存的 PSD 在本地
+重新绑定并保存新版本，无需再次调用拆层服务。
 
 输入文件最多 48 MiB，图像/PSD 画布最多 16777216 像素，ZIP 最多 256 个条目及 256 MiB
 展开体积，图层展开像素内存最多 256 MiB。工作台每次只执行一个任务，默认超时 1800 秒，
-可通过 `timeout_seconds` 调整。取消会终止本地工作进程，远端已提交推理可能继续运行。
+可通过 `timeout_seconds` 调整。`0.2.2` 起 Gradio 的 HTTP 请求也使用该值，避免任务总时限
+尚未耗尽却触发底层默认的 5 秒超时；总时限仍由工作进程监督器执行。连接初始化超时会明确
+说明尚未上传图片；提交后的超时不推断远端任务已停止。取消会终止本地工作进程，远端已提交推理可能继续运行。
 重启后的未完成任务标为失败，不自动重复调用收费服务。失败任务保留已生成立绘和阶段，
-可在私有任务目录取出素材后重新提交。
+可在工作台选择失败/取消的任务，点击“使用已保存输入重试”。这会创建新任务并记录
+`retry_of`，保留原记录及角色关联。拆层失败时复用已生成的立绘，不再次调用绘图服务；
+修正服务配置后重试会使用当前配置，不沿用失败任务的旧服务配置。服务建议的重试时间
+只是提示，不会建立后台自动重试或阻止安装者在更新凭据后手动重试。
 
 ### 导入和恢复
 
@@ -222,7 +243,7 @@ agentstrata plugin stop open-llm-vtuber
 agentstrata plugin start open-llm-vtuber
 ```
 
-使用过 `--root` 或 `AGENTSTRATA_PLUGINS_ROOT` 时将 `plugin_root` 设为对应目录。导入只更新
+使用过 `--root` 或 `AGENTSTRATA_PLUGINS_ROOT` 时将 `plugin_root` 设为对应目录。此模型包导入只更新
 模型字典、当前角色显示名和模型动作白名单，保留 BotSpec、对话身份、提示词及模型连接。
 命令返回 `backup` 标识；恢复之前的角色配置：
 
@@ -244,6 +265,13 @@ agentstrata plugin start open-llm-vtuber
   --input /path/to/character.psd
 ```
 
-同一任务目录不能同时运行工作台和 CLI 生成，请先停止工作台，或为 CLI 选择独立目录。
+失败任务也可通过 CLI 显式重试：
+
+```bash
+"$generator" retry --config "$plugin_root/live2d-generator/config/generator.json" \
+  --root "$plugin_root/live2d-generator/data/jobs" --job FAILED_JOB_ID
+```
+
+同一任务目录不能同时运行工作台和 CLI 生成/重试，请先停止工作台，或为 CLI 选择独立目录。
 模块职责见[生成器包](../../integrations/live2d_generator/README.md)，设计见
 [生成规格](../../specs/live2d-generation/spec.md)。
