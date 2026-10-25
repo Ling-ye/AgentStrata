@@ -45,6 +45,8 @@ def _repository(tmp_path: Path) -> Path:
     source = tmp_path / "source"
     source.mkdir()
     _git(source, "init")
+    # This fixture copies Git metadata; no background writer may outlive a Git command.
+    _git(source, "config", "maintenance.auto", "false")
     _git(source, "config", "user.email", "code-task@example.invalid")
     _git(source, "config", "user.name", "Code Task Test")
     (source / ".gitignore").write_text(
@@ -55,6 +57,25 @@ def _repository(tmp_path: Path) -> Path:
     _git(source, "add", ".gitignore", "tracked.txt")
     _git(source, "commit", "-m", "baseline")
     return source
+
+
+def test_fixture_copy_preserves_worktree_state_without_background_maintenance(tmp_path, monkeypatch):
+    trace = tmp_path / "git-trace.jsonl"
+    monkeypatch.setenv("GIT_TRACE2_EVENT", str(trace))
+    source = _repository(tmp_path)
+    (source / "tracked.txt").write_text("staged\n", encoding="utf-8")
+    _git(source, "add", "tracked.txt")
+    (source / "tracked.txt").write_text("unstaged\n", encoding="utf-8")
+    (source / "untracked.txt").write_text("untracked\n", encoding="utf-8")
+    (source / "ignored.txt").write_text("ignored\n", encoding="utf-8")
+    target = tmp_path / "copy"
+    shutil.copytree(source, target)
+    assert _git(target, "status", "--porcelain=v1") == _git(source, "status", "--porcelain=v1")
+    assert _git(target, "rev-parse", "HEAD") == _git(source, "rev-parse", "HEAD")
+    assert (target / "ignored.txt").read_bytes() == (source / "ignored.txt").read_bytes()
+    events = [json.loads(line) for line in trace.read_text(encoding="utf-8").splitlines()]
+    assert not any(event.get("event") == "child_start" and "maintenance" in event.get("argv", [])
+                   for event in events)
 
 
 def _paths(tmp_path: Path, source: Path) -> runtime.CodeTaskPaths:

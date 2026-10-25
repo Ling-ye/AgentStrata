@@ -30,6 +30,8 @@ def repository(tmp_path):
     root = tmp_path / "original"
     root.mkdir()
     git(root, "init", "-q", "-b", "main")
+    # Metadata snapshots must only observe the explicit writes made by this test.
+    git(root, "config", "maintenance.auto", "false")
     git(root, "config", "user.name", "Test")
     git(root, "config", "user.email", "test@example.com")
     (root / "src").mkdir()

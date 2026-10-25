@@ -393,6 +393,9 @@ def main() -> int:
             combined_output = ""
         else:
             junit = report_dir / f"{index:02d}-pytest.xml" if check.name in {"core tests", "full Python tests"} else None
+            if junit is not None:
+                # A retry in the same report directory must not reuse an older test inventory.
+                junit.unlink(missing_ok=True)
             completed = subprocess.run(
                 (*check.argv, *(("--junitxml=" + str(junit),) if junit else ())),
                 cwd=check.cwd,

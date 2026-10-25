@@ -157,12 +157,12 @@ def test_fast_selection_rejects_invalid_manifest(monkeypatch, tmp_path, selectio
 def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"public-boundary", "python", "console", "vtuber-compatibility", "live2d-desktop"}
+    assert {"public-boundary", "python", "console"}.issubset(workflow["jobs"])
     for name, job in workflow["jobs"].items():
         assert job.get("permissions", workflow["permissions"]) == {"contents": "read"}
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["with"]["persist-credentials"] is False
-        assert job["runs-on"] == ("windows-2025" if name == "live2d-desktop" else "ubuntu-24.04")
+        assert job["runs-on"].startswith("windows-" if name == "live2d-desktop" else "ubuntu-")
         assert "continue-on-error" not in job
         for step in job["steps"]:
             if "uses" in step:
@@ -171,8 +171,12 @@ def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
     job = workflow["jobs"]["public-boundary"]
     checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
     assert checkout["with"]["fetch-depth"] == 0
-    assert [step["run"] for step in job["steps"] if "run" in step] == [
-        "python scripts/check_public_repo.py --history", "bash scripts/check_secrets.sh history"]
+    commands = "\n".join(step["run"] for step in job["steps"] if "run" in step)
+    assert "scripts/check_public_repo.py --history" in commands
+    assert "scripts/check_secrets.sh history" in commands
+    for identifier in ("public-boundary", "python", "console"):
+        assert "if" not in workflow["jobs"][identifier]
+        assert "needs" not in workflow["jobs"][identifier]
     events = workflow.get("on", workflow.get(True))
     assert {"push", "pull_request", "workflow_dispatch"}.issubset(events)
 
@@ -180,13 +184,13 @@ def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
 def test_ci_console_runs_locked_install_tests_and_build():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     job = workflow["jobs"]["console"]
-    assert [step["run"] for step in job["steps"] if "run" in step] == [
-        "npm ci --prefix console/web",
-        "python3 scripts/check_repo.py console --keep-going",
-    ]
+    commands = "\n".join(step["run"] for step in job["steps"] if "run" in step)
+    assert "npm ci --prefix console/web" in commands
+    assert re.search(r"scripts/check_repo\.py\s+console\b", commands)
+    assert "--report-dir" in commands
 
 
-def test_ci_vtuber_uses_shared_script_without_credentials_or_path_filters():
+def test_ci_extensions_use_shared_checks_and_conservative_scope_outputs():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
     job = workflow["jobs"]["vtuber-compatibility"]
     assert job["name"] == "VTuber Python 3.12"
@@ -194,7 +198,20 @@ def test_ci_vtuber_uses_shared_script_without_credentials_or_path_filters():
     run_commands = {step.get("run") for step in job["steps"]}
     assert "python scripts/check_vtuber_compat.py" in run_commands
     assert "python scripts/check_live2d_generator.py" in run_commands
-    assert all("if" not in s for s in job["steps"])
+    assert job["needs"] == "public-boundary"
+    assert "outputs.vtuber" in job["if"] and "outputs.generator" in job["if"]
+    for key, script in (("vtuber", "check_vtuber_compat.py"), ("generator", "check_live2d_generator.py")):
+        step = next(s for s in job["steps"] if script in s.get("run", ""))
+        assert f"outputs.{key}" in step["if"]
+    windows = workflow["jobs"]["live2d-desktop"]
+    assert windows["needs"] == "public-boundary" and "outputs.desktop" in windows["if"]
+    checks = [s for s in windows["steps"] if "build-windows.ps1" in s.get("run", "")]
+    verify = next(s for s in checks if "-VerifyOnly" in s["run"])
+    package = next(s for s in checks if "-VerifyOnly" not in s["run"])
+    assert "outputs.package != 'true'" in verify["if"]
+    assert "outputs.package == 'true'" in package["if"]
+    scope = next(s for s in workflow["jobs"]["public-boundary"]["steps"] if s.get("id") == "scope")
+    assert "scripts/ci_scope.py" in scope["run"] and "--github-output" in scope["run"]
     assert "secrets." not in str(job)
     events = workflow.get("on", workflow.get(True))
     assert all("paths" not in str(event) for event in events.values())
@@ -223,7 +240,22 @@ def test_ci_python_checks_primary_runtime_with_locked_dependencies():
         "github.event.pull_request.base.sha", "github.event.before", "inputs.docs_base",
     ))
     assert '--docs-base "$DOCS_BASE"' in gate["run"]
-    assert '--keep-going "${doc_args[@]}"' in gate["run"]
+    assert '--keep-going' in gate["run"] and '"${doc_args[@]}"' in gate["run"]
+    assert "--report-dir" in gate["run"]
+    assert "git rev-parse" in gate["run"] and "0000000000000000000000000000000000000000" in gate["run"]
+
+
+def test_ci_summaries_do_not_override_gates_or_upload_private_reports():
+    workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text())
+    for identifier, profile in (("python", "python"), ("console", "console")):
+        steps = workflow["jobs"][identifier]["steps"]
+        gate = next(s for s in steps if re.search(rf"check_repo\.py\s+{profile}\b", s.get("run", "")))
+        assert "if" not in gate and "continue-on-error" not in gate and "|| true" not in gate["run"]
+        summary = next(s for s in steps if "scripts/ci_summary.py" in s.get("run", ""))
+        assert "always()" in summary["if"]
+        assert steps.index(summary) > steps.index(gate)
+    assert not any("upload-artifact" in s.get("uses", "")
+                   for job in workflow["jobs"].values() for s in job["steps"])
 
 
 def test_release_verification_uses_the_same_locked_environment_and_full_gate():
@@ -537,3 +569,19 @@ class TestBehavior(unittest.TestCase):
     record = json.loads((output / 'manifest.json').read_text())['checks'][0]
     assert record['status'] == 'failed'
     assert record['failed_ids'] == ['test_subtest.py::TestBehavior::test_contract']
+
+
+def test_retry_cannot_reuse_an_older_junit_inventory(tmp_path, monkeypatch):
+    import json
+    gate = _load_script("check_repo.py")
+    output = tmp_path / "report"
+    output.mkdir()
+    stale = output / "01-pytest.xml"
+    stale.write_text('<testsuite><testcase classname="old" name="success"/></testsuite>')
+    monkeypatch.setattr(gate, "_profiles", lambda: {"fast": (
+        gate.Check("core tests", (sys.executable, "-c", "raise SystemExit(2)"), cwd=tmp_path),)})
+    monkeypatch.setattr(sys, "argv", ["check_repo.py", "fast", "--report-dir", str(output)])
+    assert gate.main() == 2
+    record = json.loads((output / "manifest.json").read_text())["checks"][0]
+    assert record["status"] == "failed" and "test_inventory" not in record
+    assert not stale.exists()

@@ -32,10 +32,12 @@ Copy-Item "$desktopSource\scripts\build-windows.ps1" "$desktopBuild\build-window
 & "$desktopBuild\build-windows.ps1" -SourceRoot $desktopSource
 ```
 
-脚本依次执行锁定依赖安装、18 项逻辑单测、受控 HTTP 页面 Electron smoke 和 x64
+脚本依次执行锁定依赖安装、逻辑单测、受控 HTTP 页面 Electron smoke 和 x64
 NSIS/ZIP 构建，结果在 `BuildRoot\release`。smoke 使用 Chromium 合成音频设备验证采集、
 隐藏停采和视频拒绝，不访问 WSL，不使用真实角色或实体麦克风。
 `npm start` 启动开发版；`npm run pack` 只构建安装包，不上传或自动更新。
+`build-windows.ps1 -VerifyOnly` 只安装依赖、测试和运行 smoke，不请求安装包或写入新校验和。
+日常 CI 在相关变更时使用该模式；手动完整 CI 和现有本地默认命令仍完整打包。
 安装包使用显式文件清单，排除源码测试、后台、私有角色和配置。发布或本地交付需同时
 提供匹配的完整 AgentStrata 源码快照及依赖锁文件；未经签名的本地测试包不代表商业发行。
 

@@ -1,6 +1,7 @@
 param(
   [string]$SourceRoot = (Split-Path $PSScriptRoot -Parent),
-  [string]$BuildRoot = (Join-Path $env:LOCALAPPDATA 'AgentStrata\build\live2d-desktop')
+  [string]$BuildRoot = (Join-Path $env:LOCALAPPDATA 'AgentStrata\build\live2d-desktop'),
+  [switch]$VerifyOnly
 )
 $ErrorActionPreference = 'Stop'
 if ($BuildRoot.StartsWith('\\')) { throw 'BuildRoot must be on a native Windows drive, not UNC.' }
@@ -24,10 +25,15 @@ Push-Location $BuildRoot
 try {
   $Node = (Get-Command node.exe -ErrorAction Stop).Source
   $Runner = Join-Path $BuildRoot 'scripts\build-native.cjs'
-  $process = Start-Process -FilePath $Node -ArgumentList ('"' + $Runner + '"') -WorkingDirectory $BuildRoot -NoNewWindow -Wait -PassThru
+  $NodeArguments = @('"' + $Runner + '"')
+  if ($VerifyOnly) { $NodeArguments += '--verify-only' }
+  $process = Start-Process -FilePath $Node -ArgumentList $NodeArguments -WorkingDirectory $BuildRoot -NoNewWindow -Wait -PassThru
   if ($process.ExitCode -ne 0) { throw "Desktop build failed: $($process.ExitCode)" }
-  Get-ChildItem release -File | Where-Object Extension -in '.exe','.zip' | Get-FileHash -Algorithm SHA256 |
-    ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
-    Set-Content -Encoding ascii release\SHA256SUMS
+  if (!$VerifyOnly) {
+    Get-ChildItem release -File | Where-Object Extension -in '.exe','.zip' | Get-FileHash -Algorithm SHA256 |
+      ForEach-Object { "$($_.Hash.ToLower())  $([IO.Path]::GetFileName($_.Path))" } |
+      Set-Content -Encoding ascii release\SHA256SUMS
+  }
 } finally { Pop-Location }
-Write-Output "Windows artifacts: $BuildRoot\release"
+if ($VerifyOnly) { Write-Output 'Windows verification complete; installer packaging was not requested.' }
+else { Write-Output "Windows artifacts: $BuildRoot\release" }

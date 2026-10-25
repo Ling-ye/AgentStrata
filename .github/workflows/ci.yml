@@ -21,6 +21,8 @@ concurrency:
 jobs:
   live2d-desktop:
     name: Live2D Windows desktop
+    needs: public-boundary
+    if: ${{ needs.public-boundary.outputs.desktop == 'true' }}
     runs-on: windows-2025
     timeout-minutes: 25
     steps:
@@ -32,7 +34,12 @@ jobs:
           node-version: "24"
           cache: npm
           cache-dependency-path: integrations/live2d_desktop/package-lock.json
+      - name: Test native Electron client
+        if: ${{ needs.public-boundary.outputs.package != 'true' }}
+        shell: pwsh
+        run: ./integrations/live2d_desktop/scripts/build-windows.ps1 -BuildRoot "$env:RUNNER_TEMP\live2d-desktop" -VerifyOnly
       - name: Test native Electron and build local packages
+        if: ${{ needs.public-boundary.outputs.package == 'true' }}
         shell: pwsh
         run: ./integrations/live2d_desktop/scripts/build-windows.ps1 -BuildRoot "$env:RUNNER_TEMP\live2d-desktop"
 
@@ -40,6 +47,11 @@ jobs:
     name: Public repository boundary
     runs-on: ubuntu-24.04
     timeout-minutes: 15
+    outputs:
+      vtuber: ${{ steps.scope.outputs.vtuber }}
+      generator: ${{ steps.scope.outputs.generator }}
+      desktop: ${{ steps.scope.outputs.desktop }}
+      package: ${{ steps.scope.outputs.package }}
     steps:
       - name: Check out complete history
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
@@ -50,6 +62,12 @@ jobs:
         uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6.3.0
         with:
           python-version: "3.13"
+      - name: Select extension checks
+        id: scope
+        env:
+          CI_EVENT: ${{ github.event_name }}
+          BASE_REF: ${{ github.event.pull_request.base.sha || github.event.before || inputs.docs_base || '' }}
+        run: python scripts/ci_scope.py --event "$CI_EVENT" --base="$BASE_REF" --github-output "$GITHUB_OUTPUT"
       - name: Scan public identifiers across history
         run: python scripts/check_public_repo.py --history
       - name: Scan secrets across history
@@ -87,13 +105,22 @@ jobs:
           DOCS_BASE: ${{ github.event.pull_request.base.sha || github.event.before || inputs.docs_base || '' }}
         run: |
           doc_args=()
+          if [[ -n "$DOCS_BASE" && ! "$DOCS_BASE" =~ ^0+$ ]] && ! git rev-parse --verify --quiet --end-of-options "${DOCS_BASE}^{commit}" >/dev/null; then
+            echo "Documentation base unavailable; checking the complete current source tree."
+            DOCS_BASE=0000000000000000000000000000000000000000
+          fi
           if [[ -n "$DOCS_BASE" ]]; then
             doc_args+=(--docs-base "$DOCS_BASE")
           fi
-          .venv/bin/python scripts/check_repo.py python --keep-going "${doc_args[@]}"
+          .venv/bin/python scripts/check_repo.py python --keep-going --report-dir "$RUNNER_TEMP/agentstrata-python-report" "${doc_args[@]}"
+      - name: Summarize Python checks and skipped tests
+        if: ${{ always() }}
+        run: python3 scripts/ci_summary.py --report-dir "$RUNNER_TEMP/agentstrata-python-report" --title "Python 3.13"
 
   vtuber-compatibility:
     name: VTuber Python 3.12
+    needs: public-boundary
+    if: ${{ needs.public-boundary.outputs.vtuber == 'true' || needs.public-boundary.outputs.generator == 'true' }}
     runs-on: ubuntu-24.04
     timeout-minutes: 45
     env:
@@ -112,8 +139,10 @@ jobs:
           python -m pip install --isolated --index-url https://pypi.org/simple --no-deps \
             --require-hashes --only-binary=:all: --requirement requirements/release-build.txt
       - name: Verify installed plugin and pinned upstream without model credentials
+        if: ${{ needs.public-boundary.outputs.vtuber == 'true' }}
         run: python scripts/check_vtuber_compat.py
       - name: Verify independent Live2D generator without model credentials
+        if: ${{ needs.public-boundary.outputs.generator == 'true' }}
         run: python scripts/check_live2d_generator.py
 
   console:
@@ -134,4 +163,7 @@ jobs:
       - name: Install locked dependencies
         run: npm ci --prefix console/web
       - name: Test and build Console
-        run: python3 scripts/check_repo.py console --keep-going
+        run: python3 scripts/check_repo.py console --keep-going --report-dir "$RUNNER_TEMP/agentstrata-console-report"
+      - name: Summarize Console checks
+        if: ${{ always() }}
+        run: python3 scripts/ci_summary.py --report-dir "$RUNNER_TEMP/agentstrata-console-report" --title "Console"

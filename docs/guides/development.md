@@ -49,21 +49,34 @@ uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 
 ## CI 与失败诊断
 
-主分支推送、PR 和手动运行使用同一工作流，固定 Ubuntu 24.04。独立 job 分别执行
+主分支推送、PR 和手动运行使用同一工作流，核心检查固定 Ubuntu 24.04。独立 job 始终执行
 完整公开历史扫描、Python 3.13 的 `python` 门禁，以及 Node 22 的 `console` 门禁。
 Python 使用固定 uv 版本和 `uv sync --locked`；前端使用 `npm ci`。VTuber 使用单独的 Python 3.12 job，运行
 `scripts/check_vtuber_compat.py` 检查插件发行资源、固定上游补丁、前端构建和替代语音/Agent
 的真实接口，不取得模型凭据。相同 Python 3.12 job 通过 `scripts/check_live2d_generator.py` 安装独立生成器并用
 合成分层素材导出真实 moc3；不调用绘图/拆层服务，不证明真实角色质量或 Cubism SDK 加载。
 这些检查本地使用同一脚本，不能替代真实语音和模型验收。
-Windows 2025 job 执行桌面壳的 TypeScript 单测、受控页面 Electron smoke 和 x64 打包，
-使用 `integrations/live2d_desktop/scripts/build-windows.ps1`。该 job 不启动真实 WSL、
+Windows 2025 job 执行桌面壳的 TypeScript 单测、受控页面 Electron smoke，
+使用 `integrations/live2d_desktop/scripts/build-windows.ps1 -VerifyOnly`；手动完整 CI 使用默认入口额外生成 x64 安装包。
+该 job 不启动真实 WSL、
 模型或麦克风；硬件与实际后台联调独立记录。桌面壳测试不包含在 Linux `full` 中。
 前端检查通过 Vite runner 在内存加载配置，避免向 Harness 的只读依赖目录写入配置 bundle；
 本地 `file:` 包在隔离验证中映射到候选源码，Node 使用调用方已选择的可执行文件。
 `--keep-going` 收集各检查的失败，但最终退出码仍然失败。
 主包支持 Python 3.12–3.13；3.12 验证发行构建、安装和 VTuber 兼容，不运行主程序全量回归。
 详细设计见[持续集成基线](../../specs/ci-validation/spec.md)。
+
+可选扩展由 `scripts/ci_scope.py` 选择：VTuber 或生成器及其专属测试的变更分别运行对应
+Python 3.12 安装检查，并验证桌面；桌面目录变更只增加桌面验证。核心源码、共享依赖、
+CI/构建脚本及共享插件契约运行全部扩展。普通文档、Console 和其他核心测试由核心三项覆盖。
+未知基准、首次推送和未分类路径保守选择全部扩展；手动运行始终完整执行。
+选择结果和原因记录在 Summary，核心三个 job 不依赖变更选择。
+
+CI 为 Python 和 Console 设置 `--report-dir`，通过 `scripts/ci_summary.py` 展示失败检查、
+失败用例及全部跳过原因。报告正文和原始 JUnit 留在 runner 私有临时目录，不自动上传。
+本地也可将 `--report-dir` 交给摘要脚本查看；缺失或未完成的记录显示为不可用或 incomplete。
+复制或比对 Git 元数据的测试夹具关闭本仓库的 `maintenance.auto`，避免后台维护锁引起随机失败；
+不修改操作者的全局或生产仓库配置，也不以忽略锁文件或自动重跑取代修复。
 
 依赖外部原生 Codex CLI、Windows 语义或选配 VTuber 上游源码的测试会明确报告跳过。
 本地复核原生 Codex 权限时，将已安装的原生可执行文件目录放在 `PATH` 首位；
@@ -74,7 +87,8 @@ Python job 安装并实际探测 Bubblewrap 与 ripgrep。Ubuntu 的用户命名
 GitHub-hosted runner；不要在部署宿主上运行它。
 
 PR 传入 base SHA，push 传入 before SHA，手动运行可填写 `docs_base`。分支保护应要求
-`Public repository boundary`、`Python 3.13`、`Console` 和 `VTuber Python 3.12`。
+始终执行的 `Public repository boundary`、`Python 3.13` 和 `Console`。
+扩展 job 保持原名，但不相关变更可跳过；workflow 不会自动修改远端分支保护配置。
 新增、移除或更名检查后需由维护者同步 GitHub 设置，workflow 文件本身不会修改保护规则。
 
 本地复现使用对应 profile；需要完整日志时用仓库外私有目录：
