@@ -14,7 +14,7 @@ def test_plugin_catalog_package_and_resource_locks_agree():
     root = Path(__file__).resolve().parents[2]
     project = tomllib.loads((root / "integrations/open_llm_vtuber/pyproject.toml").read_text())["project"]
     entry = PLUGINS["open-llm-vtuber"]
-    assert entry.version == project["version"] == "0.3.0"
+    assert entry.version == project["version"] == "0.4.0"
     assert project["requires-python"] == ">=3.12,<3.13"
     assert entry.python == "3.12.14"
     lock = artifact_lock()

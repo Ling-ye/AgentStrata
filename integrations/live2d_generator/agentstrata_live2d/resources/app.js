@@ -394,13 +394,20 @@ $("export-character").onclick = () => action($("export-character"), async () => 
   setTimeout(() => URL.revokeObjectURL(url), 10000);
 });
 $("apply-character").onclick = () => action($("apply-character"), async () => {
-  const result = await jsonApi(versionPath() + "/apply");
+  versionPath();
+  const desktop = window.agentstrataDesktop;
+  const result = desktop ? await desktop.apply(currentCharacter.id, Number($("character-version").value)) :
+    await jsonApi(versionPath() + "/apply");
+  if (result.backup) $("application-backup").value = result.backup;
+  if (result.ok === false) throw new Error(result.message);
   $("application-backup").value = result.backup;
-  notice(`角色已应用，可以启动 Live2D 客户端。撤回备份：${result.backup}`);
+  notice(`角色已应用，${desktop ? "客户端已重新连接" : "可以启动 Live2D 客户端"}。撤回备份：${result.backup}`);
 });
 $("restore-application").onclick = () => action($("restore-application"), async () => {
-  await jsonApi("characters/restore-application", {backup: $("application-backup").value.trim()});
-  notice("已恢复应用前配置，可以启动 Live2D 客户端。");
+  const backup = $("application-backup").value.trim(), desktop = window.agentstrataDesktop;
+  const result = desktop ? await desktop.restore(backup) : await jsonApi("characters/restore-application", {backup});
+  if (result.ok === false) throw new Error(result.message);
+  notice(desktop ? "已恢复应用前配置，客户端已重新连接。" : "已恢复应用前配置，可以启动 Live2D 客户端。");
 });
 async function refreshPresets() {
   const result = await (await api("presets")).json();

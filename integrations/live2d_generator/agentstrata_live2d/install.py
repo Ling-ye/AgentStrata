@@ -20,6 +20,7 @@ from .types import GenerationError, job_id
 
 CONFIG_FILES = ("data/live2d/model_dict.json", "config/adapter.json", "config/upstream.yaml")
 CHARACTER_CONFIG_FILES = (*CONFIG_FILES, "config/identity.md", "config/response-style.md")
+DEFAULT_RESPONSE_STYLE = "用自然、清晰的语言交流，语气与当前身份和对话情境一致。"
 
 
 def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> dict:
@@ -153,7 +154,10 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None) -> dict:
                       json.dumps(adapter, ensure_ascii=False, indent=2).encode(),
                       yaml.safe_dump(upstream, allow_unicode=True, sort_keys=False).encode()]
             if details is not None:
-                values.extend([details["identity"].encode(), details["response_style"].encode()])
+                # Style is optional in a character preset, but a Bot prompt layer must be nonempty.
+                # Resolve that omission at handoff; keep the immutable preset and its hashes intact.
+                style = details["response_style"] if details["response_style"].strip() else DEFAULT_RESPONSE_STYLE
+                values.extend([details["identity"].encode(), style.encode()])
             backup_id = uuid4().hex
             backup = private_directory(root / "data/live2d/backups" / backup_id)
             before = {}

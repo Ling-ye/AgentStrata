@@ -44,6 +44,7 @@ def test_harness_comparison_sources_do_not_allow_other_vendor_repositories():
         "untracked:THIRD_PARTY_LICENSES.txt",
         "worktree:third_party/dependencies.json",
         "index:third_party/license_sources.json",
+        "untracked:integrations/live2d_desktop/package-lock.json",
         "history:third_party/Open-LLM-VTuber-Web-LICENSE.txt@deadbeef",
     ],
 )
@@ -64,7 +65,8 @@ def test_upstream_attribution_accepts_public_contacts_only_in_exact_legal_files(
         }
 
 
-def test_upstream_attribution_keeps_secret_and_private_identity_checks():
+@pytest.mark.parametrize("path", ["THIRD_PARTY_LICENSES.txt", "integrations/live2d_desktop/package-lock.json"])
+def test_upstream_attribution_keeps_secret_and_private_identity_checks(path):
     checker = _load_checker()
     private_host = "corp" + ".internal"
     private_literal = "private-project-" + "marker"
@@ -82,7 +84,7 @@ def test_upstream_attribution_keeps_secret_and_private_identity_checks():
         ]
     )
     assert {f.rule for f in checker.scan_text(
-        text, path="THIRD_PARTY_LICENSES.txt", private_literals=[private_literal],
+        text, path=path, private_literals=[private_literal],
     )} == {
         "url-private-or-local-host", "unexpected-maintainer-github-repo",
         "private-document-identifier", "uri-userinfo-identity-or-secret",

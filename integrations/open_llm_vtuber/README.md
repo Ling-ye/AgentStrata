@@ -23,7 +23,9 @@
 默认 AGPL 授权；收费访问/托管、商业重分发/改名及商业嵌入须取得上游规定的商业授权。
 完整原文、固定 revision 与后端 MIT 声明见[第三方声明](../../THIRD_PARTY_NOTICES.md)。
 
-插件版本为 `0.3.0`，受管环境固定 Python 3.12，支持声明为 `>=3.12,<3.13`。
+插件版本为 `0.4.0`，受管环境固定 Python 3.12，支持声明为 `>=3.12,<3.13`。
+前端补丁支持[Windows 桌面壳](../live2d_desktop/README.md)的模式切换、隐藏停麦、
+空闲切换角色和会话重连；普通浏览器仍使用原有界面与操作流程。
 prepare 声明一个 `main` 可观测 Agent，由管理器登记后供 Console 只读发现；登记接口见
 [插件规格](../../specs/external-software-plugins/spec.md#可观测-agent-登记)。
 构建检查使用 `scripts/plugin_artifacts.py`；wheel/sdist 携带本目录的 LICENSE、COPYRIGHT、

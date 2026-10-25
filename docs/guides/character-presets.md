@@ -97,6 +97,8 @@ agentstrata plugin start open-llm-vtuber
 
 应用需要现有受管客户端与标准 Bot identity/style 文件绑定；用户自定义绑定不会被
 静默覆盖。模型、动作映射、人设与音色作为一次事务更新，返回可撤回的 `backup` ID。
+身份必须填写；表达风格未填写时，应用采用自然、清晰且符合当前身份的默认风格，
+避免生成空的 Bot 提示层。该默认值只写入客户端配置，不改动角色版本或其摘要。
 模型连接、Bot ID、工具权限、运行时人格及会话/记忆数据保持原样。
 撤回沿用 `restore --backup BACKUP_ID --vtuber-root ...`，也可在工作台输入备份 ID。
 应用和撤回前都必须停止客户端；已有后续配置编辑时拒绝覆盖。中断的 journal 会阻止

@@ -253,6 +253,9 @@ def require_free_port(port: int) -> None:
         raise InstallError("Port must be between 1 and 65535")
     try:
         with socket.socket() as probe:
+            # A stopped HTTP service can leave accepted connections in TIME_WAIT.
+            # Match the servers' reuse semantics; a live listener still rejects bind.
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
             probe.bind(("127.0.0.1", port))
     except OSError:
         raise InstallError(f"Loopback port {port} is occupied; select another port explicitly") from None

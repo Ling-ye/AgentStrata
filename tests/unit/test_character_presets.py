@@ -234,6 +234,22 @@ def test_apply_model_persona_voice_atomically_and_switch_back_to_existing_model(
     assert not (target / "data/workspace").exists()
 
 
+@pytest.mark.parametrize("style", ["", " \n"])
+def test_optional_empty_style_applies_a_nonempty_bot_layer_without_editing_the_version(tmp_path, monkeypatch, style):
+    service, saved = saved_model(tmp_path)
+    service.save_draft(saved["id"], details() | {"response_style": style})
+    service.save_version(saved["id"], 1)
+    version = service.repository.path(saved["id"]) / "versions/2/profile.json"
+    original_version = version.read_bytes()
+    target = character_target(tmp_path / "client", monkeypatch)
+    applied = service.apply(saved["id"], 2, target)
+    assert (target / "config/response-style.md").read_text().strip()
+    assert (target / "config/response-style.md").read_bytes() != b"original style"
+    assert version.read_bytes() == original_version
+    service.restore_application(target, applied["backup"])
+    assert (target / "config/response-style.md").read_bytes() == b"original style"
+
+
 def test_late_persona_write_failure_restores_all_configuration(tmp_path, monkeypatch):
     from integrations.live2d_generator.agentstrata_live2d import install
     service, saved = saved_model(tmp_path)

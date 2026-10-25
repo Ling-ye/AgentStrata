@@ -56,6 +56,9 @@ Python 使用固定 uv 版本和 `uv sync --locked`；前端使用 `npm ci`。VT
 的真实接口，不取得模型凭据。相同 Python 3.12 job 通过 `scripts/check_live2d_generator.py` 安装独立生成器并用
 合成分层素材导出真实 moc3；不调用绘图/拆层服务，不证明真实角色质量或 Cubism SDK 加载。
 这些检查本地使用同一脚本，不能替代真实语音和模型验收。
+Windows 2025 job 执行桌面壳的 TypeScript 单测、受控页面 Electron smoke 和 x64 打包，
+使用 `integrations/live2d_desktop/scripts/build-windows.ps1`。该 job 不启动真实 WSL、
+模型或麦克风；硬件与实际后台联调独立记录。桌面壳测试不包含在 Linux `full` 中。
 前端检查通过 Vite runner 在内存加载配置，避免向 Harness 的只读依赖目录写入配置 bundle；
 本地 `file:` 包在隔离验证中映射到候选源码，Node 使用调用方已选择的可执行文件。
 `--keep-going` 收集各检查的失败，但最终退出码仍然失败。

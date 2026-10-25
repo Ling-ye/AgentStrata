@@ -4,6 +4,8 @@
 已有 PNG/JPEG/WebP 可直接拆层，PSD 或语义命名的 PNG 图层 ZIP 可直接绑定。
 生成器不依赖 AgentRuntime，对话、语音和播放仍由既有客户端负责。
 角色库保存草稿与不可变版本，支持完整工程备份、模型/人设/声音预设和私有目录下载。
+版本 `0.3.0` 的工作台可在 [Windows 桌面客户端](../live2d_desktop/README.md)中通过受限桥接
+应用角色和撤回，由桌面编排交互后台启停；角色格式与普通浏览器操作保持不变。
 
 安装、配置、示例和导入方法见 [Live2D 指南](../../docs/guides/live2d.md#生成自己的角色)。
 角色库、备份和私有分发见 [角色预设指南](../../docs/guides/character-presets.md)。

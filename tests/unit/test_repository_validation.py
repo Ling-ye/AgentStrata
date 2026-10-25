@@ -157,12 +157,12 @@ def test_fast_selection_rejects_invalid_manifest(monkeypatch, tmp_path, selectio
 def test_ci_public_boundary_preserves_history_scans_and_read_only_permissions():
     workflow = yaml.safe_load((ROOT / ".github/workflows/ci.yml").read_text(encoding="utf-8"))
     assert workflow["permissions"] == {"contents": "read"}
-    assert set(workflow["jobs"]) == {"public-boundary", "python", "console", "vtuber-compatibility"}
-    for job in workflow["jobs"].values():
+    assert set(workflow["jobs"]) == {"public-boundary", "python", "console", "vtuber-compatibility", "live2d-desktop"}
+    for name, job in workflow["jobs"].items():
         assert job.get("permissions", workflow["permissions"]) == {"contents": "read"}
         checkout = next(step for step in job["steps"] if step.get("uses", "").startswith("actions/checkout@"))
         assert checkout["with"]["persist-credentials"] is False
-        assert job["runs-on"] == "ubuntu-24.04"
+        assert job["runs-on"] == ("windows-2025" if name == "live2d-desktop" else "ubuntu-24.04")
         assert "continue-on-error" not in job
         for step in job["steps"]:
             if "uses" in step:

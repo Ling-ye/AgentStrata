@@ -72,6 +72,34 @@ agentstrata plugin uninstall open-llm-vtuber
 
 ## Console 任务与配置查看
 
+Windows 桌面入口见下节；浏览器和 CLI 仍可独立使用。
+
+## Windows 桌面客户端
+
+`integrations/live2d_desktop` 提供 Windows x64 客户端 `0.1.0`，配套 WSL 中的
+`open-llm-vtuber 0.4.0` 与 `live2d-generator 0.3.0`。先完成两项插件的受管安装，
+再启动 Windows 安装版或解压 ZIP 中的 `AgentStrata Live2D.exe`。首次设置选择 WSL
+发行版，填写 WSL 内 AgentStrata 命令绝对路径和插件根目录。程序从安装记录读取端口，
+启动后台并检查 Windows 回环连接。无需向 Windows 输入模型、GitHub 或 Hugging Face 凭据。
+
+托盘菜单切换窗口/透明桌宠、置顶、鼠标穿透、字幕输入框和工作台。
+拖动角色调整位置，在角色上滚动滚轮调整大小；双击托盘恢复显示并取消穿透。关闭窗口隐藏到托盘并停止麦克风，
+退出桌面保留后台与生成任务。仅点击麦克风开始一次语音输入，不自动唤醒、不采集屏幕或摄像头。
+
+“我的角色”打开现有角色库与生成工作台。停止当前对话和语音后选择角色版本应用，
+桌面会停止交互后台、调用原有事务、重新启动并连接；生成器保持运行。失败时保留
+备份 ID；新角色启动失败会尝试撤回，恢复失败需要按显示状态在 WSL 检查 `plugin doctor`。
+切换不创建独立长期记忆，当前窗口的历史在重连中继续使用；全新启动仍使用既有历史面板。
+普通浏览器中的应用继续要求手动停止客户端。原生文件选择/下载用于导入和导出角色资料。
+
+桌面设置位于 `%APPDATA%\agentstrata-live2d-desktop\desktop.json`，不保存服务凭据。
+Chromium 会话缓存不持久化到角色库，全部角色资产
+由 WSL 统一保存。私有预设目录和模型不随桌面包发行。
+构建和测试见[桌面源码说明](../../integrations/live2d_desktop/README.md)，职责见
+[桌面规格](../../specs/live2d-desktop/spec.md)。冷启动、实体麦克风与多屏/DPI 需在实际环境单独验收。
+
+## Console 登记
+
 插件 `0.2.1` 起，安装成功会登记 `plugin:open-llm-vtuber:main`。Console 的机器人实例
 列表刷新后即可选择它，查看历史任务、模型与工具调用、上下文和只读分层配置。
 启停及修改配置仍使用插件管理器。未登记的 `0.2.0` 安装先停止，再按新版安装流程重装；

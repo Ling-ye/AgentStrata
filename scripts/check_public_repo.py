@@ -187,6 +187,7 @@ UPSTREAM_ATTRIBUTION_FILES = frozenset(
         "third_party/Open-LLM-VTuber-Web-LICENSE.txt",
         "integrations/open_llm_vtuber/Open-LLM-VTuber-LICENSE.txt",
         "integrations/open_llm_vtuber/Open-LLM-VTuber-Web-LICENSE.txt",
+        "integrations/live2d_desktop/package-lock.json",
     }
 )
 GITHUB_NON_REPOSITORY_NAMESPACES = frozenset(

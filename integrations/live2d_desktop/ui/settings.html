@@ -1,0 +1,15 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'">
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentStrata Live2D · 连接设置</title>
+<link rel="stylesheet" href="settings.css"></head><body><main>
+<p class="eyebrow">AGENTSTRATA / LIVE2D</p><h1>让角色来到桌面</h1>
+<p class="intro">连接本机 WSL 中已安装的交互客户端与角色工作台。角色和服务凭据继续保存在 WSL。</p>
+<form id="settings"><label>WSL 发行版<select id="distro" required></select></label>
+<label>AgentStrata 命令<input id="command" placeholder="/home/你的用户名/…/bin/agentstrata" required></label>
+<label>受管插件目录<input id="root" placeholder="/home/你的用户名/.local/share/agentstrata/plugins" required></label>
+<p class="hint">填写 WSL 内的绝对路径。需要 open-llm-vtuber 0.4.0 和 live2d-generator 0.3.0。</p>
+<div class="actions"><button type="submit" id="save">保存并连接</button><button type="button" id="connect" class="secondary">重新连接</button></div>
+</form><p id="status" role="status" aria-live="polite">正在检查 WSL…</p>
+<p class="hint">关闭角色窗口会隐藏到托盘。退出桌面程序后，后台与生成任务继续运行。</p>
+</main><script src="settings.js"></script></body></html>

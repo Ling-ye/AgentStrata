@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agentstrata-live2d-generator"
-version = "0.2.3"
+version = "0.3.0"
 description = "Independent prompt, image and layered-art to Live2D asset production plugin"
 readme = "README.md"
 license = "AGPL-3.0-only"

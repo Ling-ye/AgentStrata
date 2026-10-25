@@ -314,6 +314,22 @@ def test_archive_rejects_escape_and_links(tmp_path, name, kind):
     assert not (tmp_path / "outside").exists()
 
 
+def test_port_probe_allows_restart_after_time_wait_but_rejects_live_listener():
+    with socket.socket() as listener:
+        listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        port = listener.getsockname()[1]
+        with pytest.raises(InstallError, match=str(port)):
+            require_free_port(port)
+        with socket.create_connection(("127.0.0.1", port)) as client:
+            peer, _ = listener.accept()
+            with peer:
+                peer.shutdown(socket.SHUT_WR)
+                assert client.recv(1) == b""
+    require_free_port(port)
+
+
 def test_port_conflict_and_private_service_ownership(tmp_path, monkeypatch):
     with socket.socket() as listener:
         listener.bind(("127.0.0.1", 0))

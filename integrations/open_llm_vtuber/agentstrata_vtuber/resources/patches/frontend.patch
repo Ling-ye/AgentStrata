@@ -1,3 +1,239 @@
+diff --git a/src/renderer/WebSDK/src/lappview.ts b/src/renderer/WebSDK/src/lappview.ts
+--- a/src/renderer/WebSDK/src/lappview.ts
++++ b/src/renderer/WebSDK/src/lappview.ts
+@@ -93,10 +93,10 @@
+     // this._gear.release();
+     // this._gear = null;
+ 
+-    this._back.release();
++    this._back?.release();
+     this._back = null;
+ 
+-    gl.deleteProgram(this._programId);
++    if (this._programId && gl) gl.deleteProgram(this._programId);
+     this._programId = null;
+   }
+ 
+diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
+--- a/src/renderer/src/App.tsx
++++ b/src/renderer/src/App.tsx
+@@ -28,6 +28,7 @@
+ import Background from "./components/canvas/background";
+ import WebSocketStatus from "./components/canvas/ws-status";
+ import Subtitle from "./components/canvas/subtitle";
++import AgentStrataDesktop from './components/electron/agentstrata-desktop';
+ import { ModeProvider, useMode } from "./context/mode-context";
+ 
+ function AppContent(): JSX.Element {
+@@ -184,6 +185,7 @@
+                             <BrowserProvider>
+                               <WebSocketHandler>
+                                 <Toaster />
++                                <AgentStrataDesktop />
+                                 <AppContent />
+                               </WebSocketHandler>
+                             </BrowserProvider>
+diff --git a/src/renderer/src/components/electron/agentstrata-desktop.tsx b/src/renderer/src/components/electron/agentstrata-desktop.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/renderer/src/components/electron/agentstrata-desktop.tsx
+@@ -0,0 +1,45 @@
++import { useEffect, useRef, useState } from 'react';
++import { useAiState } from '@/context/ai-state-context';
++import { useVAD } from '@/context/vad-context';
++import { useWebSocket } from '@/context/websocket-context';
++import { desktop, lockDesktop, setDesktopVisible } from '@/services/desktop-state';
++
++export default function AgentStrataDesktop() {
++  const { aiState } = useAiState();
++  const { stopMic, micOn, setAutoStartMicOn, setAutoStartMicOnConvEnd, setAutoStopMic } = useVAD();
++  const { wsState, reconnect } = useWebSocket();
++  const state = useRef({ aiState, micOn, wsState });
++  state.current = { aiState, micOn, wsState };
++  const [locked, setLocked] = useState(false);
++  useEffect(() => {
++    if (!desktop) return undefined;
++    setAutoStartMicOn(false); setAutoStartMicOnConvEnd(false); setAutoStopMic(true); stopMic();
++    const visibility = desktop.onVisibility((visible: boolean) => {
++      setDesktopVisible(visible);
++      if (!visible) stopMic();
++    });
++    const prepare = desktop.onPrepare(() => {
++      const current = state.current;
++      if (current.micOn || !['idle', 'interrupted', 'waiting'].includes(current.aiState) || current.wsState !== 'OPEN') return false;
++      lockDesktop(true); setLocked(true); stopMic();
++      return true;
++    });
++    const resume = desktop.onResume(() => { lockDesktop(false); setLocked(false); });
++    return () => { visibility(); prepare(); resume(); lockDesktop(false); };
++  }, []);
++  useEffect(() => {
++    if (desktop && wsState === 'OPEN') desktop.ready();
++  }, [wsState]);
++  useEffect(() => {
++    if (!desktop || locked || wsState !== 'CLOSED') return undefined;
++    const timer = setTimeout(reconnect, 3000);
++    return () => clearTimeout(timer);
++  }, [locked, wsState, reconnect]);
++  if (!desktop) return null;
++  if (locked) return <div role="status" style={{ position: 'fixed', inset: 0, zIndex: 2147483647,
++    background: '#18202bee', color: 'white', display: 'grid', placeItems: 'center' }}>正在切换角色，请稍候…</div>;
++  return <button type="button" onClick={() => desktop.openManager()} style={{ position: 'fixed', top: 38,
++    right: 12, zIndex: 1000, borderRadius: 8, padding: '6px 12px', color: '#ecf0f6', background: '#28394d',
++    WebkitAppRegion: 'no-drag' } as React.CSSProperties} onMouseEnter={() => (window.api as any)?.updateComponentHover('characters', true)}
++    onMouseLeave={() => (window.api as any)?.updateComponentHover('characters', false)}>我的角色</button>;
++}
+diff --git a/src/renderer/src/components/footer/footer.tsx b/src/renderer/src/components/footer/footer.tsx
+--- a/src/renderer/src/components/footer/footer.tsx
++++ b/src/renderer/src/components/footer/footer.tsx
+@@ -87,13 +87,13 @@
+   return (
+     <InputGroup flex={1}>
+       <Box position="relative" width="100%">
+-        <IconButton
++        {!(window as any).agentstrataDesktop && <IconButton
+           aria-label="Attach file"
+           variant="ghost"
+           {...footerStyles.footer.attachButton}
+         >
+           <BsPaperclip size="24" />
+-        </IconButton>
++        </IconButton>}
+         <Textarea
+           value={value}
+           onChange={onChange}
+diff --git a/src/renderer/src/components/sidebar/bottom-tab.tsx b/src/renderer/src/components/sidebar/bottom-tab.tsx
+--- a/src/renderer/src/components/sidebar/bottom-tab.tsx
++++ b/src/renderer/src/components/sidebar/bottom-tab.tsx
+@@ -9,6 +9,7 @@
+ 
+ function BottomTab(): JSX.Element {
+   const { t } = useTranslation();
++  if ((window as any).agentstrataDesktop) return <></>;
+   
+   return (
+     <Tabs.Root 
+diff --git a/src/renderer/src/components/sidebar/setting/agent.tsx b/src/renderer/src/components/sidebar/setting/agent.tsx
+--- a/src/renderer/src/components/sidebar/setting/agent.tsx
++++ b/src/renderer/src/components/sidebar/setting/agent.tsx
+@@ -18,6 +18,8 @@
+     handleIdleSecondsChange,
+     handleAllowButtonTriggerChange,
+   } = useAgentSettings({ onSave, onCancel });
++
++  if ((window as any).agentstrataDesktop) return <p>Agent 与人设由 AgentStrata 管理。桌面首版不主动发起对话。</p>;
+ 
+   return (
+     <Stack {...settingStyles.common.container}>
+diff --git a/src/renderer/src/components/sidebar/setting/asr.tsx b/src/renderer/src/components/sidebar/setting/asr.tsx
+--- a/src/renderer/src/components/sidebar/setting/asr.tsx
++++ b/src/renderer/src/components/sidebar/setting/asr.tsx
+@@ -38,6 +38,8 @@
+       cleanupCancel?.();
+     };
+   }, [onSave, onCancel, handleSave, handleCancel]);
++
++  if ((window as any).agentstrataDesktop) return <p>点击麦克风按钮开始一次语音输入；隐藏窗口会停止采集。桌面首版不自动唤醒麦克风。</p>;
+ 
+   return (
+     <Stack {...settingStyles.common.container}>
+diff --git a/src/renderer/src/components/sidebar/setting/general.tsx b/src/renderer/src/components/sidebar/setting/general.tsx
+--- a/src/renderer/src/components/sidebar/setting/general.tsx
++++ b/src/renderer/src/components/sidebar/setting/general.tsx
+@@ -76,6 +76,13 @@
+   if (settings.language[0] !== i18n.language) {
+     handleSettingChange("language", [i18n.language]);
+   }
++
++  if ((window as any).agentstrataDesktop) return <Stack {...settingStyles.common.container}>
++    <SelectField label={t("settings.general.language")} value={settings.language}
++      onChange={(value) => handleSettingChange("language", value)} collection={collections.languages} placeholder={t("settings.general.language")} />
++    <SwitchField label={t("settings.general.showSubtitle")} checked={showSubtitle} onChange={setShowSubtitle} />
++    <p>角色、人设和声音请在“我的角色”中管理；连接位置在托盘的“连接设置”中管理。</p>
++  </Stack>;
+ 
+   return (
+     <Stack {...settingStyles.common.container}>
+diff --git a/src/renderer/src/context/chat-history-context.tsx b/src/renderer/src/context/chat-history-context.tsx
+--- a/src/renderer/src/context/chat-history-context.tsx
++++ b/src/renderer/src/context/chat-history-context.tsx
+@@ -56,7 +56,7 @@
+     DEFAULT_HISTORY.historyList,
+   );
+   const [currentHistoryUid, setCurrentHistoryUid] = useState<string | null>(
+-    DEFAULT_HISTORY.currentHistoryUid,
++    (window as any).agentstrataDesktop ? sessionStorage.getItem('agentstrata-history') : DEFAULT_HISTORY.currentHistoryUid,
+   );
+   const [fullResponse, setFullResponse] = useState(DEFAULT_HISTORY.fullResponse);
+   const [forceNewMessage, setForceNewMessage] = useState<boolean>(false);
+diff --git a/src/renderer/src/context/proactive-speak-context.tsx b/src/renderer/src/context/proactive-speak-context.tsx
+--- a/src/renderer/src/context/proactive-speak-context.tsx
++++ b/src/renderer/src/context/proactive-speak-context.tsx
+@@ -47,7 +47,7 @@
+   const startIdleTimer = useCallback(() => {
+     clearIdleTimer();
+ 
+-    if (!settings.allowProactiveSpeak) return;
++    if ((window as any).agentstrataDesktop || !settings.allowProactiveSpeak) return;
+ 
+     idleStartTimeRef.current = Date.now();
+     idleTimerRef.current = setTimeout(() => {
+diff --git a/src/renderer/src/context/vad-context.tsx b/src/renderer/src/context/vad-context.tsx
+--- a/src/renderer/src/context/vad-context.tsx
++++ b/src/renderer/src/context/vad-context.tsx
+@@ -1,3 +1,4 @@
++import { desktopLocked, desktopVisible } from '@/services/desktop-state';
+ /* eslint-disable no-use-before-define */
+ import {
+   createContext, useContext, useRef, useCallback, useEffect, useReducer, useMemo,
+@@ -104,6 +105,7 @@
+  * @param {React.ReactNode} props.children - Child components
+  */
+ export function VADProvider({ children }: { children: React.ReactNode }) {
++  const startingMic = useRef(false);
+   const { t } = useTranslation();
+   // Refs for VAD instance and state
+   const vadRef = useRef<MicVAD | null>(null);
+@@ -299,6 +301,8 @@
+    * Start microphone and VAD processing
+    */
+   const startMic = useCallback(async () => {
++    if (desktopLocked() || !desktopVisible() || startingMic.current) return;
++    startingMic.current = true;
+     try {
+       if (!vadRef.current) {
+         console.log('Initializing VAD');
+@@ -307,6 +311,7 @@
+         console.log('Starting VAD');
+         vadRef.current.start();
+       }
++      if (desktopLocked() || !desktopVisible()) { stopMic(); return; }
+       setMicOn(true);
+     } catch (error) {
+       console.error('Failed to start VAD:', error);
+@@ -315,7 +320,7 @@
+         type: 'error',
+         duration: 2000,
+       });
+-    }
++    } finally { startingMic.current = false; }
+   }, [t]);
+ 
+   /**
+diff --git a/src/renderer/src/context/websocket-context.tsx b/src/renderer/src/context/websocket-context.tsx
+--- a/src/renderer/src/context/websocket-context.tsx
++++ b/src/renderer/src/context/websocket-context.tsx
+@@ -3,8 +3,8 @@
+ import { wsService } from '@/services/websocket-service';
+ import { useLocalStorage } from '@/hooks/utils/use-local-storage';
+ 
+-const DEFAULT_WS_URL = 'ws://127.0.0.1:12393/client-ws';
+-const DEFAULT_BASE_URL = 'http://127.0.0.1:12393';
++const DEFAULT_WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/client-ws`;
++const DEFAULT_BASE_URL = window.location.origin;
+ 
+ export interface HistoryInfo {
+   uid: string;
 diff --git a/src/renderer/src/hooks/utils/use-audio-task.ts b/src/renderer/src/hooks/utils/use-audio-task.ts
 --- a/src/renderer/src/hooks/utils/use-audio-task.ts
 +++ b/src/renderer/src/hooks/utils/use-audio-task.ts
@@ -119,75 +355,18 @@ diff --git a/src/renderer/src/hooks/utils/use-audio-task.ts b/src/renderer/src/h
    };
  
    return {
-diff --git a/src/renderer/src/services/websocket-handler.tsx b/src/renderer/src/services/websocket-handler.tsx
---- a/src/renderer/src/services/websocket-handler.tsx
-+++ b/src/renderer/src/services/websocket-handler.tsx
-@@ -4,6 +4,7 @@
- import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
- import { useTranslation } from 'react-i18next';
- import { wsService, MessageEvent } from '@/services/websocket-service';
-+import { handleAvatarAction, setAgentStrataRun } from '@/services/agentstrata-avatar';
- import {
-   WebSocketContext, HistoryInfo, defaultWsUrl, defaultBaseUrl,
- } from '@/context/websocket-context';
-@@ -28,7 +29,7 @@
-   const [wsUrl, setWsUrl] = useLocalStorage<string>('wsUrl', defaultWsUrl);
-   const [baseUrl, setBaseUrl] = useLocalStorage<string>('baseUrl', defaultBaseUrl);
-   const { aiState, setAiState, backendSynthComplete, setBackendSynthComplete } = useAiState();
--  const { setModelInfo } = useLive2DConfig();
-+  const { modelInfo, setModelInfo } = useLive2DConfig();
-   const { setSubtitleText } = useSubtitle();
-   const { clearResponse, setForceNewMessage, appendHumanMessage, appendOrUpdateToolCallMessage } = useChatHistory();
-   const { addAudioTask } = useAudioTask();
-@@ -36,10 +37,13 @@
-   const { confUid, setConfName, setConfUid, setConfigFiles } = useConfig();
-   const [pendingModelInfo, setPendingModelInfo] = useState<ModelInfo | undefined>(undefined);
-   const { setSelfUid, setGroupMembers, setIsOwner } = useGroup();
--  const { startMic, stopMic, autoStartMicOnConvEnd } = useVAD();
-+  const { startMic, stopMic, autoStartMicOnConvEnd,
-+    setAutoStopMic, setAutoStartMicOn, setAutoStartMicOnConvEnd } = useVAD();
-   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
-   const { interrupt } = useInterrupt();
-   const { setBrowserViewData } = useBrowser();
-+  const avatarModelNameRef = useRef(modelInfo?.name);
-+  avatarModelNameRef.current = modelInfo?.name;
+diff --git a/src/renderer/src/hooks/utils/use-ipc-handlers.ts b/src/renderer/src/hooks/utils/use-ipc-handlers.ts
+--- a/src/renderer/src/hooks/utils/use-ipc-handlers.ts
++++ b/src/renderer/src/hooks/utils/use-ipc-handlers.ts
+@@ -55,7 +55,7 @@
  
    useEffect(() => {
-     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
-@@ -94,6 +98,18 @@
-   const handleWebSocketMessage = useCallback((message: MessageEvent) => {
-     console.log('Received message from server:', message);
-     switch (message.type) {
-+      case 'agentstrata-mode':
-+        stopMic();
-+        setAutoStopMic(true);
-+        setAutoStartMicOn(false);
-+        setAutoStartMicOnConvEnd(false);
-+        break;
-+      case 'agentstrata-avatar-action':
-+        handleAvatarAction(message, avatarModelNameRef.current);
-+        break;
-+      case 'agentstrata-reply':
-+        setAgentStrataRun(message.run_id);
-+        break;
-       case 'control':
-         if (message.text) {
-           handleControlMessage(message.text);
-diff --git a/src/renderer/src/services/websocket-service.tsx b/src/renderer/src/services/websocket-service.tsx
---- a/src/renderer/src/services/websocket-service.tsx
-+++ b/src/renderer/src/services/websocket-service.tsx
-@@ -49,6 +49,11 @@
- }
+     if (!window.electron?.ipcRenderer) return;
+-    if (!isPet) return;
++    if (!isPet && !(window as any).agentstrataDesktop) return;
  
- export interface MessageEvent {
-+  request_id?: string;
-+  model_name?: string;
-+  kind?: 'expression' | 'motion';
-+  value?: string | number | { group: string; index: number };
-+  run_id?: string;
-   tool_id: any;
-   tool_name: any;
-   name: any;
+     window.electron.ipcRenderer.removeAllListeners("mic-toggle");
+     window.electron.ipcRenderer.removeAllListeners("interrupt");
 diff --git a/src/renderer/src/services/agentstrata-avatar.ts b/src/renderer/src/services/agentstrata-avatar.ts
 new file mode 100644
 --- /dev/null
@@ -244,17 +423,125 @@ new file mode 100644
 +    respond('failed');
 +  }
 +}
-diff --git a/src/renderer/src/context/websocket-context.tsx b/src/renderer/src/context/websocket-context.tsx
---- a/src/renderer/src/context/websocket-context.tsx
-+++ b/src/renderer/src/context/websocket-context.tsx
-@@ -3,8 +3,8 @@
- import { wsService } from '@/services/websocket-service';
- import { useLocalStorage } from '@/hooks/utils/use-local-storage';
+diff --git a/src/renderer/src/services/desktop-state.ts b/src/renderer/src/services/desktop-state.ts
+new file mode 100644
+--- /dev/null
++++ b/src/renderer/src/services/desktop-state.ts
+@@ -0,0 +1,8 @@
++// Optional native shell state; browser behavior is unchanged.
++export const desktop = (window as any).agentstrataDesktop;
++let locked = false;
++let visible = true;
++export const desktopLocked = () => Boolean(desktop && locked);
++export const desktopVisible = () => !desktop || visible;
++export const lockDesktop = (value: boolean) => { locked = value; };
++export const setDesktopVisible = (value: boolean) => { visible = value; };
+diff --git a/src/renderer/src/services/websocket-handler.tsx b/src/renderer/src/services/websocket-handler.tsx
+--- a/src/renderer/src/services/websocket-handler.tsx
++++ b/src/renderer/src/services/websocket-handler.tsx
+@@ -4,6 +4,7 @@
+ import { useEffect, useState, useCallback, useMemo, useRef } from 'react';
+ import { useTranslation } from 'react-i18next';
+ import { wsService, MessageEvent } from '@/services/websocket-service';
++import { handleAvatarAction, setAgentStrataRun } from '@/services/agentstrata-avatar';
+ import {
+   WebSocketContext, HistoryInfo, defaultWsUrl, defaultBaseUrl,
+ } from '@/context/websocket-context';
+@@ -28,7 +29,7 @@
+   const [wsUrl, setWsUrl] = useLocalStorage<string>('wsUrl', defaultWsUrl);
+   const [baseUrl, setBaseUrl] = useLocalStorage<string>('baseUrl', defaultBaseUrl);
+   const { aiState, setAiState, backendSynthComplete, setBackendSynthComplete } = useAiState();
+-  const { setModelInfo } = useLive2DConfig();
++  const { modelInfo, setModelInfo } = useLive2DConfig();
+   const { setSubtitleText } = useSubtitle();
+   const { clearResponse, setForceNewMessage, appendHumanMessage, appendOrUpdateToolCallMessage } = useChatHistory();
+   const { addAudioTask } = useAudioTask();
+@@ -36,10 +37,13 @@
+   const { confUid, setConfName, setConfUid, setConfigFiles } = useConfig();
+   const [pendingModelInfo, setPendingModelInfo] = useState<ModelInfo | undefined>(undefined);
+   const { setSelfUid, setGroupMembers, setIsOwner } = useGroup();
+-  const { startMic, stopMic, autoStartMicOnConvEnd } = useVAD();
++  const { startMic, stopMic, autoStartMicOnConvEnd,
++    setAutoStopMic, setAutoStartMicOn, setAutoStartMicOnConvEnd } = useVAD();
+   const autoStartMicOnConvEndRef = useRef(autoStartMicOnConvEnd);
+   const { interrupt } = useInterrupt();
+   const { setBrowserViewData } = useBrowser();
++  const avatarModelNameRef = useRef(modelInfo?.name);
++  avatarModelNameRef.current = modelInfo?.name;
  
--const DEFAULT_WS_URL = 'ws://127.0.0.1:12393/client-ws';
--const DEFAULT_BASE_URL = 'http://127.0.0.1:12393';
-+const DEFAULT_WS_URL = `${window.location.protocol === 'https:' ? 'wss:' : 'ws:'}//${window.location.host}/client-ws`;
-+const DEFAULT_BASE_URL = window.location.origin;
+   useEffect(() => {
+     autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
+@@ -94,6 +98,18 @@
+   const handleWebSocketMessage = useCallback((message: MessageEvent) => {
+     console.log('Received message from server:', message);
+     switch (message.type) {
++      case 'agentstrata-mode':
++        stopMic();
++        setAutoStopMic(true);
++        setAutoStartMicOn(false);
++        setAutoStartMicOnConvEnd(false);
++        break;
++      case 'agentstrata-avatar-action':
++        handleAvatarAction(message, avatarModelNameRef.current);
++        break;
++      case 'agentstrata-reply':
++        setAgentStrataRun(message.run_id);
++        break;
+       case 'control':
+         if (message.text) {
+           handleControlMessage(message.text);
+@@ -183,6 +199,7 @@
+         // No need to open mic here
+         if (message.history_uid) {
+           setCurrentHistoryUid(message.history_uid);
++          if ((window as any).agentstrataDesktop) sessionStorage.setItem('agentstrata-history', message.history_uid);
+           setMessages([]);
+           const newHistory: HistoryInfo = {
+             uid: message.history_uid,
+diff --git a/src/renderer/src/services/websocket-service.tsx b/src/renderer/src/services/websocket-service.tsx
+--- a/src/renderer/src/services/websocket-service.tsx
++++ b/src/renderer/src/services/websocket-service.tsx
+@@ -2,6 +2,7 @@
+ /* eslint-disable @typescript-eslint/no-var-requires */
+ /* eslint-disable no-use-before-define */
+ import { Subject } from 'rxjs';
++import { desktop, desktopLocked } from './desktop-state';
+ import { ModelInfo } from '@/context/live2d-config-context';
+ import { HistoryInfo } from '@/context/websocket-context';
+ import { ConfigFile } from '@/context/character-config-context';
+@@ -49,6 +50,11 @@
+ }
  
- export interface HistoryInfo {
-   uid: string;
+ export interface MessageEvent {
++  request_id?: string;
++  model_name?: string;
++  kind?: 'expression' | 'motion';
++  value?: string | number | { group: string; index: number };
++  run_id?: string;
+   tool_id: any;
+   tool_name: any;
+   name: any;
+@@ -133,9 +139,8 @@
+     this.sendMessage({
+       type: 'fetch-history-list',
+     });
+-    this.sendMessage({
+-      type: 'create-new-history',
+-    });
++    const history = desktop && sessionStorage.getItem('agentstrata-history');
++    this.sendMessage(history ? {type: 'fetch-and-set-history', history_uid: history} : {type: 'create-new-history'});
+   }
+ 
+   connect(url: string) {
+@@ -186,6 +191,11 @@
+   }
+ 
+   sendMessage(message: object) {
++    const value = message as any;
++    if (desktopLocked() && ['text-input', 'mic-audio-data', 'mic-audio-end', 'audio-input', 'audio-input-end',
++      'create-new-history', 'fetch-and-set-history'].includes(value.type)) return;
++    if (desktop && value.type === 'fetch-and-set-history' && value.history_uid)
++      sessionStorage.setItem('agentstrata-history', value.history_uid);
+     if (this.ws?.readyState === WebSocket.OPEN) {
+       this.ws.send(JSON.stringify(message));
+     } else {
