@@ -38,7 +38,8 @@ def test_vtuber_service_description_exports_its_observable_agent(tmp_path):
 
 
 @pytest.mark.parametrize("runtime_id", ["langgraph", "codex"])
-def test_vtuber_keeps_application_profile_and_model_snapshot_independent(tmp_path, monkeypatch, runtime_id):
+@pytest.mark.parametrize("auth_mode", ["api_key", "chatgpt"])
+def test_vtuber_keeps_application_profile_and_model_snapshot_independent(tmp_path, monkeypatch, runtime_id, auth_mode):
     import sys
     import yaml
     from chatcopilot.botspec.loader import load_botspec
@@ -56,9 +57,13 @@ def test_vtuber_keeps_application_profile_and_model_snapshot_independent(tmp_pat
     native.write_bytes(b"\x7fELFfixture")
     monkeypatch.setenv("FIXTURE_CODEX", str(native))
     monkeypatch.setenv("FIXTURE_API_KEY", "synthetic-model-credential")
-    connection = ({"kind": "codex", "auth": {"mode": "chatgpt", "profile": "main"},
-                   "codex_bin_env": "FIXTURE_CODEX"} if runtime_id == "codex" else
-                  {"kind": "openai_responses", "auth": {"mode": "api_key", "key_env": "FIXTURE_API_KEY"}})
+    connection = {"kind": "codex" if auth_mode == "chatgpt" else "openai_responses",
+                  "auth": ({"mode": "chatgpt", "profile": "main"} if auth_mode == "chatgpt" else
+                           {"mode": "api_key", "key_env": "FIXTURE_API_KEY"}),
+                  "codex_bin_env": "FIXTURE_CODEX"}
+    if runtime_id == "langgraph":
+        monkeypatch.setattr("integrations.open_llm_vtuber.agentstrata_vtuber.deployment._native_codex",
+            lambda *_: pytest.fail("LangGraph model authentication must not start or require Codex"))
     host_models = tmp_path / "host-models.json"
     document = {"connections": {"fixture": connection},
                 "profiles": {"fixture": {"connection": "fixture", "model": "original-model"}},
@@ -203,6 +208,181 @@ def test_empty_transcription_has_no_gateway_effects():
     asyncio.run(exercise())
 
 
+def test_stop_during_preflight_prevents_chat_submission():
+    class Preflight(_Gateway):
+        def __init__(self):
+            super().__init__()
+            self.preparing, self.release = asyncio.Event(), asyncio.Event()
+
+        async def request(self, method, params, *, idempotency_key=None):
+            if method == "sessions.create":
+                self.preparing.set()
+                await self.release.wait()
+            return await super().request(method, params, idempotency_key=idempotency_key)
+
+    async def exercise():
+        gateway = Preflight()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        task = asyncio.create_task(bridge.chat("stop before submission"))
+        await gateway.preparing.wait()
+        await bridge.cancel()
+        gateway.release.set()
+        result, = await asyncio.gather(task, return_exceptions=True)
+        assert isinstance(result, asyncio.CancelledError)
+        assert not gateway.turns
+        assert not any(method == "chat.send" for method, _, _ in gateway.calls)
+        await bridge.close()
+    asyncio.run(exercise())
+
+
+def test_stop_during_submission_is_applied_when_original_acceptance_arrives():
+    class DelayedAcceptance(_Gateway):
+        def __init__(self):
+            super().__init__(running=True)
+            self.release = asyncio.Event()
+
+        async def request(self, method, params, *, idempotency_key=None):
+            result = await super().request(method, params, idempotency_key=idempotency_key)
+            if method == "chat.send":
+                await self.release.wait()
+            return result
+
+    async def exercise():
+        gateway = DelayedAcceptance()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        task = asyncio.create_task(bridge.chat("original"))
+        await gateway.accepted.wait()
+        with pytest.raises(RuntimeError, match="unknown"):
+            await bridge.cancel()
+        gateway.release.set()
+        try:
+            reply = await asyncio.wait_for(task, 1)
+            assert reply.state == "aborted"
+            assert len(gateway.turns) == 1
+            assert len([1 for method, _, _ in gateway.calls if method == "chat.send"]) == 1
+        finally:
+            await bridge.close()
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("result_kind", ["rejected", "wrong_run", "wrong_type", "recovery_required"])
+def test_stop_requires_a_matching_confirmed_result(result_kind):
+    class Unconfirmed(_Gateway):
+        async def request(self, method, params, *, idempotency_key=None):
+            if method == "chat.abort":
+                return {"rejected": ChatAbortResult(params.session_id, params.run_id, False),
+                        "wrong_run": ChatAbortResult(params.session_id, "another-run", True),
+                        "wrong_type": RunsLatestResult(None)}[result_kind]
+            return await super().request(method, params, idempotency_key=idempotency_key)
+
+    async def exercise():
+        gateway = Unconfirmed()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        gateway.runs[bridge.session_id] = RunSnapshot(bridge.session_id, "original",
+            "recovery_required" if result_kind == "recovery_required" else "running")
+        with pytest.raises(RuntimeError):
+            await bridge.cancel()
+        assert not gateway.turns
+        await bridge.close()
+    asyncio.run(exercise())
+
+
+def test_stop_during_reconnect_does_not_retry_unknown_input_until_explicit_resume():
+    class LostAcceptance(_Gateway):
+        def __init__(self):
+            super().__init__()
+            self.reconnecting, self.release = asyncio.Event(), asyncio.Event()
+            self.attempts = []
+
+        async def ensure_connected(self):
+            if len(self.attempts) == 1 and not self.release.is_set():
+                self.reconnecting.set()
+                await self.release.wait()
+
+        async def request(self, method, params, *, idempotency_key=None):
+            if method == "chat.send":
+                self.attempts.append((params, idempotency_key))
+                if len(self.attempts) == 1:
+                    raise GatewayMutationOutcomeUnknown("mutation_outcome_unknown", "lost acceptance")
+            return await super().request(method, params, idempotency_key=idempotency_key)
+
+    async def exercise():
+        gateway = LostAcceptance()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        task = asyncio.create_task(bridge.chat("original"))
+        await gateway.reconnecting.wait()
+        with pytest.raises(RuntimeError, match="unknown"):
+            await bridge.cancel()
+        gateway.release.set()
+        with pytest.raises(RuntimeError, match="unknown"):
+            await task
+        assert len(gateway.attempts) == 1 and not gateway.turns
+        assert (await bridge.resume()).state == "completed"
+        assert gateway.attempts[0] == gateway.attempts[1]
+        assert len(gateway.turns) == 1
+        await bridge.close()
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize("closing", [False, True])
+def test_late_stop_receipt_cannot_clear_a_new_request_and_close_blocks_new_work(closing):
+    class DelayedStop(_Gateway):
+        def __init__(self):
+            super().__init__(running=True)
+            self.stopping, self.release = asyncio.Event(), asyncio.Event()
+            self.finished = None
+
+        async def request(self, method, params, *, idempotency_key=None):
+            if method == "chat.abort" and params.run_id == "run-0":
+                self.stopping.set()
+                await self.release.wait()
+                return ChatAbortResult(params.session_id, params.run_id, False)
+            if method == "runs.get" and params.run_id == "run-0" and self.finished is not None:
+                return RunsGetResult(self.finished)
+            return await super().request(method, params, idempotency_key=idempotency_key)
+
+    async def exercise():
+        gateway = DelayedStop()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        first = asyncio.create_task(bridge.chat("first"))
+        await gateway.accepted.wait()
+        stopping = asyncio.create_task(bridge.close() if closing else bridge.cancel())
+        await gateway.stopping.wait()
+        gateway.finished = replace(gateway.runs[bridge.session_id], state="completed")
+        assert (await asyncio.wait_for(first, 1)).state == "completed"
+        gateway.runs[bridge.session_id] = gateway.finished
+        gateway.accepted.clear()
+        second = asyncio.create_task(bridge.chat("second"))
+        try:
+            if closing:
+                with pytest.raises(RuntimeError, match="closed"):
+                    await asyncio.wait_for(second, 1)
+                assert len(gateway.turns) == 1
+            else:
+                await asyncio.wait_for(gateway.accepted.wait(), 1)
+                pending = bridge._turn
+            gateway.release.set()
+            await stopping
+            if not closing:
+                assert bridge._turn is pending
+                await bridge.cancel()
+                assert (await asyncio.wait_for(second, 1)).state == "aborted"
+                assert len(gateway.turns) == 2
+        finally:
+            gateway.release.set()
+            await stopping
+            if not second.done():
+                second.cancel()
+                await asyncio.gather(second, return_exceptions=True)
+            await bridge.close()
+    asyncio.run(exercise())
+
+
 def test_cancelling_during_unknown_acceptance_does_not_submit_work_to_cancel_it():
     class BlockedSend(_Gateway):
         def __init__(self):
@@ -226,6 +406,92 @@ def test_cancelling_during_unknown_acceptance_does_not_submit_work_to_cancel_it(
             await asyncio.wait_for(task, 1)
         await bridge.close()
         assert gateway.sends == 1 and not gateway.turns and gateway.closed
+    asyncio.run(exercise())
+
+
+def test_cancel_during_resume_lookup_is_not_blocked_by_the_observation_lock():
+    class DelayedLookup(_Gateway):
+        def __init__(self):
+            super().__init__(running=True)
+            self.looking, self.release = asyncio.Event(), asyncio.Event()
+
+        async def request(self, method, params, *, idempotency_key=None):
+            if method == "runs.latest":
+                self.looking.set()
+                await self.release.wait()
+            return await super().request(method, params, idempotency_key=idempotency_key)
+
+    async def exercise():
+        gateway = DelayedLookup()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        gateway.runs[bridge.session_id] = RunSnapshot(bridge.session_id, "original", "running")
+        resuming = asyncio.create_task(bridge.resume())
+        await gateway.looking.wait()
+        try:
+            with pytest.raises(RuntimeError, match="unknown"):
+                await asyncio.wait_for(bridge.cancel(), 1)
+        finally:
+            gateway.release.set()
+        assert (await asyncio.wait_for(resuming, 1)).state == "aborted"
+        assert not any(method == "chat.send" for method, _, _ in gateway.calls)
+        await bridge.close()
+    asyncio.run(exercise())
+
+
+def test_cancelled_waiter_allows_next_input_only_after_terminal_confirmation():
+    async def exercise():
+        gateway = _Gateway(running=True)
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        task = asyncio.create_task(bridge.chat("first"))
+        await gateway.accepted.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        gateway.running = False
+        reply = await bridge.chat("second")
+        assert reply.state == "completed" and len(gateway.turns) == 2
+        first_abort = next(i for i, (method, _, _) in enumerate(gateway.calls) if method == "chat.abort")
+        assert gateway.calls[first_abort + 1][0] == "runs.get"
+        await bridge.close()
+    asyncio.run(exercise())
+
+
+def test_stop_while_rechecking_previous_terminal_prevents_the_next_input():
+    class DelayedTerminal(_Gateway):
+        def __init__(self):
+            super().__init__(running=True)
+            self.checking, self.release = asyncio.Event(), asyncio.Event()
+            self.delay_next = False
+
+        async def request(self, method, params, *, idempotency_key=None):
+            if method == "runs.get" and self.delay_next:
+                self.delay_next = False
+                self.checking.set()
+                await self.release.wait()
+            return await super().request(method, params, idempotency_key=idempotency_key)
+
+    async def exercise():
+        gateway = DelayedTerminal()
+        bridge = ConversationBridge(gateway, client_id="avatar")
+        bridge.select_history("character", "first")
+        first = asyncio.create_task(bridge.chat("first"))
+        await gateway.accepted.wait()
+        first.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await first
+        gateway.delay_next = True
+        second = asyncio.create_task(bridge.chat("must not be submitted"))
+        await gateway.checking.wait()
+        await bridge.cancel()
+        gateway.release.set()
+        try:
+            with pytest.raises(asyncio.CancelledError):
+                await asyncio.wait_for(second, 1)
+            assert len(gateway.turns) == 1
+        finally:
+            await bridge.close()
     asyncio.run(exercise())
 
 

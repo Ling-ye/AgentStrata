@@ -2,6 +2,20 @@
 
 处理 QQ 登录、平台连接和健康检查；身份及准入规则见 [身份与资源](../reference/identity-resources.md)。
 
+## 桥接配置与回执
+
+NapCat 是 OneBot provider，AgentStrata 复用现有 QQ Channel；本阶段无需 fork NapCat。
+连接由应用 `bot.yaml` 的 `channels.qq` 声明，模型和执行方式在其引用的 `agent.yaml` 配置。
+`agents.runtime` 可选 LangGraph/Codex，不改变 QQ 编解码、准入和发送回执规则。
+配置、能力、取消与证据的完整对照见[外部桥接基线](../reference/runtime.md#外部桥接基线)。
+
+修改连接或 Agent profile 后按[实例运维](instances.md)更新服务。渠道就绪需要登录账号匹配，
+Agent 完成不代表 QQ 已收到；`provider_acknowledged` 只证明 provider 接受动作。
+取消 Agent 或停止宿主不撤回已经提交的消息；超时、断线或发送中取消造成的未知交付不自动重发。
+
+受控联调使用随机回环端口和假 OneBot 对端，验证生产宿主与两个 runtime；
+真实 NapCat 健康检查与实际发送仍按本页的外部检查边界执行。
+
 ## QQ / NapCat
 
 OneBot `3001` 和 WebUI `6099` 只允许绑定回环地址。WebUI 管理

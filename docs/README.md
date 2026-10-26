@@ -10,7 +10,8 @@ guides 解释如何操作，reference 维护当前机制与修改边界，specs 
 
 [Agent、外部桥接与持续改进主计划](../specs/application-harness-framework/spec.md)是新架构的唯一实施计划，
 包含固定版本的开源源码参考、最小公开契约和 [M0、M1、M1.1 与 M2—M7](../specs/application-harness-framework/spec.md#分阶段开发)的前置条件与验收标准。
-M1 已提供独立应用与 Agent 配置；M1.1 收敛为 LangGraph/Codex。当前已有运行、评测、修复与指定接入，桥接基线、需求改进及版本自动启用仍按后续阶段开发。
+M1 已提供独立应用与 Agent 配置，M1.1 收敛为 LangGraph/Codex；M2 的[桥接基线](reference/runtime.md#外部桥接基线)统一说明现有 Live2D 与 QQ/NapCat 的配置和证据边界。
+面向桥接的评测体系、需求改进及版本自动启用按 M3—M7 开发，受控验证不代替真实交付。
 参与新框架开发时先选择阶段，再读取相关领域，不把计划中的接口当作当前操作入口。
 
 ## 选择使用路径
@@ -23,6 +24,7 @@ M1 已提供独立应用与 Agent 配置；M1.1 收敛为 LangGraph/Codex。当�
 | 准备源码开发环境 | [开发指南](guides/development.md) |
 | 评测 Agent 或比较改动 | [Evaluation 指南](guides/evaluation.md) |
 | 修复失败与启动自身治理 | [Harness 指南](guides/harness.md) |
+| 核对 Live2D 与 QQ 桥接的配置、权限和回执 | [外部桥接基线](reference/runtime.md#外部桥接基线) |
 | 运行机器人应用 | [首次部署](guides/deployment.md) / [实例运维](guides/instances.md) |
 | 使用已有 Live2D 客户端或生成器 | [Live2D 指南](guides/live2d.md) |
 

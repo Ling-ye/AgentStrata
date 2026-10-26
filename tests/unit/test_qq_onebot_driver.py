@@ -146,9 +146,9 @@ class _FakeConnection:
         self.closed = True
 
 
-def _outbound(*, account_id: str = BOT, text: str = "reply") -> OutboundEnvelope:
+def _outbound(*, account_id: str = BOT, text: str = "reply", outbound_id: str = "outbound-1") -> OutboundEnvelope:
     return OutboundEnvelope(
-        outbound_id="outbound-1",
+        outbound_id=outbound_id,
         account=ChannelAccountRef(channel="qq", account_id=account_id),
         conversation=ConversationRef(kind="group", conversation_id=GROUP),
         segments=(MessageSegment(kind="text", text=text),),
@@ -157,6 +157,41 @@ def _outbound(*, account_id: str = BOT, text: str = "reply") -> OutboundEnvelope
 
 
 class OneBotDriverTests(IsolatedAsyncioTestCase):
+    async def test_cancel_during_send_releases_pending_slot_without_replaying(self) -> None:
+        class BlockedConnection(_FakeConnection):
+            def __init__(self):
+                super().__init__()
+                self.started = asyncio.Event()
+                self.block = True
+
+            async def send(self, raw):
+                request = json.loads(raw)
+                if request["action"] == "send_msg" and self.block:
+                    self.sent.append(request)
+                    self.started.set()
+                    await asyncio.Future()
+                await super().send(raw)
+
+        connection = BlockedConnection()
+        async def connect(_config):
+            return connection
+        async def on_event(_event):
+            pass
+        channel = OneBotForwardWebSocketDriver(_config(max_pending_actions=1), on_event, connection_factory=connect)
+        await channel.start()
+        try:
+            sending = asyncio.create_task(channel.send(_outbound()))
+            await connection.started.wait()
+            sending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await sending
+            assert not channel._pending
+            connection.block = False
+            assert (await channel.send(_outbound(text="next", outbound_id="outbound-2"))).stage == "provider_acknowledged"
+            assert len([item for item in connection.sent if item["action"] == "send_msg"]) == 2
+        finally:
+            await channel.stop()
+
     async def test_start_verifies_login_account_before_becoming_ready(self) -> None:
         connection = _FakeConnection()
         factory = mock.AsyncMock(return_value=connection)

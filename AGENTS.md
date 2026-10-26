@@ -48,7 +48,7 @@ Native 独立执行路径退役，旧配置需重新配置；业务历史、人�
 | 当前任务 | 首读 | 何时继续展开 |
 | --- | --- | --- |
 | 分阶段开发、双 runtime、外部桥接与需求改进 | [主计划与阶段](specs/application-harness-framework/spec.md#分阶段开发) | 先确认本阶段及前置条件，再进入相关领域；公开契约、复用源码与迁移方案见同一主计划 |
-| 外部应用插件、适配器与 Live2D | [独立客户端](docs/reference/runtime.md#独立交互客户端)、[软件插件](docs/reference/runtime.md#外部软件插件管理) | 当前操作读 [Live2D 指南](docs/guides/live2d.md)；fork、自动接入与版本启用按主计划推进 |
+| 外部应用插件、适配器与 Live2D | [桥接基线](docs/reference/runtime.md#外部桥接基线)、[独立客户端](docs/reference/runtime.md#独立交互客户端)、[软件插件](docs/reference/runtime.md#外部软件插件管理) | 当前操作读 [Live2D 指南](docs/guides/live2d.md)；fork、自动接入与版本启用按主计划推进 |
 | Harness 修复、验收与返工 | [角色](docs/reference/harness.md#按需角色协作)、[验收](docs/reference/harness.md#对照验证与独立验收) | 执行器或恢复问题读同页相应章节；图设计变化读 [Harness 编排规格](specs/harness-langgraph/spec.md) |
 | Eval、评分、Case 或对照结果 | [Evaluation](docs/reference/evaluation.md) | 执行归属与生命周期读[服务协议](docs/reference/evaluation-service.md)；题目变化读[用例约束](docs/reference/evaluation-cases.md) |
 | 自身治理、Skill 学习或交付 | [代码熵](docs/reference/code-health.md) | 检查规则读[黄金原则](docs/reference/harness-principles.md)；远端操作与清理读[交付契约](docs/reference/delivery.md) |

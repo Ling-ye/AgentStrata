@@ -290,6 +290,10 @@ class OneBotForwardWebSocketDriver:
         self._pending[echo] = future
         try:
             await connection.send(raw_request)
+        except asyncio.CancelledError:
+            self._pending.pop(echo, None)
+            future.cancel()
+            raise
         except Exception as exc:
             self._pending.pop(echo, None)
             error_type = OneBotDeliveryUnknownError if side_effect_unknown else OneBotDriverError

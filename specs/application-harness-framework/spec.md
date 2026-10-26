@@ -15,7 +15,7 @@ Agent 可通过 LangGraph 或 Codex 执行，连接 Live2D、NapCat 等可由 Ag
 并在授权范围内启用通过验收的改进。
 
 本规格是唯一主计划。`accepted` 表示设计可实施，不表示所有目标已完成。
-当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛；M2—M7 待依次开发。
+当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛及 M2 外部桥接基线；M3—M7 待依次开发。
 实现完成与运行实例部署分别验收。当前事实由[架构总览](../../docs/reference/architecture.md)及领域正文维护，
 计划接口在实现前不进入快速开始。
 
@@ -64,6 +64,189 @@ flowchart TB
 
 图中完整需求改进与自动启用仍为后续阶段目标。日常回合由配置选择一个 runtime，
 不要求每条 Codex 请求先经过 LangGraph 的模型规划。
+
+### 实体关系与实现映射
+
+本节是领域级 ERD，说明业务对象的身份、归属和引用，不是新增数据库表清单。
+现有 YAML、JSON、SQLite、产物引用与 LangGraph checkpoint 沿原职责维护。
+图中的 `PK/FK` 表示逻辑身份与引用；为阅读而使用的 `*_ref` 不要求新增同名字段或 UUID，
+实际身份从已有应用、实例、任务和文件作用域解析。
+
+#### 应用配置与运行关系
+
+```mermaid
+erDiagram
+    AGENT_PROFILE ||--o{ APPLICATION_SPEC : "被引用"
+    APPLICATION_SPEC ||--o| APPLICATION_INSTANCE : "部署为"
+    APPLICATION_INSTANCE ||--o{ BRIDGE_BINDING : "配置接入"
+    APPLICATION_INSTANCE ||--o{ AGENT_SESSION : "拥有会话"
+    AGENT_SESSION ||--o{ RUNTIME_SESSION_BINDING : "按 actor 绑定执行"
+
+    APPLICATION_SPEC {
+        string spec_ref PK "应用声明引用"
+        string app_id "应用身份"
+        string agent_profile_ref FK "独立 Agent 配置"
+    }
+    AGENT_PROFILE {
+        string profile_ref PK "Agent 配置文件引用"
+        string runtime_id "langgraph 或 codex"
+        string model_binding_refs "llm 用途绑定"
+        string capability_config "提示词、工具与上下文配置"
+    }
+    APPLICATION_INSTANCE {
+        string instance_ref PK "受管实例身份"
+        string spec_ref FK "应用声明"
+        string model_catalog_ref "由实例环境解析的模型配置"
+        string workspace_ref "实例工作区"
+        string state_root_ref "实例状态目录"
+    }
+    BRIDGE_BINDING {
+        string bridge_ref PK "实例内接入的概念引用"
+        string instance_ref FK "所属实例"
+        string kind "channel、client 或 tool"
+        string implementation_ref "现有桥接实现"
+        string config_ref "连接、凭据引用及权限配置"
+    }
+    AGENT_SESSION {
+        string session_ref PK "宿主会话身份"
+        string instance_ref FK "所属实例"
+        string conversation_ref "业务会话引用"
+    }
+    RUNTIME_SESSION_BINDING {
+        string binding_id PK "运行时绑定身份"
+        string session_ref FK "宿主会话引用"
+        string actor_key "可信调用者隔离范围"
+        string runtime_id "实际执行方式"
+        string runtime_config_digest "恢复所需配置摘要"
+        string status "active、invalidated、archived"
+    }
+```
+
+一份显式部署声明在本基线中对应零个或一个当前实例；插件包可以包含多份应用声明。
+profile 默认由各应用独立持有，显式引用仍受现有路径和权限约束，配置复用不意味着共享状态。
+模型绑定需与实例选择的模型配置一起解析，同名用途不能被当作跨实例全局身份；
+人格、记忆和工作区数据由实例及宿主会话管理，profile 只声明能力和配置引用。
+
+`BRIDGE_BINDING` 是现有接入配置的概念视图：QQ/NapCat 对应 OneBot Channel，
+Live2D 对话对应认证 Gateway 客户端，动作对应 MCP/工具接口。
+M2 沿这些接口工作，没有新增统一 Bridge 注册中心。
+会话和绑定表示宿主的执行身份，不承诺所有 runtime 或客户端都拥有相同的持久化恢复能力。
+
+模型执行、取消确认、provider acknowledgement 与客户端实际呈现分别留证。
+发送回执经 `outbound_id` 关联宿主出站记录，执行记录按 `run_id` 查询；
+客户端丢失原请求参数与幂等键后，最新 run 不能证明原来未确认的输入已执行。
+具体恢复与交付边界以[桥接基线](../../docs/reference/runtime.md#外部桥接基线)为准。
+
+#### 改进、验证与版本启用关系
+
+下图同时包含已有 Harness/Eval 对象和后续扩展。完整版本清单、外部桥接评测绑定及
+`ACTIVATION` 属于 M3—M5 目标，不因画入 ERD 而成为当前已实现接口。
+
+```mermaid
+erDiagram
+    HARNESS_TASK }o--o{ VERSION_SNAPSHOT : "引用基线与候选"
+    HARNESS_TASK ||--o{ VERIFICATION_RUN : "发起验证"
+    VERSION_SNAPSHOT ||--o{ VERIFICATION_RUN : "被精确验证"
+    VERIFICATION_RUN }o--o{ EVALUATION : "可引用评测证据"
+    EVALUATION ||--o{ EVALUATION_TARGET : "定义执行对象"
+    EVALUATION_TARGET ||--o{ TRIAL : "执行样例与重复"
+    VERSION_SNAPSHOT |o--o{ EVALUATION_TARGET : "改进评测时绑定版本"
+    HARNESS_TASK ||--o| ACCEPTED_CANDIDATE : "当前接受回执"
+    VERSION_SNAPSHOT ||--o{ ACCEPTED_CANDIDATE : "候选通过验收"
+    ACCEPTED_CANDIDATE }o--|{ VERIFICATION_RUN : "绑定验证依据"
+    ACCEPTED_CANDIDATE ||--o{ ACTIVATION : "授权范围内启用"
+    APPLICATION_INSTANCE ||--o{ ACTIVATION : "记录版本切换"
+
+    HARNESS_TASK {
+        string task_ref PK "既有任务身份"
+        string kind "目标任务 integrate 或 improve"
+        string scope_ref "获准修改范围"
+        string goal_digest "冻结目标摘要"
+        string verification_plan_ref "冻结验证条件"
+    }
+    VERSION_SNAPSHOT {
+        string snapshot_ref PK "不可变版本引用"
+        string manifest_digest "目标版本清单摘要"
+        string source_ref "固定源码或候选工作区"
+        string component_refs "runtime、配置及桥接产物"
+    }
+    VERIFICATION_RUN {
+        string run_ref PK "验证执行身份"
+        string task_ref FK "所属任务"
+        string snapshot_ref FK "实际验证版本"
+        string result_ref "结构化检查结果"
+        string evidence_refs "命令、产物与回执引用"
+    }
+    EVALUATION {
+        string evaluation_id PK "评测身份"
+        string conditions_ref "冻结执行和评分条件"
+        string status "评测生命周期状态"
+    }
+    EVALUATION_TARGET {
+        string target_ref PK "evaluation_id 与 target_id 的组合"
+        string evaluation_id FK "所属评测"
+        string snapshot_ref FK "目标版本引用，按评测类型使用"
+        string runtime_id "实际执行方式"
+        string fingerprint "执行对象指纹"
+    }
+    TRIAL {
+        string trial_id PK "单次样例执行身份"
+        string target_ref FK "所属执行对象"
+        string case_snapshot_ref "冻结样例引用"
+        int attempt "重复执行序号"
+        string outcome "结果分类"
+    }
+    ACCEPTED_CANDIDATE {
+        string receipt_ref PK "任务内接受回执引用"
+        string candidate_snapshot_ref FK "获接受的候选"
+        string goal_digest "本次目标摘要"
+        string verification_digest "验证依据摘要"
+        string review_binding "独立审核绑定"
+    }
+    ACTIVATION {
+        string operation_ref PK "目标启用操作身份"
+        string instance_ref FK "目标实例"
+        string receipt_ref FK "接受回执"
+        string from_version_ref "切换前版本"
+        string to_version_ref "待启用版本"
+        string observed_version_ref "实际运行版本证据"
+        string status "启用、失败、未知或撤回状态"
+    }
+    APPLICATION_INSTANCE {
+        string instance_ref PK "与运行关系图中的实例相同"
+    }
+```
+
+基线与候选是任务对快照的使用角色，不是版本的永久属性；同一快照可以被不同任务引用。
+首次接入可以没有既有应用基线，改进任务需冻结比较基线。
+验证可以引用多个 Evaluation，也可以使用已有命令和产物检查，不要求把所有验证重包成评测任务。
+
+Target 的局部 ID（例如 `codex`）不能充当全局主键，需连同 Evaluation 身份和 fingerprint 使用。
+每次 Trial 还绑定冻结的 Case 定义与重复序号；图中的样例引用由既有定义快照提供，
+不另建一套 Case 版本库。通用 Eval 可以独立于 Harness 运行；
+针对代码、配置或桥接版本的改进评测必须绑定确切快照，不能用未绑定版本的结果接受候选。
+
+接受回执绑定候选、目标、验证与独立审核。图示保留任务当前接受结果，历史产物沿现有记录机制保存。
+`ACTIVATION` 专指 M5 的受管候选启用，普通插件安装仍使用原安装记录；
+接受、源码交付、进程启动和运行版本核对分别记录，启用失败或结果未知时按实际回执处理。
+
+#### 实现映射与约束
+
+| ERD 概念 | 当前实现入口 | 实施边界 |
+| --- | --- | --- |
+| 应用与 Agent 配置 | [ApplicationSpec、AgentProfile](../../src/chatcopilot/contracts/application.py)、[BotSpec](../../src/chatcopilot/botspec/model.py) | M1 已有文件引用与装配；不新增全局 profile 注册表 |
+| 实例与会话 | [实例装配](../../src/chatcopilot/botspec/runtime.py)、[Gateway 会话和 run 投影](../../src/chatcopilot/contracts/gateway_rpc.py) | 沿用宿主身份及状态作用域 |
+| 运行时绑定 | [RuntimeSessionRef](../../src/chatcopilot/contracts/runtime_adapter.py)、[RuntimeSessionBinding](../../src/chatcopilot/contracts/execution.py) | M1.1 已有契约；恢复能力由 adapter 决定 |
+| 桥接配置与回执 | [M2 桥接基线](../../docs/reference/runtime.md#外部桥接基线)、[出站与投递契约](../../src/chatcopilot/contracts/gateway.py) | 概念投影现有 Channel、Gateway 客户端和工具配置，不引入万能驱动或客户端任务数据库 |
+| 版本与验证 | [CandidateRef、VerificationPlan、VerificationResult](../../src/chatcopilot/harness/models.py) | 复用已有快照和验证身份；完整组件清单按 M3—M5 扩展 |
+| Evaluation、Target、Case、Trial | [现有评测契约](../../src/chatcopilot/evals/models.py) | 已有生命周期与定义快照；Agent/桥接覆盖按 M3 扩展 |
+| 候选接受 | [AcceptedCandidate](../../src/chatcopilot/harness/agent_types.py) | 沿用独立验收签发，按目标版本清单补齐绑定 |
+| 版本启用 | [插件安装记录](../../src/chatcopilot/plugins/repository.py)、[实例运维](../../docs/guides/instances.md) | M5 扩展启用、运行身份核对与撤回，尚非现有完整事务 |
+
+引用可变配置文件不等于冻结了配置。比较与接受需绑定当时的内容摘要；
+代码、runtime、配置或桥接产物改变后，旧回执不能直接用于新候选。
+秘密只保存引用；角色、权限和资源作用域由宿主采信，不能由 profile 文本或桥接载荷自行授予。
+checkpoint 只记录图执行位置，不能替代外部操作回执、用户可见交付或版本启用证据。
 
 ### 双 runtime 与 Native 退役
 
@@ -220,15 +403,20 @@ M5 沿现有实例与插件管理准备独立候选，等待可切换状态，�
 
 #### M2 外部桥接基线
 
-- 前置：M1.1；状态：待开发。
+- 前置：M1.1；状态：已完成，受控生产装配基线成立；真实外部交付按 M7 单独验收。
 - 交付：整理已有 Live2D、QQ 的连接配置、能力、权限、取消、回执及验证，fork 工作按需独立列出。
 - 验收：两类接入可绑定所选 runtime，平台细节留在桥接层。
-- 文档：更新运行链、外部插件规格及两类接入指南。
+- 文档：更新[桥接基线](../../docs/reference/runtime.md#外部桥接基线)、外部插件规格及两类接入指南。
+- 实施切口：复用 Gateway RPC、OneBot Channel 与 MCP；安装器沿宿主契约校验 runtime/model，
+  修正提交前停止、取消回执与迟到结果、发送中取消的待回执清理；
+  Gateway 与 Agent 模型装配使用同一显式实例环境。
+  使用[生产装配基线](../../tests/integration/test_application_bridge_baseline.py)和两个 runtime 的受控模型/provider 验证两类接入，
+  真实模型、语音与 QQ 交付另行验收。
 
 #### M3 Agent 与桥接评测
 
 - 前置：M2；状态：待开发。
-- 交付：既有 Eval 中建立两个 runtime、两类接入的基线与回归用例。
+- 交付：复用 M2 的桥接与运行链用例，在既有 Eval 生命周期中建立两个 runtime、两类接入的评测基线、评分和候选对照。
 - 验收：区分 Agent 错误、桥接错误、环境失败、交付证据缺失；候选无法改写接受规则。
 - 文档：更新 Evaluation、服务协议、用例约束与相应指南。
 

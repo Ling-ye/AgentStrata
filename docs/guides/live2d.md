@@ -3,7 +3,7 @@
 安装 `open-llm-vtuber` 插件后，AgentStrata 会准备固定版本的 Open-LLM-VTuber、浏览器页面、
 Mao 模型、SenseVoice INT8 CPU 识别和 Edge TTS 晓晓语音，并启动独立 Gateway。
 AgentStrata 保存对话、权限与记忆；客户端负责语音、角色及播放。
-职责见[运行链](../reference/runtime.md#独立交互客户端)。
+职责见[运行链](../reference/runtime.md#独立交互客户端)，连接、能力与回执对照见[桥接基线](../reference/runtime.md#外部桥接基线)。
 
 ## 安装
 
@@ -24,7 +24,9 @@ agentstrata plugin install open-llm-vtuber --model-binding chat
 ```
 
 默认使用 Codex runtime。其他已配置的执行方式可用
-`--option runtime=langgraph`；ChatGPT 订阅认证仍要求 Codex。插件用独立 Python 3.12
+`--option runtime=langgraph`。两种 runtime 均按宿主模型契约校验所选绑定；LangGraph 使用
+ChatGPT 认证时不要求运行 Codex app-server，Codex 本身仍要求官方 Responses 路由与原生执行文件。
+插件用独立 Python 3.12
 环境运行，上游依赖不会装入主程序环境。插件 Python 声明为 `>=3.12,<3.13`。
 
 安装器从匹配的 GitHub Release 取得主包与插件 wheel，并校验 SHA256SUMS 和包身份。
@@ -136,7 +138,10 @@ TTS、口型与播放过程仍由客户端管理，未新增到任务流。
 `/source` 显示源码入口，首次回复中的源码提示完整保留；显示历史不会回灌为模型记忆。
 
 停止按钮结束本地播放并请求取消仍在运行的 Agent。`/resume` 查询原请求，`/stop` 请求
-停止；结果未知时不提交另一个 Agent 请求。历史切换要求当前回合已完成或停止。
+停止。提交前停止不会启动 Agent；已提交而受理结果未知时，不会为了取消而重发输入。
+`/resume` 使用原请求参数和幂等键对账，已有 run 则只查询原 run；取消被接受后仍需等原 run 终止。
+结果未知或恢复待处理时不能按“已取消”继续发送。关闭对话后不再启动新输入，历史切换要求当前回合已完成或停止。
+客户端进程重建后，`/resume` 观察所选历史最新的 run；若原请求记录已丢失，不应把该结果当作未确认输入的执行证明。
 删除客户端历史只影响显示记录，不删除 AgentStrata 的长期记忆和运行证据。
 
 - `doctor` 分别检查安装资源、Gateway 握手、MCP 和源码入口可获取性；浏览器尚未连接不使安装失败。
@@ -162,6 +167,8 @@ python scripts/check_vtuber_compat.py
 该脚本与 CI 共用，安装发行包、应用固定补丁、构建页面并检查实际 HTTP/WebSocket/MCP；
 语音及 Agent 使用测试替身，不下载识别模型、不调用真实模型，也不需要部署凭据。
 项目完整检查仍为[开发指南](development.md#选择检查范围)中的 `full`。
+桥接与 runtime 的受控联调入口是 `tests/integration/test_application_bridge_baseline.py`，
+使用生产装配验证 LangGraph/Codex 的路由、对话、取消和客户端隔离，不调用真实模型。
 
 真实验收单独覆盖多轮文字、按键录音、TTS、口型、表情、动作、停止及断线恢复，记录模型
 与音频设备。录音文件输入、模拟浏览器回执和实体麦克风/扬声器应分别报告。

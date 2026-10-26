@@ -26,10 +26,12 @@ AgentStrata 提供统一 CLI，将显式选择的官方插件安装在独立环�
 参数数组；安装依赖不继承模型凭据。仅维护者的 CLI 安装操作可以安装程序。
 
 VTuber 使用 Python 3.12，插件支持 Python >=3.12,<3.13。软件、工具和依赖记录固定版本
-及摘要；前后端沿用已验证的 commit。对话沿用 Gateway v1，头像控制沿用 HTTP MCP。
+及摘要；前后端沿用已验证的 commit。对话沿用现有认证 Gateway RPC，头像控制沿用 HTTP MCP。
 Gateway、身份、取消和 AgentResult 契约不变。/source 与首次源码提示完整显示。
 
-安装生成独立的 client-only BotSpec、工作区和两个独立凭据；模型绑定引用现有配置。
+安装生成独立的 client-only 应用描述、Agent profile、工作区和两个独立凭据；
+LangGraph/Codex 按宿主路由契约校验，模型绑定保存为实例快照，凭据保持引用。
+桥接能力和证据归属见[桥接基线](../../docs/reference/runtime.md#外部桥接基线)。
 固定默认端口允许显式覆盖，冲突失败。前端使用同源连接，后台只监听回环并检查 Origin。
 客户端先就绪，Gateway 再发现 MCP；浏览器未连接是可辨识的能力状态，不是安装失败。
 

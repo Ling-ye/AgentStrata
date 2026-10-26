@@ -101,6 +101,45 @@ AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[
 VTuber 客户端，模型和动作白名单保存在客户端持久数据目录；导入不修改 Agent 身份或
 模型连接。职责与交付边界见[生成规格](../../specs/live2d-generation/spec.md)。
 
+## 外部桥接基线
+
+Live2D 和 QQ/NapCat 使用现有接口连接 Agent，不增加统一 Bridge 驱动或第二套会话管理。
+应用文件引用 Agent profile，`agents.runtime` 选择 LangGraph/Codex；连接、模型和认证由宿主既有契约校验。
+宿主显式收到的实例环境同时用于 Gateway 与模型装配，不能退回读取另一个进程模型配置。
+
+| 边界 | Live2D / Open-LLM-VTuber | QQ / NapCat |
+| --- | --- | --- |
+| 连接 | 后端 GatewayWebSocketClient，浏览器使用客户端自己的 WebSocket | OneBot v11 正向 WebSocket Channel |
+| 配置 | `config/adapter.json` 的 Gateway 地址、client_id、凭据引用；`config/agent.yaml` 选择 runtime | `channels.qq` 的 endpoint/account/token 引用；独立 Agent profile 选择 runtime |
+| 能力 | 文字、按键语音及完整回复；可选 MCP 的 list_actions、set_expression、play_motion | 文本、结构化 @、引用与已支持的图片/文件资源；动作由 OneBot codec 显式构造 |
+| 身份权限 | Gateway 绑定客户端角色与会话归属；头像端点要求独立凭据、回环和允许的 Origin | 验证连接凭据、登录账号、消息来源与准入；文本和 provider 昵称不能提升角色 |
+| 工具 | 角色动作经过既有 ToolRegistry/MCP 权限与本地模型、动作白名单 | 宿主工具仍经同一 Registry/Executor，Channel 不授予工具权限 |
+| 就绪 | Gateway 就绪、浏览器已连接、语音可用是不同事实 | get_login_info 与配置账号一致后渠道才就绪；实际消息交付另看回执 |
+| 取消 | 提交前停止不发 chat.send；已受理后针对原 run 请求取消 | 宿主取消 Agent 执行；已发出的 provider 动作不能由取消自动撤回 |
+| 结果 | Agent run 终态、头像动作回执、客户端播放事实分别记录 | Agent 结果与 provider_acknowledged 分别记录；回执不证明收件人已读 |
+
+LangGraph 可使用模型契约支持的 API Key 或 ChatGPT 认证；选择认证方式不会自动改写 runtime。
+Codex 仍要求受支持的官方 Responses 路由与原生 app-server。Live2D 新安装保存实例模型配置快照，
+凭据保持引用；两类接入的工作区、会话与记忆由各自实例持有。
+
+Live2D 对尚未获知 run_id 的输入保留原参数和幂等键；普通重连只能用同一请求对账，
+收到停止后禁止自动重发该输入。用户显式 `/resume` 才重新对账或观察原 run。
+取消回执必须匹配 session/run；接受取消不等于任务已终止，终态由原 run 的查询确认。
+恢复待处理、错误回执和缺少确认均保持未知，迟到回执不能清除另一请求；关闭后不接受新输入。
+客户端进程重建后，若本地原参数和幂等键已丢失，`/resume` 只能观察该历史的最新 run，
+不能据此认定中断前未确认的输入已经执行；M2 不新增客户端持久化任务库。
+
+QQ 的发送、等待回执和取消各自保留边界。发送过程中取消会释放本地待回执资源，
+但不说明 provider 没有执行；Gateway 沿既有 outbox 记录确认或未知，不自动重发未知交付。
+两类桥接均不承诺副作用恰好发生一次。
+
+生产装配基线见[桥接与 runtime 联调](../../tests/integration/test_application_bridge_baseline.py)。
+它覆盖两类接入与两个 runtime，使用真实 Application/Gateway/Channel/RuntimeAdapter，
+模型响应、Codex app-server 事件及 OneBot 对端使用受控替身；Live2D 头像凭据、Origin、动作名称与回执由
+[适配契约测试](../../tests/unit/test_vtuber_integration.py)及安装后的 HTTP/WebSocket/MCP 检查覆盖。
+这些是受控运行证据，真实模型、QQ 交付、浏览器动作体验和语音设备分别验收；
+M3 的评测评分与 M7 的实际改进证据仍按[主计划](../../specs/application-harness-framework/spec.md)推进。
+
 ## 外部软件插件管理
 
 `agentstrata plugin list/install/doctor/start/stop/uninstall` 是维护者显式调用的运维入口。

@@ -73,8 +73,8 @@ def configure(request: dict, sources: dict[str, Path]) -> dict:
         document = read_settings(model_env)
         binding = host["model_binding"]
         model = resolve_binding(binding, document=document, environment=os.environ)
-        if model.auth_mode == "chatgpt" and options["runtime"] != "codex":
-            raise InstallError("ChatGPT binding requires the Codex runtime")
+        from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
+        ResolvedRuntimeRoute(options["runtime"], model.model_route())
         values = {
             "AGENTSTRATA_VTUBER_CONFIG": str(config / "adapter.json"),
             "AGENTSTRATA_LLM_CONFIG": host["model_config"],

@@ -28,7 +28,8 @@ AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 
 | 已有基础 | QQ 渠道和 Live2D 独立客户端、插件安装与任务观测 | [QQ](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/qq.md)、[Live2D](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md) |
 | 已实现 M1 | 应用文件引用独立 Agent profile；新建应用拥有独立模型用途；提供显式配置迁移，复用既有 runtime 与实例状态管理 | [配置归属](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/configuration.md#配置归属与文件引用)、[迁移步骤](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#迁移内联-agent-配置) |
 | 已实现 M1.1 | 双 runtime 收敛、自有子 Agent 使用 LangGraph、Native 配置退役 | [执行契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md#一条执行契约) |
-| 后续实现 | M2—M7：桥接基线、Agent 与桥接评测、需求改进、版本启用撤回、工作台及真实闭环 | [分阶段开发](specs/application-harness-framework/spec.md#分阶段开发) |
+| 已实现 M2 | Live2D 与 QQ/NapCat 桥接的连接、能力、权限、取消和回执基线；两个 runtime 的受控生产装配验证 | [桥接基线](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/runtime.md#外部桥接基线) |
+| 后续实现 | M3—M7：Agent 与桥接评测、需求改进、版本启用撤回、工作台及真实闭环 | [分阶段开发](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发) |
 
 主计划的 `accepted` 表示设计可进入实施，不代表整套能力已经完成。当前命令与操作条件以快速开始和指南为准；阶段验收通过后，再更新对应能力状态。
 
@@ -40,7 +41,9 @@ AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 
 
 ## 框架总览
 
-实线展示已有运行关系与修复验证，虚线展示后续扩展。完整设计见[主计划](specs/application-harness-framework/spec.md#职责与数据流)。
+实线展示已有运行关系与修复验证，虚线展示后续扩展。完整设计见[主计划](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#职责与数据流)。
+
+配置、实例、会话、候选、评测与验收之间的关系见主计划的 [ERD 与实现映射](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#实体关系与实现映射)；图中区分已有对象与后续阶段目标。
 
 ```mermaid
 flowchart TB
@@ -196,13 +199,13 @@ uv run agentstrata --help
 | [Deep Agents / better-harness](https://github.com/langchain-ai/deepagents/tree/f26eb54c9b9f66d2ea7edbb9748413d58744534d/examples/better-harness) | Agent 执行能力组织、基线与候选改进流程 | 设计参考，未作为新框架接入；独立验收和隔离边界仍由项目保持 |
 | [GEPA](https://gepa-ai.github.io/gepa/api/optimize_anything/optimize_anything/) / [Harbor](https://docs.harborframework.com/agents/custom-agents) | 候选搜索、外部 Agent 与评测环境适配 | 后续候选方案，首版不增加强依赖 |
 
-具体源码入口、固定 revision、版本差异和采用理由见[主计划的复用清单](specs/application-harness-framework/spec.md#开源复用与版本依据)。设计参考不代表已经集成，也不代表性能或修复成功率排名。
+具体源码入口、固定 revision、版本差异和采用理由见[主计划的复用清单](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#开源复用与版本依据)。设计参考不代表已经集成，也不代表性能或修复成功率排名。
 
 各执行入口的前置条件与支持范围见 [Agent 路由说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)和 [Harness 操作指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)。通用仓库自动接入与实例自动启用尚未提供；模型权重训练不在本计划中。产品回放可使用冻结外部夹具，模拟回执不证明真实 QQ 送达。
 
 ## 参与开发
 
-按阶段建设新框架时，从[主计划开发阶段（含 M1.1）](specs/application-harness-framework/spec.md#分阶段开发)确认前置条件、交付物和验收标准，再进入[贡献指南](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md)与[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)。也欢迎继续改进已有 Harness、Eval、运行、工具和 Console。Python namespace 仍为 `chatcopilot`，依赖与支持范围以 [pyproject.toml](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml) 为准。
+按阶段建设新框架时，从[主计划开发阶段（含 M1.1）](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发)确认前置条件、交付物和验收标准，再进入[贡献指南](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md)与[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)。也欢迎继续改进已有 Harness、Eval、运行、工具和 Console。Python namespace 仍为 `chatcopilot`，依赖与支持范围以 [pyproject.toml](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml) 为准。
 
 [安全](https://github.com/Ling-ye/AgentStrata/blob/main/SECURITY.md) · [支持](https://github.com/Ling-ye/AgentStrata/blob/main/SUPPORT.md) · [行为准则](https://github.com/Ling-ye/AgentStrata/blob/main/CODE_OF_CONDUCT.md) · [变更记录](https://github.com/Ling-ye/AgentStrata/blob/main/CHANGELOG.md) · [AGPL-3.0-only 许可](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
 

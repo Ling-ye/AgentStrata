@@ -36,3 +36,6 @@ NOTICE.md 和两份上游许可原文，安装时不依赖源码 checkout。
 `assets.py` 将模型和字典保存在 `data/live2d`，运行时通过固定补丁读取该目录。
 模型导入不改写固定上游源码，导入 journal 未恢复时拒绝启动。生成和导入见
 [Live2D 指南](../../docs/guides/live2d.md#生成自己的角色)。
+
+连接、runtime/model 选择、权限、取消与回执边界统一维护在[外部桥接基线](../../docs/reference/runtime.md#外部桥接基线)。
+受控生产装配测试位于 `tests/integration/test_application_bridge_baseline.py`；真实模型、语音和浏览器体验单独验收。

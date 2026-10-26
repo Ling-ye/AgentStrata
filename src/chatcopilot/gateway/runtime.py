@@ -659,8 +659,8 @@ def build_gateway_runtime_host(
             trusted_anchor=config.state_anchor,
         )
         instance_lease = _acquire_gateway_instance_lease(state_store)
-        chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix)
-        agent_runtime = assemble_agent_runtime(runtime, chat_config=chat_config)
+        chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix, environment=values)
+        agent_runtime = assemble_agent_runtime(runtime, chat_config=chat_config, environment=values)
         generation = state_store.acquire_writer_generation()
         session_manager = SessionManager(writer_generation=generation)
         sessions = GatewaySessionService(
