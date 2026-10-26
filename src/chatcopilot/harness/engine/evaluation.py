@@ -185,6 +185,7 @@ def evaluate(ctx, candidate, plan, phase, checks):
             "passed_cases": sorted(result.passed),
             "failed_cases": sorted(set(checks) - result.passed),
             "evidence_refs": result.evidence_refs,
+            "versions": result.versions,
         }
         if error:
             value["error"] = {"code": error.code, "message": safe_error(error)}

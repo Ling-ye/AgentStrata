@@ -12,7 +12,8 @@ LangGraph 与 Codex 按实例配置选择，Live2D、QQ/NapCat 等通过现有�
 
 当前已有配置分离、双 runtime、Eval、故障修复、代码治理与 QQ／Live2D 接入。
 Harness 编排直接使用 LangGraph，项目定义角色权限、候选、证据与独立验收。
-需求改进沿现有 Harness 图生成本地候选；实例自动启用按后续阶段落实，不把目标能力写成已完成。
+需求改进沿现有 Harness 图生成本地候选；M5 通过显式 CLI/控制操作启用已验收版本并核对运行身份。
+改进工作台和真实闭环仍属后续阶段，不把目标能力写成已完成。
 Native 独立执行路径退役，旧配置需重新配置；业务历史、人格、记忆与凭据保留。
 
 应用 `bot.yaml` 引用独立 Agent profile，运行层复用原类型化装配结果；旧内联配置须显式迁移，
@@ -56,6 +57,7 @@ Native 独立执行路径退役，旧配置需重新配置；业务历史、人�
 | Agent、PromptPlan、上下文或工具 | [Agent](docs/reference/agent.md) | 上下文与记忆读[上下文](docs/reference/context.md)；工具发现执行读[工具](docs/reference/tools.md) |
 | 执行或模型路由 | [执行契约](docs/reference/agent.md#一条执行契约)、[模型配置](docs/reference/configuration.md#llm) | 路由机制变化读 [runtime 路由规格](specs/agent-runtime-routing/spec.md)；修复 worker 另读 [Harness 执行适配](docs/reference/harness.md#执行适配与隔离) |
 | 模型、BotSpec 或部署 | [配置](docs/reference/configuration.md)中的相关字段 | 操作读对应指南；公开或部署边界读[公开契约](docs/reference/publication.md) |
+| 已验收版本启用、撤回或恢复 | [实例版本契约](docs/reference/delivery.md#已验收版本启用与撤回) | 操作读[启用与撤回](docs/guides/instances.md#启用与撤回已验收版本)；先核对任务回执、目标实例和原切换记录 |
 | Console、证据与观测 | [Console](docs/reference/console.md) | 数据采集与结果语义读[观测](docs/reference/observability.md) |
 | 文档与项目介绍 | [文档维护](docs/maintenance.md) | 导航与唯一正文规则读[文档治理基线](specs/documentation-governance/spec.md) |
 | 开发验证或故障诊断 | [检查范围](docs/guides/development.md#选择检查范围) | 运行失败读[诊断](docs/guides/debugging.md) |

@@ -15,7 +15,7 @@ Agent 可通过 LangGraph 或 Codex 执行，连接 Live2D、NapCat 等可由 Ag
 并在授权范围内启用通过验收的改进。
 
 本规格是唯一主计划。`accepted` 表示设计可实施，不表示所有目标已完成。
-当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛、M2 外部桥接基线、M3 Agent 与桥接评测及 M4 Harness 改进闭环；M5—M7 待依次开发。
+当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛、M2 外部桥接基线、M3 Agent 与桥接评测、M4 Harness 改进闭环及 M5 已验收版本启用与撤回；M6—M7 待依次开发。
 实现完成与运行实例部署分别验收。当前事实由[架构总览](../../docs/reference/architecture.md)及领域正文维护，
 计划接口在实现前不进入快速开始。
 
@@ -62,7 +62,7 @@ flowchart TB
     R -. "更新 Agent、配置或桥接" .-> A
 ```
 
-图中完整需求改进与自动启用仍为后续阶段目标。日常回合由配置选择一个 runtime，
+需求候选与显式授权后的版本切换已有 CLI/控制接口；完整工作台与真实改进闭环仍为后续阶段目标。日常回合由配置选择一个 runtime，
 不要求每条 Codex 请求先经过 LangGraph 的模型规划。
 
 ### 实体关系与实现映射
@@ -140,7 +140,8 @@ M2 沿这些接口工作，没有新增统一 Bridge 注册中心。
 #### 改进、验证与版本启用关系
 
 下图同时包含已有 Harness/Eval 对象和后续扩展。M3 将源码、runtime、Target 与桥接组件身份绑定到
-现有 Evaluation 快照；完整版本清单与 `ACTIVATION` 仍属 M4—M5 目标，不因画入 ERD 而成为当前已实现接口。
+现有 Evaluation 快照；M5 将源码清单、编译检查与运行进程回执绑定到实例启用记录。
+通用外部构建、依赖升级和数据迁移仍不因画入 ERD 而成为当前已实现接口。
 
 ```mermaid
 erDiagram
@@ -238,10 +239,10 @@ Target 的局部 ID（例如 `codex`）不能充当全局主键，需连同 Eval
 | 实例与会话 | [实例装配](../../src/chatcopilot/botspec/runtime.py)、[Gateway 会话和 run 投影](../../src/chatcopilot/contracts/gateway_rpc.py) | 沿用宿主身份及状态作用域 |
 | 运行时绑定 | [RuntimeSessionRef](../../src/chatcopilot/contracts/runtime_adapter.py)、[RuntimeSessionBinding](../../src/chatcopilot/contracts/execution.py) | M1.1 已有契约；恢复能力由 adapter 决定 |
 | 桥接配置与回执 | [M2 桥接基线](../../docs/reference/runtime.md#外部桥接基线)、[出站与投递契约](../../src/chatcopilot/contracts/gateway.py) | 概念投影现有 Channel、Gateway 客户端和工具配置，不引入万能驱动或客户端任务数据库 |
-| 版本与验证 | [CandidateRef、VerificationPlan、VerificationResult](../../src/chatcopilot/harness/models.py) | 复用已有快照和验证身份；完整组件清单按 M3—M5 扩展 |
+| 版本与验证 | [CandidateRef、VerificationPlan、VerificationResult](../../src/chatcopilot/harness/models.py) | M3—M5 复用快照、模型/runtime 事实和独立验收身份，运行清单绑定实际加载组件 |
 | Evaluation、Target、Case、Trial | [现有评测契约](../../src/chatcopilot/evals/models.py)、[版本快照](../../src/chatcopilot/evals/version_snapshot.py) | M3 复用生命周期与定义快照，加入桥接 Suite；版本身份存于 `config_snapshot.version_snapshot`，不新增表 |
 | 候选接受 | [AcceptedCandidate](../../src/chatcopilot/harness/agent_types.py) | 沿用独立验收签发，按目标版本清单补齐绑定 |
-| 版本启用 | [插件安装记录](../../src/chatcopilot/plugins/repository.py)、[实例运维](../../docs/guides/instances.md) | M5 扩展启用、运行身份核对与撤回，尚非现有完整事务 |
+| 版本启用 | [启用记录](../../src/chatcopilot/plugins/activation_repository.py)、[实例运维](../../docs/guides/instances.md) | M5 已实现源码版本准备、明确启用、运行核对、撤回与中断对账；既有安装与数据位置保持独立 |
 
 引用可变配置文件不等于冻结了配置。比较与接受需绑定当时的内容摘要；
 代码、runtime、配置或桥接产物改变后，旧回执不能直接用于新候选。
@@ -370,7 +371,7 @@ Eval 分别确认 Agent 任务完成、桥接接口与权限、外部执行与�
 宿主冻结仓库、可改范围、实例、资源和预算授权，候选声明不能扩大授权。
 主计划不授权交互式协作者执行远端 Git、发布或生产部署操作。
 
-M5 沿现有实例与插件管理准备独立候选，等待可切换状态，启用后检查关键行为。
+M5 沿现有实例与插件管理准备独立候选，等待可切换状态，启用后核对实际加载身份和服务就绪；真实外部行为继续由 M7 验收。
 失败恢复上一可用版本，实际运行身份需对应验收候选；持久数据格式变化另行验证恢复，
 源码回退不能替代数据恢复。
 
@@ -441,10 +442,15 @@ M5 沿现有实例与插件管理准备独立候选，等待可切换状态，�
 
 #### M5 已验收版本启用与撤回
 
-- 前置：M4；状态：待开发。
+- 前置：M4；状态：已完成工程实现、受控进程验证与故障恢复验证；真实模型及外部效果证据留待 M7。
 - 交付：沿现有实例和插件管理启用 Agent 配置、自有代码或桥接产物，失败撤回。
 - 验收：实际身份对应验收候选，进程中断和启用失败可恢复，持久数据变化另验恢复。
 - 文档：更新插件部署、源码交付与实例运维正文。
+- 实施切口：复用既有实例启动脚本、插件服务管理和 `AcceptedCandidate`，将基线与候选保存为独立源码版本，
+  经私有版本指针选择实际运行代码与 Agent 配置。CLI 显式启用一个已登记实例，不更新操作者仓库或发布 Git。
+  切换前暂停新任务准入并等待已有执行结束，记录切换意图，再停止、切换和启动；运行进程回执绑定精确版本。
+  失败撤回上一版本，进程中断通过原切换记录对账；查询不推进操作。凭据、模型配置、会话和记忆留在原实例。
+  首版不在切换中升级依赖或迁移持久数据；涉及这些变化的候选需要独立构建/迁移及恢复验收。
 
 #### M6 Console 改进工作台
 

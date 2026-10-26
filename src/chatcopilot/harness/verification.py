@@ -28,8 +28,11 @@ def result_from_trials(receipt: dict[str, Any], target: str, candidate: Candidat
             failure_kind = "evidence"
         checks.append(VerificationCheck(row["case_id"], row["attempt"], outcome,
                                         failure_kind, row))
+    version = receipt["result"].get("config_snapshot", {}).get("version_snapshot")
     return VerificationResult(str(receipt.get("evaluation_id", "")), candidate.digest,
-                              tuple(checks), (str(receipt.get("evaluation_id", "")),))
+                              tuple(checks), (str(receipt.get("evaluation_id", "")),),
+                              {str(receipt["evaluation_id"]): {"snapshot": version,
+                                  "model_identity": receipt["result"]["config_snapshot"].get("activation_model_identity")}} if version else {})
 
 
 class CaseVerification:
@@ -137,6 +140,16 @@ class CaseVerification:
             if agent_ids:
                 self._bind_external(task["task_id"], run_id + "-agent")
                 receipt = self.evaluator.run({**task, "source": agent_source}, candidate.path, run_id + "-agent", agent_ids, check_cancel)
+                if agent_source.get("kind") == "application":
+                    version = receipt["result"]["config_snapshot"]["version_snapshot"]
+                    identity = {key: version[key] for key in ("runtime", "verification_sha256")}
+                    identity["model_identity"] = receipt["result"]["config_snapshot"].get("activation_model_identity")
+                    if agent_source.get("version_conditions") and agent_source["version_conditions"] != identity:
+                        raise HarnessError("verification_environment", "基线与候选的 runtime 或验证实现版本发生变化")
+                    if not agent_source.get("version_conditions"):
+                        agent_source = {**agent_source, "version_conditions": identity}
+                        source = {**source, "agent_source": agent_source}
+                        self.store.update(task["task_id"], source=source)
                 observed = result_from_trials(receipt, receipt["target_id"], candidate)
                 self._require_runtime_evidence(observed, agent_source)
                 results.append(observed)
@@ -146,7 +159,8 @@ class CaseVerification:
                     self.store.update(task["task_id"], source={**source, "agent_source": {**agent_source,
                         "conditions": receipt["conditions"], "target_id": receipt["target_id"]}})
             return VerificationResult(run_id, candidate.digest, tuple(c for r in results for c in r.checks),
-                                      tuple(ref for r in results for ref in r.evidence_refs))
+                                      tuple(ref for r in results for ref in r.evidence_refs),
+                                      {key: value for result in results for key, value in result.versions.items()})
         port = self.local_verifier if source.get("test_sha256") else self.evaluator
         receipt = port.run({**task, "source": {**source, "repetitions": task["verification_plan"]["repetitions"]}},
                            candidate.path, run_id, checks, check_cancel)

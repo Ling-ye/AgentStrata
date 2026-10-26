@@ -87,6 +87,13 @@ def main(argv: list[str] | None = None) -> int:
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
     listing.add_argument("--status", default="")
+    for name in ("prepare-activation", "activate"):
+        activation = sub.add_parser(name, help="准备或显式启用已独立验收的实例版本")
+        activation.add_argument("task")
+        activation.add_argument("--target", help="instance:<应用 id> 或 plugin:<插件 id>:<Agent id>")
+        activation.add_argument("--timeout", type=float, default=60)
+    for name in ("activation", "rollback-activation", "reconcile-activation", "cancel-activation"):
+        sub.add_parser(name).add_argument("task")
     for name in ("get", "cancel", "resume", "reconcile", "retry-delivery", "retry-cleanup"):
         sub.add_parser(name).add_argument("task")
     args = parser.parse_args(argv)
@@ -160,9 +167,15 @@ def main(argv: list[str] | None = None) -> int:
             )
         elif args.command == "list":
             value = controller.list(page=args.page, search=args.search, status=args.status)
+        elif args.command in {"prepare-activation", "activate"}:
+            value = getattr(controller, args.command.replace("-", "_"))(args.task, target_id=args.target, timeout=args.timeout)
         else:
             value = getattr(controller, args.command.replace("-", "_"))(args.task)
         print(json.dumps(value, ensure_ascii=False, indent=2))
+        if args.command in {"activate", "rollback-activation", "reconcile-activation"}:
+            succeeded = ((value.get("kind") == "activate" and value.get("state") == "active")
+                         or (value.get("kind") == "rollback" and value.get("state") == "rolled_back"))
+            return 0 if succeeded and value.get("running_matches") is True else 1
         return 0
     except Exception as exc:
         print(

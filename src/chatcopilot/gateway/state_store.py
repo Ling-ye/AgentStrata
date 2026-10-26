@@ -298,6 +298,7 @@ class GatewayStateStore:
         *,
         database_name: str = "gateway.sqlite3",
         trusted_anchor: Path | None = None,
+        read_only: bool = False,
     ) -> None:
         if Path(database_name).name != database_name or database_name in {"", ".", ".."}:
             raise ValueError("database_name must be one plain filename")
@@ -306,6 +307,11 @@ class GatewayStateStore:
         configured_anchor = trusted_anchor if trusted_anchor is not None else self.root.parent
         self.trusted_anchor = Path(os.path.abspath(os.fspath(configured_anchor)))
         self.database_path = self.root / database_name
+        self.read_only = read_only
+        if read_only:
+            _validate_private_root(self.root, trusted_anchor=self.trusted_anchor)
+            _validate_private_database_file(self.database_path)
+            return
         _ensure_private_root(self.root, trusted_anchor=self.trusted_anchor)
         _ensure_private_database_file(self.database_path)
         self._initialize_schema()
@@ -1401,6 +1407,14 @@ class GatewayStateStore:
                 "SELECT COUNT(*) FROM ingress WHERE state IN ('accepted', 'processing')"
             ).fetchone()[0])
 
+    def pending_release_work(self) -> int:
+        """One SQLite snapshot; accepted Channel work must not disappear between counts."""
+        with self._read_connection() as connection:
+            return int(connection.execute("SELECT "
+                "(SELECT COUNT(*) FROM runs WHERE state IN ('accepted','running','abort_requested','recovery_required')) + "
+                "(SELECT COUNT(*) FROM ingress WHERE state IN ('processing','recovery_required')) + "
+                "(SELECT COUNT(*) FROM outbox WHERE state IN ('pending','submitting','provider_submitted'))").fetchone()[0])
+
     def accepted_ingress_conversations(self) -> tuple[tuple[str, str, str, str], ...]:
         with self._read_connection() as connection:
             rows = connection.execute(
@@ -2106,6 +2120,8 @@ class GatewayStateStore:
     def _write_connection(
         self,
     ) -> Iterator[sqlite3.Connection]:
+        if self.read_only:
+            raise GatewayStateError("Read-only Gateway status cannot write state")
         with self._connection() as connection:
             connection.execute("BEGIN IMMEDIATE")
             try:
@@ -2120,13 +2136,14 @@ class GatewayStateStore:
     def _connection(self) -> Iterator[sqlite3.Connection]:
         _validate_private_root(self.root, trusted_anchor=self.trusted_anchor)
         _validate_private_database_file(self.database_path)
-        connection = sqlite3.connect(self.database_path, timeout=5.0)
+        connection = sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True, timeout=5.0) if self.read_only else sqlite3.connect(self.database_path, timeout=5.0)
         try:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute("PRAGMA busy_timeout = 5000")
             connection.execute("PRAGMA trusted_schema = OFF")
-            connection.execute("PRAGMA journal_mode = WAL")
-            connection.execute("PRAGMA synchronous = FULL")
+            if not self.read_only:
+                connection.execute("PRAGMA journal_mode = WAL")
+                connection.execute("PRAGMA synchronous = FULL")
             yield connection
         finally:
             connection.close()

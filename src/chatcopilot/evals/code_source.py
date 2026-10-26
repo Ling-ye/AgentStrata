@@ -25,6 +25,7 @@ _TRUSTED_FILES = frozenset(
         "pyproject.toml",
         "uv.lock",
         "src/chatcopilot/__init__.py",
+        "src/chatcopilot/application/execution_scope.py",
         *(
             "src/chatcopilot/core/" + name
             for name in (
@@ -35,6 +36,7 @@ _TRUSTED_FILES = frozenset(
                 "inspection.py",
                 "candidate_configuration.py",
                 "application_configuration.py",
+                "release_gate.py", "release_identity.py", "release_runtime.py",
             )
         ),
     }

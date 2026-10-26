@@ -6,7 +6,7 @@
 
 [自研 Agent、外部桥接与持续改进](application-harness-framework/spec.md)定义定位、开源复用与公开契约。
 [开发阶段](application-harness-framework/spec.md#分阶段开发)保留 M0/M1，新增独立 M1.1 双 runtime 收敛；
-M2/M3 的桥接基线、评测与版本对照沿用现有接口；M4 复用 Harness 图完成需求候选，M5—M7 继续扩展版本启用撤回、工作台与真实闭环。
+M2/M3 的桥接基线、评测与版本对照沿用现有接口；M4 复用 Harness 图完成需求候选，M5 提供版本启用与撤回；M6/M7 继续实现工作台与真实闭环。
 `accepted` 表示设计可实施；阶段状态与未完成条件只在主计划维护，fork 不作为通用前置条件。
 
 ## 长期基线

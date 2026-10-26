@@ -101,6 +101,9 @@ def test_managed_bridge_evaluation_binds_sources_and_keeps_candidate_out_of_scor
 
     try:
         baseline = evaluate("eval-bridge-base", repository, preview["conditions"])
+        from chatcopilot.core.release_identity import model_identity
+        import os
+        assert baseline["config_snapshot"]["activation_model_identity"] == model_identity(bot_root / "bot.yaml", dict(os.environ))
         assert baseline["trials"][0]["outcome"] == "passed", baseline
         candidate = tmp_path / "candidate"
         git_output(repository, "worktree", "add", "--detach", str(candidate), "HEAD")

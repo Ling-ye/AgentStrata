@@ -326,6 +326,9 @@ def test_gateway_start_executes_python_host_without_node_or_cc_connect(
     assert completed.returncode == 0, completed.stdout + completed.stderr
     assert legacy_stop_marker.exists()
     assert argv_file.read_text(encoding="utf-8").splitlines() == [
+        "-m", "chatcopilot.core.release_runtime", "--control", str(runtime / ".agentstrata-versions"),
+        "--service", "gateway", "--component", "chatcopilot", "--bot", str(bot_spec), "--",
+        str(runtime / ".venv/bin/python"),
         "-m",
         "chatcopilot",
         "run",

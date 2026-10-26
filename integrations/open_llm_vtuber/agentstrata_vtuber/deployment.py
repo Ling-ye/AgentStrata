@@ -153,11 +153,11 @@ def service_definitions(request: dict) -> dict:
         {"id": "main", "display_name": "Live2D Assistant", "bot_spec": "config/bot.yaml",
          "env_file": "config/runtime.env"},
     ], "services": [
-        {"name": "client", "command": [str(root / "runtime/venv/bin/python"), "-m", "agentstrata_vtuber.manage",
+        {"name": "client", "versioned": True, "command": [str(root / "runtime/venv/bin/python"), "-m", "agentstrata_vtuber.manage",
              "run", "--request", str(root / "config/request.json")],
          "cwd": str(root / "runtime/apps/backend"), "environment_file": env,
          "port": port, "ready_url": f"http://127.0.0.1:{port}/"},
-        {"name": "gateway", "command": [request["host"]["python"], "-m", "chatcopilot", "run",
+        {"name": "gateway", "versioned": True, "command": [request["host"]["python"], "-m", "chatcopilot", "run",
              "--bot", str(root / "config/bot.yaml")],
          "cwd": str(root), "environment_file": env, "port": gateway_port},
     ]}

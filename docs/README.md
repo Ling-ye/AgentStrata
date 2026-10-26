@@ -12,7 +12,8 @@ guides 解释如何操作，reference 维护当前机制与修改边界，specs 
 包含固定版本的开源源码参考、最小公开契约和 [M0、M1、M1.1 与 M2—M7](../specs/application-harness-framework/spec.md#分阶段开发)的前置条件与验收标准。
 M1 已提供独立应用与 Agent 配置，M1.1 收敛为 LangGraph/Codex；M2 的[桥接基线](reference/runtime.md#外部桥接基线)统一说明现有 Live2D 与 QQ/NapCat 的配置和证据边界。
 M3 提供[Agent 与桥接评测](reference/evaluation.md#agent-与外部桥接评测)和版本对照；
-M4 提供[需求任务](guides/harness.md#提交接入或改进需求)；版本自动启用与改进工作台按 M5—M7 开发，受控验证不代替真实交付。
+M4 提供[需求任务](guides/harness.md#提交接入或改进需求)，M5 提供[已验收版本启用与撤回](guides/instances.md#启用与撤回已验收版本)；
+改进工作台和真实闭环按 M6—M7 开发，受控验证不代替真实交付。
 参与新框架开发时先选择阶段，再读取相关领域，不把计划中的接口当作当前操作入口。
 
 ## 选择使用路径

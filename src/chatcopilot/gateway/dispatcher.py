@@ -75,6 +75,7 @@ from .state_store import (
     SessionRecord,
     StaleWriterGeneration,
 )
+from chatcopilot.core.release_gate import ReleaseBusy
 
 
 class GatewayApplicationDispatcher:
@@ -116,6 +117,8 @@ class GatewayApplicationDispatcher:
             return serialize_method_result(request.method, result)
         except GatewayDispatchError:
             raise
+        except ReleaseBusy as exc:
+            raise GatewayDispatchError(exc.code, str(exc)) from exc
         except GatewayProtocolError as exc:
             raise GatewayDispatchError(exc.code, str(exc)) from exc
         except StaleWriterGeneration as exc:

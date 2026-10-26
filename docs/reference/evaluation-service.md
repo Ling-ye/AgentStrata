@@ -24,6 +24,8 @@
 插件只提供执行观测和自己的附加 metadata。Core 最后写入 `expectation`、`judge_evidence`、
 工具轨迹、任务/后置状态、usage 与 Case 来源，同名插件字段不能覆盖这些权威内容。
 插件的执行报错与独立评分结论分别保存；任何自报的通过说明都不能替代实际 `assessment`。
+配置快照中的 `activation_model_identity` 绑定配置化 Agent 的实际模型路由与认证引用身份，
+仅保存摘要，不保存明文凭据；Harness 将它与版本快照一起纳入验证回执，供 M5 核对目标运行条件。
 
 源码评测沿用服务 `start(code_source={path, sha256})`、冻结请求及受管 worker。Core 在校验输出目录后，
 从服务请求和 `.sources` 回执取得版本，绑定实际执行树、Target、runtime 与桥接组件，并在 Trial 前后核验。

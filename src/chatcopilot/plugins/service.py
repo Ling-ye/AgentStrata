@@ -91,6 +91,8 @@ class PluginManager:
                 if start:
                     return self._start(entry, repository, record)
                 return self._doctor(entry, repository, record, online=False)
+            if (repository.root / ".agentstrata-versions/current.json").exists():
+                raise InstallError("Withdraw the active managed version before reinstalling this plugin")
             if record and any(self.services.active(plugin_id, s) for s in self._services(record, repository.root)):
                 raise InstallError("Stop the plugin before reinstalling or changing its version")
             if record and record.get("version") != entry.version:
@@ -209,6 +211,15 @@ class PluginManager:
             if not record:
                 return {"id": plugin_id, "status": "not_installed"}
             self.services.remove(plugin_id, self._services(record, repository.root), repository.root)
+            control = repository.root / ".agentstrata-versions"
+            if control.exists():
+                from chatcopilot.plugins.activation_repository import ActivationRepository
+                versions = ActivationRepository(control)
+                with versions.lock():
+                    versions.select(None)
+                    operation = versions.read()
+                    if operation:
+                        versions.save({**operation, "state": "uninstalled"})
             program = repository.root / "runtime"
             if program.is_symlink():
                 raise InstallError("Refusing to remove a symlinked runtime")

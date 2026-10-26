@@ -116,7 +116,7 @@ class ImprovementScenario(RepairScenario):
     def retain_conditions(self, source, prior):
         agent, old = source.get("agent_source", source), prior.get("agent_source", prior)
         if (agent.get("suite_id"), agent.get("case_ids")) == (old.get("suite_id"), old.get("case_ids")) and old.get("conditions"):
-            agent = {**agent, **{key: old[key] for key in ("conditions", "target_id") if key in old}}
+            agent = {**agent, **{key: old[key] for key in ("conditions", "target_id", "version_conditions") if key in old}}
             return {**source, "agent_source": agent} if source.get("agent_source") else agent
         return source
 
@@ -124,5 +124,6 @@ class ImprovementScenario(RepairScenario):
         from dataclasses import replace
         original = super().binding(task)
         source = task["source"]
-        return replace(original, extensions={key: source.get(key) for key in
-            ("task_type", "goal", "allowed_paths", "suite_id", "goal_case_ids", "source_envelope_digest", "upstream_source")})
+        return replace(original, extensions={**{key: source.get(key) for key in
+            ("task_type", "goal", "allowed_paths", "suite_id", "goal_case_ids", "source_envelope_digest", "upstream_source")},
+            "version_conditions": source.get("agent_source", source).get("version_conditions")})

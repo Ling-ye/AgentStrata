@@ -7,6 +7,7 @@ import json
 import logging
 from typing import Protocol
 from uuid import uuid4
+from chatcopilot.core.release_gate import effect_scope, ReleaseBusy
 
 from .config import AdapterConfig
 
@@ -66,9 +67,12 @@ class BrowserAvatarController:
         future = asyncio.get_running_loop().create_future()
         self._pending[request_id] = future
         try:
-            await send(json.dumps({"type": "agentstrata-avatar-action", "request_id": request_id,
-                "model_name": self.config.model_name, "kind": kind, "value": value}))
-            result = await asyncio.wait_for(future, self.config.action_timeout_seconds)
+            with effect_scope():
+                await send(json.dumps({"type": "agentstrata-avatar-action", "request_id": request_id,
+                    "model_name": self.config.model_name, "kind": kind, "value": value}))
+                result = await asyncio.wait_for(future, self.config.action_timeout_seconds)
+        except ReleaseBusy:
+            result = {"status": "unavailable", "error": "version_switch_not_dispatched"}
         except Exception:  # The browser transport may fail before or after submission.
             result = {"status": "unknown", "error": "action_acknowledgement_missing"}
         finally:

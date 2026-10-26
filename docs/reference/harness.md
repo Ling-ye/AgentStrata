@@ -59,6 +59,9 @@ checkpoint 与历史导出属于 Repo，具体执行及装配属于 Runtime。�
 需求任务的 `delivery.mode=local`：保存精确候选、补丁和 `AcceptedCandidate`，不启动 GitHub 发布。
 冻结源码与当前工作区分离，修改操作者文件或暂存区不是完成任务的一部分。
 恢复继续使用现有 LangGraph checkpoint 和操作回执，按原 Evaluation ID 对账；未确认的外部执行不重放。
+验证回执保留各次 Evaluation 的版本事实与不含明文凭据的模型身份。基线、候选和独立确认的
+runtime、评分实现或模型绑定变化时，不能继续接受。M5 的启用与恢复是独立操作，
+不会改写已成立的需求验收结论；见[版本交付](delivery.md#已验收版本启用与撤回)。
 
 Case 修复只接受定义快照完整、实际执行 AgentStrata 的隔离 Suite；通过、跳过的实例、
 Profile comparison、dry-run 和 direct-LLM 不进入修复。缺少旧定义时重新执行测评。

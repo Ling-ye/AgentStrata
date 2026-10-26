@@ -149,7 +149,7 @@ class UserServices:
         return f"agentstrata-plugin-{plugin_id}-{service.name}.service"
 
     def command(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, check=False)
+        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, check=False, timeout=60)
 
     def preflight(self) -> None:
         result = self.command("show-environment")
@@ -158,6 +158,22 @@ class UserServices:
 
     def active(self, plugin_id: str, service: ServiceDefinition) -> bool:
         return self.command("is-active", "--quiet", self.name(plugin_id, service)).returncode == 0
+
+    @staticmethod
+    def version_command(service: ServiceDefinition, root: Path) -> tuple[str, ...]:
+        command = service.command
+        if not service.versioned:
+            return command
+        if len(command) < 3 or command[1] != "-m":
+            raise InstallError("Managed plugin versions require an explicit Python module service")
+        wrapped = [command[0], "-m", "chatcopilot.core.release_runtime", "--control", str(root / ".agentstrata-versions"),
+                   "--service", service.name, "--component", "chatcopilot"]
+        package = command[2].split(".")[0]
+        if package != "chatcopilot":
+            wrapped += ["--component", package]
+        if "--bot" in command:
+            wrapped += ["--bot", command[command.index("--bot") + 1]]
+        return tuple([*wrapped, "--", *command])
 
     def _owned(self, plugin_id: str, services: list[ServiceDefinition], root: Path,
                *, missing_ok: bool = False) -> None:
@@ -184,7 +200,7 @@ class UserServices:
             # Path directives consume a whole path, not an ExecStart-style quoted word.
             content += "WorkingDirectory=" + _systemd_value(service.cwd) + "\n"
             content += "EnvironmentFile=" + _systemd_value(service.environment_file) + "\n"
-            content += "ExecStart=" + " ".join(_systemd_quote(arg, executable_argument=True) for arg in service.command) + "\n"
+            content += "ExecStart=" + " ".join(_systemd_quote(arg, executable_argument=True) for arg in self.version_command(service, root)) + "\n"
             content += "Restart=on-failure\nRestartSec=5\nKillMode=mixed\nTimeoutStopSec=30\nUMask=0077\n"
             # Unit files contain references only; the referenced credential file is private.
             path.write_text(content)

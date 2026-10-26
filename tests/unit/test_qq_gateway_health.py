@@ -522,7 +522,8 @@ class QQBoundaryValidationTests(unittest.TestCase):
             Path(__file__).resolve().parents[2] / "deploy" / "wsl" / "start.sh"
         ).read_text(encoding="utf-8")
         self.assertIn("拒绝启动 Gateway，避免双重投递", script)
-        self.assertIn('exec "$PY" -m chatcopilot run --bot "$BOT_SPEC"', script)
+        self.assertIn('exec "$PY" -m chatcopilot.core.release_runtime', script)
+        self.assertIn('"$PY" -m chatcopilot run --bot "$BOT_SPEC"', script)
         self.assertNotIn("_start_qq_proxy.sh", script)
         self.assertNotIn("降级：cc-connect 直连 NapCat", script)
 

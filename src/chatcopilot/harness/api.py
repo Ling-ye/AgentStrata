@@ -45,6 +45,7 @@ class HarnessController:
         image_reader: Callable[[str, str], builtins.list[bytes]] | None = None,
         worker_control: WorkerControlPort | None = None,
         gateway_state_root: Path | None = None,
+        activation_factory: Callable | None = None,
     ) -> None:
         self.repository = repository.resolve(strict=True)
         self.settings = configuration()
@@ -54,6 +55,7 @@ class HarnessController:
             evaluator=evaluator, workers=worker_control, task_reader=task_reader,
             gateway_state_root=gateway_state_root)
         self.image_reader = image_reader
+        self.activation_factory = activation_factory
         self.sources: SourceReader = RepairSources(self.evaluator, self.task_reader)
 
     @property
@@ -72,6 +74,30 @@ class HarnessController:
         from chatcopilot.harness.improvement_runtime import source
         return self._start(lambda: source(self.repository, request, self.evaluator),
             {"kind": "application", **asdict(request)}, options, request_id=request_id, launch=launch)
+
+    def prepare_activation(self, task_id, *, target_id=None, timeout=60):
+        from chatcopilot.harness.activation_runtime import prepare
+        return prepare(self, task_id, target_id, timeout=timeout)
+
+    def activate(self, task_id, *, target_id=None, timeout=60):
+        from chatcopilot.harness.activation_runtime import operation
+        return operation(self, task_id, "activate", target_id=target_id, timeout=timeout)
+
+    def activation(self, task_id):
+        from chatcopilot.harness.activation_runtime import operation
+        return operation(self, task_id, "status")
+
+    def rollback_activation(self, task_id):
+        from chatcopilot.harness.activation_runtime import operation
+        return operation(self, task_id, "rollback")
+
+    def reconcile_activation(self, task_id):
+        from chatcopilot.harness.activation_runtime import operation
+        return operation(self, task_id, "reconcile")
+
+    def cancel_activation(self, task_id):
+        from chatcopilot.harness.activation_runtime import operation
+        return operation(self, task_id, "cancel")
 
     def _governance_runs(self):
         from chatcopilot.harness.governance_runtime import governance_runs
@@ -559,6 +585,10 @@ class HarnessController:
             self.cancel_governance_run(task["governance_run_id"])
             return self.get(task_id)
         self.lifecycle.cancel(task_id)
+        if task.get("activation_ref"):
+            from chatcopilot.plugins.activation_service import PENDING
+            if self.activation(task_id)["state"] in {"prepared", *PENDING}:
+                self.cancel_activation(task_id)
         return self.get(task_id)
 
     def _delivery_action(self, task_id: str, action: str) -> dict[str, Any]:
@@ -796,6 +826,7 @@ class HarnessController:
                 "operations",
                 "verification_binding",
                 "upstream_source",
+                "activation_ref",
                 # Historical records remain readable, but their private receipts do not.
                 "role_executions",
                 "delivery_acceptance_receipts",

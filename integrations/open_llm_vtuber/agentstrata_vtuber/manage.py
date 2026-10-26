@@ -131,6 +131,8 @@ async def serve(request: dict) -> None:
     logger.add(sys.stderr, level="INFO", diagnose=False)
     server = WebSocketServer(config=config)
     await server.initialize()
+    from chatcopilot.core.release_runtime import loaded
+    loaded(__file__)
     await uvicorn.Server(uvicorn.Config(server.app, host=config.system_config.host,
                                         port=config.system_config.port, log_level="info")).serve()
 

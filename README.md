@@ -18,7 +18,7 @@
 
 AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 Harness 与 Eval 的持续改进机制。Agent 通过 LangGraph 或 Codex 执行，连接 Live2D、QQ / NapCat 等可由 Agent 驱动的项目。用户通过需求与反馈发起改进，目标是由 Harness 完成调查、开发、对照评测和独立验收，再在授权范围内启用。
 
-当前已有应用与 Agent 配置分离、双 runtime、QQ 和 Live2D 接入、独立 Eval，以及故障修复和代码治理。Harness 编排直接使用 LangGraph，项目定义身份权限、候选、评测证据和独立验收。新增能力的完整改进流程与实例自动启用仍按阶段开发；fork、构建和部署在具体接入需要时使用。
+当前已有应用与 Agent 配置分离、双 runtime、QQ 和 Live2D 接入、独立 Eval、需求候选与已验收版本的启用撤回，以及故障修复和代码治理。Harness 编排直接使用 LangGraph，项目定义身份权限、候选、评测证据和独立验收。改进工作台与真实闭环仍按阶段开发；fork、构建和部署在具体接入需要时使用。
 
 ## 实施状态与开发计划
 
@@ -31,7 +31,8 @@ AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 
 | 已实现 M2 | Live2D 与 QQ/NapCat 桥接的连接、能力、权限、取消和回执基线；两个 runtime 的受控生产装配验证 | [桥接基线](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/runtime.md#外部桥接基线) |
 | 已实现 M3 | Agent 与桥接 Suite、源码版本绑定和独立事实评分；支持同条件基线候选对照，平台对端为受控环境 | [评测边界](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/evaluation.md#agent-与外部桥接评测)、[运行指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md#live2d-与-qq-桥接基线) |
 | 已实现 M4 | 从接入或改进需求生成本地候选，复用 Harness 图、独立验收与 M3 应用回归；固定上游源码只读调查 | [需求任务](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md#提交接入或改进需求) |
-| 后续实现 | M5—M7：版本启用撤回、工作台及真实闭环 | [分阶段开发](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发) |
+| 已实现 M5 | 准备独立版本、显式启用已验收候选、实际运行身份核验、失败撤回与中断对账；当前提供 CLI 和控制接口 | [启用与撤回](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#启用与撤回已验收版本) |
+| 后续实现 | M6—M7：改进工作台及真实闭环 | [分阶段开发](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发) |
 
 主计划的 `accepted` 表示设计可进入实施，不代表整套能力已经完成。当前命令与操作条件以快速开始和指南为准；阶段验收通过后，再更新对应能力状态。
 
@@ -65,7 +66,7 @@ flowchart TB
 
 ## 如何实现自我优化
 
-当前自我优化发生在代码、获准提示词、工具实现、执行流程及受限的 Skill 经验层面。每次改进先形成候选，再由冻结的验证条件与独立审核判断是否接受。下面是已有修复与治理流程；面向 Agent 与桥接的需求改进与自动启用按主计划扩展。
+当前自我优化发生在代码、获准提示词、工具实现、执行流程及受限的 Skill 经验层面。每次改进先形成候选，再由冻结的验证条件与独立审核判断是否接受。需求候选可通过独立的启用操作进入指定实例；源码交付、候选接受与实际运行状态分别记录。
 
 ```mermaid
 flowchart TB
@@ -203,7 +204,7 @@ uv run agentstrata --help
 
 具体源码入口、固定 revision、版本差异和采用理由见[主计划的复用清单](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#开源复用与版本依据)。设计参考不代表已经集成，也不代表性能或修复成功率排名。
 
-各执行入口的前置条件与支持范围见 [Agent 路由说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)和 [Harness 操作指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)。通用仓库自动接入与实例自动启用尚未提供；模型权重训练不在本计划中。产品回放可使用冻结外部夹具，模拟回执不证明真实 QQ 送达。
+各执行入口的前置条件与支持范围见 [Agent 路由说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)和 [Harness 操作指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)。已验收版本可通过 CLI 显式启用，通用仓库自动接入与改进工作台继续按主计划推进；模型权重训练不在本计划中。产品回放可使用冻结外部夹具，模拟回执不证明真实 QQ 送达。
 
 ## 参与开发
 

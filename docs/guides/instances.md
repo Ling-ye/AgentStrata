@@ -65,6 +65,46 @@ bootstrap。命令失败会停止后续阶段，不提供自动回滚。首次�
 bash deploy/wsl/update_instance.sh --instance <id> --enable
 ```
 
+## 启用与撤回已验收版本
+
+使用已通过 M4 独立验收、具有完整版本回执的应用任务。实例需先通过正常部署/安装流程使用带 M5
+启动器的基线并运行一次，使宿主取得实际加载回执；这一步属于明确的运维操作，开发代码不会自动更新在线实例。
+旧记录缺少版本事实时重新验收。应用配置、模型与当前程序不匹配时先解决差异，不能强制跳过。
+
+仓库实例默认取任务的应用 ID；插件可用 `--target plugin:open-llm-vtuber:main` 明确选择。
+插件服务须声明 `versioned`，且其应用配置应与仓库评测应用匹配。先准备并审阅结果：
+
+```bash
+.venv/bin/python -m chatcopilot.harness prepare-activation <task-id>
+.venv/bin/python -m chatcopilot.harness activation <task-id>
+```
+
+准备会复制独立版本并做安装解释器的编译检查，不切换运行实例。需要生效时显式执行：
+
+```bash
+.venv/bin/python -m chatcopilot.harness activate <task-id> --timeout 60
+.venv/bin/python -m chatcopilot.harness activation <task-id>
+```
+
+`--timeout` 控制等待空闲与就绪的时间；服务命令和编译各有执行期限。成功需要操作状态与
+`running_matches=true` 同时成立。`activate`、`rollback-activation`、`reconcile-activation`
+未完成相应目标时返回非零退出码；“新版本失败但旧版本已恢复”仍属于启用失败。
+
+```bash
+.venv/bin/python -m chatcopilot.harness cancel-activation <task-id>
+.venv/bin/python -m chatcopilot.harness reconcile-activation <task-id>
+.venv/bin/python -m chatcopilot.harness rollback-activation <task-id>
+```
+
+取消只请求停止尚未完成的切换，已启用版本使用撤回。中断或 `recovery_required` 使用原记录对账，
+不要删指针、改回执或另开重复操作。新渠道输入在切换中保留在既有队列；RPC 明确拒绝尚未接收的回合。
+真实 QQ/浏览器的外部交付仍按相应渠道回执判断。
+
+当前入口不升级依赖、不执行数据库迁移。凭据、人格/记忆、会话和工作区留在原实例，配置引用应可由
+冻结源码确认；私密 MCP 环境文件使用原位置的绝对引用。运行环境、安装登记或外部配置发生变化时可能阻断
+切换或恢复，需先核对实际状态。普通 `update_instance.sh` 和插件重装在存在受管版本时会提示先撤回。
+Console 改进工作台留待 M6；当前完整操作入口为 CLI 和同一 `HarnessController`。
+
 ### 迁移内联 Agent 配置
 
 旧版在 `bot.yaml` 中直接保存 `llm/prompts/tools/agents/context`。先停止目标实例，再用新版本 CLI

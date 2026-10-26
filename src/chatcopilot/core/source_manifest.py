@@ -11,6 +11,7 @@ DEPLOYED_MANIFEST_FILENAME = ".chatcopilot-sync-manifest"
 IGNORED_PARTS = frozenset(
     {
         ".git",
+        ".agentstrata-versions",
         ".mypy_cache",
         ".pytest_cache",
         ".ruff_cache",

@@ -51,6 +51,7 @@ from .application import GatewayApplicationError, GatewaySessionService
 from .events import GatewayEventPublisher
 from .observations import ACTOR_SPAN_ID, RunObserver, response_outbound_id
 from .server import GatewayClientContext, GatewayDispatchError
+from chatcopilot.core.release_gate import guarded_ingress
 from .state_store import (
     GatewayStateStore,
     RunConflict,
@@ -183,6 +184,7 @@ class GatewayTurnCoordinator:
     def active_task_count(self) -> int:
         return len(self._tasks)
 
+    @guarded_ingress
     async def submit_client_turn(
         self,
         *,

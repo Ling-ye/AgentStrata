@@ -28,6 +28,7 @@ from chatcopilot.contracts.gateway import (
 )
 from chatcopilot.contracts.gateway_protocol import EventFrame
 from chatcopilot.core.runtime_observation import capture_payload, outbound_summary, receipt_summary, runtime_stage
+from chatcopilot.core.release_gate import admission, ReleaseBusy
 from chatcopilot.contracts.gateway_rpc import DeliveryUpdatedEvent
 
 from .rpc_validation import serialize_event_payload
@@ -472,9 +473,16 @@ class ChannelRuntimeManager:
                 if not rows:
                     return
                 record = rows[0]
-                async with self._ingress_claim_lock:
-                    claimed = self._state_store.claim_ingress(generation=generation, channel=record.channel,
-                        account_id=record.account_id, event_id=record.event_id, now=self._now())
+                try:
+                    with admission(self._state_store.root):
+                        async with self._ingress_claim_lock:
+                            claimed = self._state_store.claim_ingress(generation=generation, channel=record.channel,
+                                account_id=record.account_id, event_id=record.event_id, now=self._now())
+                except ReleaseBusy:
+                    # Intake is already durable. The next process can claim it;
+                    # no Agent/tool execution starts during the version switch.
+                    await asyncio.sleep(0.05)
+                    continue
                 if not claimed:
                     continue
                 identity = _ingress_key(record.event)

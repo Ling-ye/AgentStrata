@@ -288,6 +288,10 @@ if [ -n "$CHANGED_FILES" ] && [ ! -f "$CHANGED_FILES" ]; then
 fi
 
 VENV_PY="$SRC/.venv/bin/python"
+if [ -e "$DST/.agentstrata-versions/current.json" ] || [ -L "$DST/.agentstrata-versions/current.json" ]; then
+    echo "[ERR] This instance has an active managed version. Withdraw it through Harness before updating the base installation." >&2
+    exit 1
+fi
 GATEWAY_BACKED=0
 if bot_uses_gateway "$BOT_FOR_CMD"; then
     GATEWAY_BACKED=1

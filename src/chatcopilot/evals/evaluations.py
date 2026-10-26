@@ -2975,6 +2975,9 @@ def _config_snapshot(
     }
     if isinstance(request, SuiteEvaluationRequest):
         manifest = get_manifest(request.suite)
+        if config is not None and len(targets) == 1 and targets[0].executor == "agent_configured":
+            from chatcopilot.core.release_identity import selected_model_identity
+            snapshot["activation_model_identity"] = selected_model_identity(targets[0].runtime_id, config.llm)
         suite_cases = tuple(case for case in cases if isinstance(case, EvalCase))
         if manifest.track != "qq_message_flow":
             snapshot["benchmark"] = _benchmark_request_snapshot(request)

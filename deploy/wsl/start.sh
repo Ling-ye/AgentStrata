@@ -92,7 +92,10 @@ if ccp_bot_uses_gateway "$BOT_SPEC"; then
     echo "    bot spec:  $BOT_SPEC"
     echo "    gateway:   ws://127.0.0.1:${CHATCOPILOT_GATEWAY_PORT:-18789}"
     echo "    provider:  ${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001} (external NapCat/OneBot)"
-    exec "$PY" -m chatcopilot run --bot "$BOT_SPEC"
+    exec "$PY" -m chatcopilot.core.release_runtime \
+        --control "$MT_HOME/.agentstrata-versions" --service gateway \
+        --component chatcopilot --bot "$BOT_SPEC" -- \
+        "$PY" -m chatcopilot run --bot "$BOT_SPEC"
 fi
 
 err "内置部署已移除 cc-connect；非 Gateway 平台不再提供一键桥接启动。"

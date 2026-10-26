@@ -198,7 +198,7 @@ RULES = (
 # Same-area imports are always allowed. Cross-area imports must be listed here;
 # this declaration is itself checked for cycles before source edges are checked.
 AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
-    "harness": frozenset({"core", "contracts", "evals", "agent", "external_tools", "gateway"}),
+    "harness": frozenset({"core", "contracts", "evals", "agent", "external_tools", "gateway", "plugins"}),
     "schedules": frozenset({"core"}),
     "contracts": frozenset(),
     "project": frozenset(),
@@ -207,7 +207,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "channels": frozenset({"contracts", "core", "project"}),
     "tool_packs": frozenset({"contracts"}),
     "component_catalog": frozenset({"contracts", "core", "tool_packs"}),
-    "plugins": frozenset({"core", "project"}),
+    "plugins": frozenset({"core", "contracts", "project", "gateway"}),
     "external_tools": frozenset({"contracts", "core", "project"}),
     "platforms": frozenset({"contracts", "core", "project"}),
     "agent": frozenset(
@@ -931,7 +931,7 @@ HARNESS_LAYERS = {
                 "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",
                 "gateway_adapter", "github_delivery", "local_commit", "local_verifier", "pytest_runner", "quality",
                 "repair_repository", "repair_runtime", "repair_session", "repository_checks", "sources", "task_environment",
-                "verification", "governance_verification", "improvement_repository", "improvement_runtime", "improvement_verification", "schedule_runtime", "governance_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
+                "verification", "governance_verification", "improvement_repository", "improvement_runtime", "improvement_verification", "activation_runtime", "schedule_runtime", "governance_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
     "ui": {"__main__"},
 }
 

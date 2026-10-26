@@ -222,6 +222,34 @@ class ChannelRuntimeManagerTests(IsolatedAsyncioTestCase):
         self.driver = _Driver("main", ACCOUNT, self.log)
         self.manager.register(self.driver)
 
+    async def test_version_switch_keeps_new_intake_durable_until_replacement_can_claim(self):
+        from chatcopilot.core.release_gate import switching
+        await self.manager.start()
+        await self.manager.activate()
+        event = _inbound(event_id="during-version-switch")
+        recovered = _Ingress()
+        replacement = ChannelRuntimeManager(state_store=self.state_store, gateway_ingress=recovered)
+        replacement.register(_Driver("replacement", ACCOUNT, self.log))
+        try:
+            with switching(self.state_store.root, 1):
+                await self.manager.accept_inbound(event)
+                await asyncio.sleep(.01)
+                assert not self.ingress.events
+                assert self.state_store.pending_ingress_count() == 1
+                assert self.state_store.pending_release_work() == 0
+                await self.manager.stop()
+                await replacement.start()
+                await replacement.activate()
+                await asyncio.sleep(.01)
+                assert not recovered.events
+            await replacement.wait_idle()
+            assert recovered.events == [event]
+            assert recovered.authorization_calls == 0
+            assert self.state_store.pending_ingress_count() == 0
+        finally:
+            await self.manager.stop()
+            await replacement.stop()
+
     async def test_registers_unique_channel_and_account_and_stops_in_reverse(self) -> None:
         with pytest.raises(ChannelRuntimeError) as duplicate_channel:
             self.manager.register(_Driver("main", OTHER_ACCOUNT, self.log))

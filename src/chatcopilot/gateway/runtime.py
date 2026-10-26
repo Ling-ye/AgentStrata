@@ -351,6 +351,8 @@ class GatewayRuntimeHost:
                     )
                 if self.schedules is not None:
                     await self.schedules.start()
+                from chatcopilot.core.release_runtime import loaded
+                loaded(__file__, state_root=self.state_store.root)
             except BaseException as exc:
                 self._readiness.disable()
                 try:

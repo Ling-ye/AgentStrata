@@ -160,6 +160,7 @@ class VerificationResult:
     candidate_digest: str
     checks: tuple[VerificationCheck, ...]
     evidence_refs: tuple[str, ...] = ()
+    versions: dict[str, dict[str, Any]] = field(default_factory=dict)
 
     def require_bound(self, candidate: CandidateRef, run_id: str) -> None:
         if self.run_id != run_id:

@@ -152,7 +152,9 @@ M3 的 [Agent 与桥接 Suite](evaluation.md#agent-与外部桥接评测)将这�
 [安装记录](../../src/chatcopilot/plugins/repository.py)、
 [管理用例](../../src/chatcopilot/plugins/service.py)和
 [进程与服务适配](../../src/chatcopilot/plugins/runtime.py)。
-只维护受管的当前版本和归属明确的服务；不自动寻找端口，不热加载、不保留多版本或回滚。
+基础安装维护当前安装和归属明确的服务，不自动寻找端口。M5 另行保存已验收源码版本，
+通过受管启动器切换和撤回，机制见[实例版本](delivery.md#已验收版本启用与撤回)。
+服务显式声明 `versioned` 才接入该启动协议；其他服务继续沿原命令运行。
 插件包修复随现有发行链交付，第三方本体与用户状态留在安装目录。
 
 VTuber 的独立 Owner BotSpec 是该插件模板，不是所有插件的强制形态。
