@@ -1,5 +1,7 @@
 """BotSpec subsystem: model, loading/validation, registry, and runtime assembly."""
 from chatcopilot.botspec.loader import load_botspec, validate_botspec
+from chatcopilot.core.application_configuration import load_application_spec
+from chatcopilot.contracts.application import AgentProfile, ApplicationSpec
 from chatcopilot.botspec.model import (
     BotSpec,
     ChannelsSpec,
@@ -18,6 +20,9 @@ from chatcopilot.botspec.runtime import (
 )
 
 __all__ = [
+    "AgentProfile",
+    "ApplicationSpec",
+    "load_application_spec",
     "BotSpec",
     "GatewaySpec",
     "GatewayClientSpec",

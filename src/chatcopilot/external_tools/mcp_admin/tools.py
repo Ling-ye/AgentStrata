@@ -397,16 +397,14 @@ class _McpAdminBotSpec:
 
 
 def _load_mcp_admin_bot_spec(path: Path) -> _McpAdminBotSpec:
-    import yaml
-
-    data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"BotSpec top level must be a mapping: {path}")
+    from chatcopilot.core.application_configuration import load_application_spec
+    application = load_application_spec(path)
+    data = application.resolved_configuration()
     tools = data.get("tools") if isinstance(data.get("tools"), dict) else {}
     mcp = tools.get("mcp") if isinstance(tools.get("mcp"), dict) else {}
     return _McpAdminBotSpec(
         id=str(data.get("id") or path.parent.name),
-        path=path,
+        path=application.agent_profile.source_path,
         mcp_servers=str(mcp.get("servers") or "").strip(),
     )
 

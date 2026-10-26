@@ -442,7 +442,7 @@ cases:
     turns:
       - text: Observe the configured runtime without mutation.
     requirements:
-      runtime_ids: [native, codex]
+      runtime_ids: [langgraph, codex]
       env_keys: [CHATCOPILOT_EVAL_TEST_VALUE]
     policy:
       side_effect: none
@@ -457,7 +457,7 @@ cases:
         source="observational.yaml",
     )
     assert definitions[0].severity == "observational"
-    assert definitions[0].requirements.runtime_ids == ("native", "codex")
+    assert definitions[0].requirements.runtime_ids == ("langgraph", "codex")
     assert definitions[0].requirements.env_keys == ("CHATCOPILOT_EVAL_TEST_VALUE",)
 
 
@@ -822,7 +822,7 @@ def test_definition_fingerprint_covers_every_execution_definition_axis(monkeypat
     manifest = parse_suite_manifest(_manifest_text())
     plugin = get_evaluation_plugin("generic-agent")
     case = EvalCase("case-a", "hello", "demo", "reply")
-    target = {"executor": "native", "model": "commercial-a"}
+    target = {"executor": "langgraph", "model": "commercial-a"}
     baseline = suite_definition_fingerprint(
         manifest,
         plugin,
@@ -865,7 +865,7 @@ def test_definition_fingerprint_covers_every_execution_definition_axis(monkeypat
         manifest,
         plugin,
         (case,),
-        target_fingerprint={"executor": "native", "model": "commercial-b"},
+        target_fingerprint={"executor": "langgraph", "model": "commercial-b"},
     )
 
     original_digest = plugin_catalog.plugin_implementation_sha256
@@ -1037,7 +1037,7 @@ def test_comparison_implementation_snapshot_covers_executor_profile_and_scorers(
 
 
 def test_runtime_implementation_snapshot_covers_real_agent_and_capability_dependencies() -> None:
-    native = implementation_catalog.runtime_implementation_snapshot("native")
+    native = implementation_catalog.runtime_implementation_snapshot("langgraph")
     codex = implementation_catalog.runtime_implementation_snapshot("codex")
     common_modules = {
         "chatcopilot.application.agent_runtime",

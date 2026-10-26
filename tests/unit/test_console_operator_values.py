@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import json
 import logging
 import time
@@ -83,9 +85,9 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
         folder.mkdir(mode=0o700)
         (folder / 'identity.md').write_text('Fixture identity')
         spec = folder / 'bot.yaml'
-        spec.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\n'
+        write_application(spec, f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\n'
             'gateway: {}\nchannels:\n  qq:\n    type: qq_personal\n    provider: onebot_v11\n'
-            'llm:\n  chat:\n    env_prefix: FIXTURE_CHAT\nagents:\n  runtime: native\n')
+            'llm:\n  chat:\n    env_prefix: FIXTURE_CHAT\nagents:\n  runtime: langgraph\n')
         state = GatewayStateStore(folder / 'gateway')
         generation = state.acquire_writer_generation()
         values = {'CHATCOPILOT_GATEWAY_STATE_ROOT': str(state.root),
@@ -118,7 +120,7 @@ def test_operator_values_survive_recording_api_refresh_and_instance_boundaries(t
                              trace_id='run-values', span_id='lookup'))
         observer(ToolFinished('lookup', True, values['CHATCOPILOT_ADMINS'],
                              data={'path': str(folder)}, trace_id='run-values', span_id='lookup'))
-        observer(ContextSnapshotPrepared('ctx-values', 'native', 'fixture', 1,
+        observer(ContextSnapshotPrepared('ctx-values', 'langgraph', 'fixture', 1,
             ({'role': 'assistant', 'content': 'answer', 'reasoning_content': 'excluded-provider-thought'},),
             ({'role': 'user', 'content': 'api_key=' + values['FIXTURE_CHAT_API_KEY']},)))
         recorder.start()

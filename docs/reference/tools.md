@@ -12,7 +12,7 @@ external_tools/
 ├── dev/                受控文件、shell、代码任务与 adapter forge
 ├── feishu/             文档、表格、多维表格、Wiki、云盘检索与消息
 ├── mcp_admin/          已审阅 MCP catalog 的发现、批准和探针
-├── repository_tasks/   Native/LangGraph 的不提交仓库任务
+├── repository_tasks/   LangGraph 的不提交仓库任务
 ├── unity_codebase/     Unity 项目只读检索与 Skill wrapper
 ├── web_fetch/          已知 URL 的静态读取
 ├── wiki/               私有本地 Markdown Wiki
@@ -22,7 +22,7 @@ external_tools/
 
 ## 工具按需披露
 
-主 Agent 的完整工具集合仍由同一 ToolRegistry 快照、会话权限和 ToolExecutor 决定。`ToolDef.disclosure` 默认 `deferred`；交付、人格、记忆、Skill 读取、结果回读、统一搜索及委托工具显式 `direct`。Native/LangGraph 直接提交基础工具 schema，其余通过 `tool_search`、`tool_describe`、`tool_call` 发现并单次调用；Codex 复用 App Server `deferLoading`。桥接调用不会授予新权限，实际执行、结果过滤和审计仍使用原工具名。细节和验收见[按需披露规格](../../specs/tool-progressive-disclosure/spec.md)。
+主 Agent 的完整工具集合仍由同一 ToolRegistry 快照、会话权限和 ToolExecutor 决定。`ToolDef.disclosure` 默认 `deferred`；交付、人格、记忆、Skill 读取、结果回读、统一搜索及委托工具显式 `direct`。LangGraph 直接提交基础工具 schema，其余通过 `tool_search`、`tool_describe`、`tool_call` 发现并单次调用；Codex 复用 App Server `deferLoading`。桥接调用不会授予新权限，实际执行、结果过滤和审计仍使用原工具名。细节和验收见[按需披露规格](../../specs/tool-progressive-disclosure/spec.md)。
 
 ## Tool pack
 

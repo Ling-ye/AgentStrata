@@ -704,21 +704,23 @@ validate_guided_env_value() {
 }
 
 validate_resume_paths() {
-    local bots_root_real bot_dir_real expected_real prompt_file line key
+    local bots_root_real bot_dir_real expected_real prompt_file config_file line key
     [ ! -L "$BOT_DIR" ] \
         || finish_failed "starter_profile" "拒绝符号链接 Bot 目录" "在仓库 bots/ 下使用普通目录"
-    if [ ! -f "$BOT_DIR/bot.yaml" ] || [ -L "$BOT_DIR/bot.yaml" ] \
-        || [ ! -r "$BOT_DIR/bot.yaml" ] \
-        || [ "$(stat -c '%u' "$BOT_DIR/bot.yaml" 2>/dev/null || true)" != "$(id -u)" ] \
-        || [ "$(stat -c '%h' "$BOT_DIR/bot.yaml" 2>/dev/null || true)" != "1" ]; then
-        finish_failed "starter_profile" "BotSpec 必须是当前用户拥有的普通单链接文件" \
-            "在仓库内恢复普通 bots/$BOT_ID/bot.yaml"
-    fi
     command -v iconv >/dev/null 2>&1 \
         || finish_failed "starter_profile" "缺少用于无依赖 UTF-8 预检的 iconv" "安装 libc-bin 后运行：$RESUME_COMMAND"
-    iconv -f UTF-8 -t UTF-8 "$BOT_DIR/bot.yaml" >/dev/null 2>&1 \
-        || finish_failed "starter_profile" "BotSpec 不是有效 UTF-8" \
-            "将 bots/$BOT_ID/bot.yaml 恢复为 UTF-8 文本"
+    for config_file in bot.yaml agent.yaml; do
+        if [ ! -f "$BOT_DIR/$config_file" ] || [ -L "$BOT_DIR/$config_file" ] \
+            || [ ! -r "$BOT_DIR/$config_file" ] \
+            || [ "$(stat -c '%u' "$BOT_DIR/$config_file" 2>/dev/null || true)" != "$(id -u)" ] \
+            || [ "$(stat -c '%h' "$BOT_DIR/$config_file" 2>/dev/null || true)" != "1" ]; then
+            finish_failed "starter_profile" "应用与 Agent 配置必须是当前用户拥有的普通单链接文件" \
+                "在仓库内恢复普通 bots/$BOT_ID/$config_file"
+        fi
+        iconv -f UTF-8 -t UTF-8 "$BOT_DIR/$config_file" >/dev/null 2>&1 \
+            || finish_failed "starter_profile" "配置不是有效 UTF-8" \
+                "将 bots/$BOT_ID/$config_file 恢复为 UTF-8 文本"
+    done
     if [ -e "$BOT_DIR/local.env" ] || [ -L "$BOT_DIR/local.env" ]; then
         if [ ! -f "$BOT_DIR/local.env" ] || [ -L "$BOT_DIR/local.env" ] \
             || [ ! -r "$BOT_DIR/local.env" ] \
@@ -745,7 +747,7 @@ validate_resume_paths() {
             fi
             local_env_keys["$key"]=1
             case "$key" in
-                CHATCOPILOT_CHAT_API_KEY|CHATCOPILOT_CHAT_BASE_URL|CHATCOPILOT_CHAT_MODEL|\
+                AGENTSTRATA_LLM_CONFIG|CHATCOPILOT_CHAT_API_KEY|CHATCOPILOT_CHAT_BASE_URL|CHATCOPILOT_CHAT_MODEL|\
                 CHATCOPILOT_ADD_OWNER_IDS|CHATCOPILOT_GATEWAY_PORT|\
                 CHATCOPILOT_GATEWAY_TOKEN|CHATCOPILOT_GATEWAY_STATE_ROOT|QQ_ACCOUNT|\
                 CHATCOPILOT_QQ_ONEBOT_WS_URL|QQ_ACCESS_TOKEN|\
@@ -831,6 +833,10 @@ validate_resume_text_shape() {
         /^[^ ]/ {
             section = ""
             subsection = ""
+            agent_field = ($0 == "llm:" || $0 == "prompts:" || $0 == "tools:" || $0 == "agents:")
+            if (FILENAME == ARGV[1] && agent_field) fail()
+            if (FILENAME == ARGV[2] && !agent_field) fail()
+            if ($0 == "agent_profile: agent.yaml") { profile_reference++; next }
             if ($0 == "id: " bot_id) { bot_id_count++; next }
             if (index($0, "display_name: ") == 1) {
                 value = $0
@@ -847,7 +853,6 @@ validate_resume_text_shape() {
             if ($0 == "agents:") { section = "agents"; agents_section++; next }
             if ($0 == "workspace:") { section = "workspace"; workspace_section++; next }
             if ($0 == "deploy:") { section = "deploy"; deploy_section++; next }
-            if ($0 == "access:") { section = "access"; access_section++; next }
             fail()
         }
 
@@ -872,9 +877,12 @@ validate_resume_text_shape() {
         }
         section == "llm" {
             if ($0 == "  chat:") { subsection = "chat"; llm_chat++; next }
+            if ($0 == "  research:") { subsection = "research"; llm_research++; next }
             if (subsection == "chat" && $0 == "    env_prefix: CHATCOPILOT_CHAT") {
                 llm_prefix++; next
             }
+            if (subsection == "chat" && $0 == "    binding: bot." bot_id ".chat") { chat_binding++; next }
+            if (subsection == "research" && $0 == "    binding: bot." bot_id ".research") { research_binding++; next }
             fail()
         }
         section == "prompts" {
@@ -902,7 +910,7 @@ validate_resume_text_shape() {
             fail()
         }
         section == "agents" {
-            if ($0 == "  runtime: native") { backend++; next }
+            if ($0 == "  runtime: langgraph") { backend++; next }
             # This exact empty-list scalar is emitted by the starter generator;
             # all other YAML flow syntax is rejected by the section whitelists.
             if ($0 == "  presets: []") { presets++; next }
@@ -924,25 +932,22 @@ validate_resume_text_shape() {
             if ($0 == "  project_name: chatcopilot-" bot_id) { deploy_project++; next }
             fail()
         }
-        section == "access" {
-            if ($0 == "  owner_only_project_access: true") { owner_access++; next }
-            fail()
-        }
         { fail() }
 
         END {
             if (invalid) exit 1
-            if (bot_id_count != 1 || display_name_count != 1 \
+            if (bot_id_count != 1 || display_name_count != 1 || profile_reference != 1 \
                 || gateway_section != 1 || channels_section != 1 \
                 || llm_section != 1 || prompts_section != 1 \
                 || tools_section != 1 || agents_section != 1 \
-                || workspace_section != 1 || deploy_section != 1 || access_section != 1 \
+                || workspace_section != 1 || deploy_section != 1 \
                 || gateway_protocol != 1 || gateway_host != 1 || gateway_port != 1 \
                 || gateway_token != 1 || gateway_state != 1 \
                 || channel_qq != 1 || channel_type != 1 || channel_provider != 1 \
                 || channel_id != 1 || channel_endpoint != 1 || channel_token != 1 \
                 || channel_account != 1 || channel_mention != 1 \
-                || llm_chat != 1 || llm_prefix != 1 \
+                || llm_chat != 1 || llm_prefix != 1 || llm_research != 1 \
+                || chat_binding != 1 || research_binding != 1 \
                 || prompt_schema != 1 || prompt_identity != 1 || prompt_response != 1 \
                 || prompt_refusal != 1 || packs_section != 1 || features_section != 1 \
                 || pack_workspace != 1 || pack_memory != 1 \
@@ -950,9 +955,9 @@ validate_resume_text_shape() {
                 || backend != 1 || presets != 1 || workspace_root != 1 \
                 || deploy_target != 1 || deploy_instance != 1 || deploy_home != 1 \
                 || deploy_workspace != 1 || deploy_log != 1 || deploy_env != 1 \
-                || deploy_project != 1 || owner_access != 1) exit 1
+                || deploy_project != 1) exit 1
         }
-    ' "$BOT_DIR/bot.yaml"
+    ' "$BOT_DIR/bot.yaml" "$BOT_DIR/agent.yaml"
 }
 
 preflight_resume_bot() {

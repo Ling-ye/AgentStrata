@@ -1,5 +1,7 @@
 """Runtime/model independence, private transport and explicit migration contracts."""
 
+from tests.application_fixture import write_application
+
 import json
 import inspect
 
@@ -35,7 +37,7 @@ def test_subscription_selection_ignores_api_key_and_stays_nonsecret(model_settin
     assert config.api == "chatgpt_responses"
     assert config.base_url == "https://chatgpt.com/backend-api/codex"
     assert "other-secret" not in json.dumps(plain(config))
-    for runtime in ("native", "codex", "langgraph"):
+    for runtime in ("langgraph", "codex"):
         assert (
             ResolvedRuntimeRoute(runtime, config.model_route()).model.auth.mode
             == "chatgpt"
@@ -66,8 +68,8 @@ def test_runtime_route_is_the_only_agent_runtime_factory_selector() -> None:
 
 
 def test_runtime_session_contracts_have_no_backend_aliases() -> None:
-    reference = RuntimeSessionRef("native", "session")
-    assert reference.runtime_id == "native"
+    reference = RuntimeSessionRef("langgraph", "session")
+    assert reference.runtime_id == "langgraph"
     assert not hasattr(reference, "backend")
     binding = RuntimeSessionBinding(
         binding_id="binding",
@@ -82,6 +84,39 @@ def test_runtime_session_contracts_have_no_backend_aliases() -> None:
     assert binding.to_payload()["schema_version"] == 4
     with pytest.raises(ValueError, match="explicit migration"):
         RuntimeSessionBinding.from_payload({**binding.to_payload(), "schema_version": 3})
+
+
+def test_retired_runtime_cannot_execute_but_archived_binding_preserves_identity():
+    with pytest.raises(ValueError, match="unknown Agent runtime"):
+        ResolvedRuntimeRoute("native", LLMConfig(model="fixture-model").model_route())
+    historical = RuntimeSessionBinding(
+        binding_id="old", actor_key="actor", runtime_id="native", native_thread_id="old-thread",
+        auth_identity_epoch=1, scope_digest="scope", capability_digest="capability",
+        runtime_config_digest="config", status="archived",
+    ).to_payload()
+    assert RuntimeSessionBinding.from_payload(historical).runtime_id == "native"
+    with pytest.raises(ValueError, match="invalid runtime binding"):
+        RuntimeSessionBinding.from_payload({**historical, "status": "active"})
+
+
+def test_codex_resume_does_not_reuse_other_runtime_binding(tmp_path):
+    from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
+
+    path = tmp_path / "session.json"
+    binding = RuntimeSessionBinding(
+        binding_id="binding", actor_key="actor", runtime_id="langgraph", native_thread_id="other-thread",
+        auth_identity_epoch=1, scope_digest="scope", capability_digest="capability",
+        runtime_config_digest="config", resume_policy="restartable",
+    )
+    path.write_text(json.dumps(binding.to_payload()))
+    # Loading a resume binding does not need a model or an app-server process.
+    from chatcopilot.core.config import ChatConfig
+    from tests.prompt_plan_fixture import runtime_route
+
+    config = ChatConfig(llm=LLMConfig(provider="openai", api="openai_responses", model="gpt-test", api_key="fixture"))
+    adapter = CodexRuntimeAdapter(tool_names=set(), route=runtime_route("codex", config.llm), runtime_config=config)
+    assert adapter._load_native_session_state(path, acp_session_id="actor", policy_fingerprint="scope") == ("", 0)
+    assert json.loads(path.read_text())["runtime_id"] == "langgraph"
 
 
 @pytest.mark.parametrize(
@@ -237,13 +272,13 @@ def test_duplicate_response_tool_call_ids_fail_before_tool_execution(monkeypatch
 
 def test_old_backend_field_fails_instead_of_silently_switching(tmp_path):
     path = tmp_path / "bot.yaml"
-    path.write_text("id: test\nagents:\n  backend: codex\n")
+    write_application(path, "id: test\nagents:\n  backend: codex\n")
     with pytest.raises(ValueError, match="agents contains unsupported field"):
         load_botspec(path)
 
 
-def test_native_responses_loop_executes_tools_and_keeps_continuation_private(monkeypatch):
-    from chatcopilot.agent.session import AgentSession
+def test_langgraph_responses_loop_executes_tools_and_keeps_continuation_private(monkeypatch):
+    from chatcopilot.agent.langgraph_session import LangGraphAgentSession
     from chatcopilot.agent.tools.executor import ToolExecutor
     from chatcopilot.contracts.agent import AgentTask, ContextSnapshotPrepared
     from chatcopilot.contracts.tools import ToolDef, ToolResult, build_openai_schema
@@ -299,7 +334,7 @@ def test_native_responses_loop_executes_tools_and_keeps_continuation_private(mon
 
     monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", post)
     monkeypatch.setattr(
-        "subprocess.Popen", lambda *a, **k: pytest.fail("Native must not start Codex")
+        "subprocess.Popen", lambda *a, **k: pytest.fail("LangGraph must not start Codex")
     )
     tool = ToolDef(
         "lookup",
@@ -309,13 +344,13 @@ def test_native_responses_loop_executes_tools_and_keeps_continuation_private(mon
         lambda a, c: (executions.append(1), ToolResult(ok=True, summary="record"))[1],
         access="member",
     )
-    session = AgentSession(
-        session_id="native",
+    session = LangGraphAgentSession(
+        session_id="langgraph",
         llm=LLMClient(LLMConfig(model="gpt-4o-mini", provider="openai", api="openai_responses", api_key="private-key")),
         executor=ToolExecutor(tools=[tool], caller_role_hint="user"),
         tools_schema=[build_openai_schema(tool)],
         prompt_plan=prompt_plan("host"),
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
     )
     try:
         result = session.run_task(AgentTask("lookup"), on_event=events.append)
@@ -332,7 +367,7 @@ def test_native_responses_loop_executes_tools_and_keeps_continuation_private(mon
         )
         assert {
             event.runtime_id for event in events if hasattr(event, "runtime_id")
-        } == {"native"}
+        } == {"langgraph"}
         assert "private-continuation" not in repr(snapshots)
         assert "private-key" not in repr(snapshots)
     finally:

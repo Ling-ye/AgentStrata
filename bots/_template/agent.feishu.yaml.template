@@ -1,0 +1,30 @@
+llm:
+  chat:
+    binding: bot.__BOT_ID__.chat
+    env_prefix: CHATCOPILOT_CHAT
+  research:
+    binding: bot.__BOT_ID__.research
+
+prompts:
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
+  refusal_style: prompts/refusal-style.md
+
+tools:
+  packs:
+  - workspace.read_write
+  - memory.chat
+  - persona.control
+  - mcp.admin
+  features:
+  - chat.file_uploads
+  - chat.private_workspace
+  mcp:
+    servers: mcp/servers.yaml
+
+agents:
+  runtime: langgraph
+  presets:
+  - mcp_query
+

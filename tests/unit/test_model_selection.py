@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 from chatcopilot.botspec.model import ContextSpec
 
 import json
@@ -218,7 +220,7 @@ def test_botspec_validation_rejects_invalid_code_profiles() -> None:
         root = Path(tmp)
         (root / "persona.md").write_text("demo\n", encoding="utf-8")
         bot_yaml = root / "bot.yaml"
-        bot_yaml.write_text(
+        write_application(bot_yaml,
             "\n".join(
                 [
                     "id: model-demo",
@@ -267,7 +269,7 @@ def test_botspec_worker_uses_binding_instead_of_inline_code_task_profile() -> No
         root = Path(tmp)
         (root / "persona.md").write_text("demo\n", encoding="utf-8")
         bot_yaml = root / "bot.yaml"
-        bot_yaml.write_text(
+        write_application(bot_yaml,
             "\n".join(
                 [
                     "id: model-demo",

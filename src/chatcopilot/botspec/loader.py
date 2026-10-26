@@ -5,6 +5,7 @@ import ipaddress
 import math
 import re
 import stat
+from dataclasses import replace
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
@@ -53,6 +54,7 @@ from chatcopilot.botspec.codebases import validate_codebase_registry
 from chatcopilot.botspec.rag import validate_rag_sources
 from chatcopilot.botspec.wiki import validate_wiki_spec
 from chatcopilot.botspec.registry import known_tool_feature_names, known_tool_pack_names
+from chatcopilot.core.application_configuration import load_application_spec
 
 _BOT_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
@@ -115,9 +117,9 @@ def is_valid_bot_id(value: str) -> bool:
 def load_botspec(path: str | Path) -> BotSpec:
     """Load a BotSpec from YAML."""
 
-    source_path = Path(path).expanduser().resolve()
-    data = _load_yaml(source_path)
-    return _parse_botspec(data, source_path)
+    application = load_application_spec(path)
+    spec = _parse_botspec(application.resolved_configuration(), application.source_path)
+    return replace(spec, application=application)
 
 
 def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None) -> list[ValidationIssue]:
@@ -564,21 +566,6 @@ def validate_model_bindings(spec: BotSpec) -> tuple[ValidationIssue, ...]:
     return tuple(issues)
 
 
-def _load_yaml(path: Path) -> dict[str, Any]:
-    try:
-        import yaml
-    except ImportError as exc:
-        raise RuntimeError("缺少 PyYAML 依赖，请先安装：python -m pip install PyYAML") from exc
-
-    if not path.is_file():
-        raise FileNotFoundError(f"BotSpec 文件不存在: {path}")
-    with path.open("r", encoding="utf-8") as handle:
-        data = yaml.safe_load(handle) or {}
-    if not isinstance(data, dict):
-        raise ValueError(f"BotSpec 顶层必须是 mapping: {path}")
-    return data
-
-
 def _parse_gateway_clients(value: Any) -> tuple[GatewayClientSpec, ...]:
     if not isinstance(value, list):
         raise ValueError("gateway.clients 必须是 list")
@@ -955,6 +942,12 @@ def _parse_subagents(
     field_prefix: str = "agents",
     research_binding: str | None = None,
 ) -> SubagentSpec:
+    runtime_id = str(raw.get("runtime", "langgraph")).strip().lower() or "langgraph"
+    if runtime_id == "native":
+        raise ValueError(
+            "Native runtime 已退役；请将 agents.runtime 重新配置为 langgraph 或 codex。"
+            "旧配置与执行绑定不自动转换，业务历史、人格和记忆仍保留。"
+        )
     include = tuple(_str_list(raw.get("presets", raw.get("include", []))))
     supported_fields = {
         "runtime",
@@ -979,11 +972,15 @@ def _parse_subagents(
             + ", ".join(unknown_fields)
         )
     options = _mapping(raw.get("runtime_options", {}), "agents.runtime_options")
-    if set(options) - {"codex", "native"}:
+    if "native" in options:
+        raise ValueError(
+            "agents.runtime_options.native 已废弃；请重新配置 runtime_options.langgraph。"
+        )
+    if set(options) - {"codex", "langgraph"}:
         raise ValueError("unsupported agents.runtime_options entry")
-    native_options = _mapping(options.get("native", {}), "agents.runtime_options.native")
-    if set(native_options) - {"env_prefix"}:
-        raise ValueError("unsupported Native runtime option")
+    langgraph_options = _mapping(options.get("langgraph", {}), "agents.runtime_options.langgraph")
+    if set(langgraph_options) - {"env_prefix"}:
+        raise ValueError("unsupported LangGraph runtime option")
     codex_options = _mapping(options.get("codex", {}), "agents.runtime_options.codex")
     if set(codex_options) - {"turn_timeout_seconds", "extensions", "max_protocol_record_bytes"}:
         raise ValueError("unsupported Codex runtime option")
@@ -1034,8 +1031,8 @@ def _parse_subagents(
         field_prefix=f"{field_prefix}.unified_search.providers",
     )
     return SubagentSpec(
-        runtime=str(raw.get("runtime", "native")).strip().lower() or "native",
-        native_env_prefix=_optional_str(native_options.get("env_prefix")),
+        runtime=runtime_id,
+        langgraph_env_prefix=_optional_str(langgraph_options.get("env_prefix")),
         codex_extensions=_optional_str(codex_options.get("extensions")),
         codex_turn_timeout_seconds=_strict_positive_int(codex_options.get("turn_timeout_seconds"),
             "agents.runtime_options.codex.turn_timeout_seconds", 21600),
@@ -1620,7 +1617,8 @@ def _check_file_exists(
     *,
     required: bool = True,
 ) -> None:
-    path = spec.resolve_path(value)
+    path = (spec.resolve_application_path(value) if field.startswith("packaging.")
+            else spec.resolve_path(value))
     if path is None:
         if required:
             issues.append(ValidationIssue("error", f"{field} 不能为空", field))

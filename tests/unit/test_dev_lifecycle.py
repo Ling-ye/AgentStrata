@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import hashlib
 import json
 import os
@@ -51,7 +53,7 @@ class DevLifecycleToolTests(unittest.TestCase):
             workspace.root.mkdir()
             bot_spec = source / "bots" / "demo" / "bot.yaml"
             bot_spec.parent.mkdir(parents=True)
-            bot_spec.write_text("id: demo\n", encoding="utf-8")
+            write_application(bot_spec, "id: demo\n", encoding="utf-8")
             env = {
                 "CHATCOPILOT_DEV_ROOT": str(source),
                 "CHATCOPILOT_RUNTIME_ROOT": str(runtime),
@@ -106,7 +108,7 @@ class DevLifecycleToolTests(unittest.TestCase):
             workspace.mkdir()
             bot_spec = source / "bots" / "demo" / "bot.yaml"
             bot_spec.parent.mkdir(parents=True)
-            bot_spec.write_text("id: demo\n", encoding="utf-8")
+            write_application(bot_spec, "id: demo\n", encoding="utf-8")
             completed = SimpleNamespace(returncode=0, stdout="queued", stderr="")
             request = SelfUpdatePublishRequest(
                 reason="显式发布",
@@ -147,7 +149,7 @@ class DevLifecycleToolTests(unittest.TestCase):
             workspace.root.mkdir()
             bot_spec = source / "bots" / "demo" / "bot.yaml"
             bot_spec.parent.mkdir(parents=True)
-            bot_spec.write_text("id: demo\n", encoding="utf-8")
+            write_application(bot_spec, "id: demo\n", encoding="utf-8")
             env = {
                 "CHATCOPILOT_DEV_ROOT": str(source),
                 "CHATCOPILOT_RUNTIME_ROOT": str(runtime),
@@ -176,7 +178,7 @@ class DevLifecycleToolTests(unittest.TestCase):
             changed.write_text("new value\n", encoding="utf-8")
             bot_spec = source / "bots" / "demo" / "bot.yaml"
             bot_spec.parent.mkdir(parents=True)
-            bot_spec.write_text("id: demo\n", encoding="utf-8")
+            write_application(bot_spec, "id: demo\n", encoding="utf-8")
             request = SelfUpdatePublishRequest(
                 reason="exact publish",
                 source_root=source,
@@ -227,7 +229,7 @@ class DevLifecycleToolTests(unittest.TestCase):
             expected = hashlib.sha256(b"validated").hexdigest()
             bot_spec = source / "bots" / "demo" / "bot.yaml"
             bot_spec.parent.mkdir(parents=True)
-            bot_spec.write_text("id: demo\n", encoding="utf-8")
+            write_application(bot_spec, "id: demo\n", encoding="utf-8")
             changed.write_text("drifted", encoding="utf-8")
             request = SelfUpdatePublishRequest(
                 reason="automatic publish",
@@ -268,7 +270,7 @@ class DevLifecycleToolTests(unittest.TestCase):
             expected = hashlib.sha256(b"validated").hexdigest()
             bot_spec = source / "bots" / "demo" / "bot.yaml"
             bot_spec.parent.mkdir(parents=True)
-            bot_spec.write_text("id: demo\n", encoding="utf-8")
+            write_application(bot_spec, "id: demo\n", encoding="utf-8")
             request = SelfUpdatePublishRequest(
                 reason="automatic publish",
                 source_root=source,

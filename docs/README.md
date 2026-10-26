@@ -1,19 +1,30 @@
 # 文档导航
 
-AgentStrata 是具备自我优化能力的开源 Agent 框架，以自研 Harness 和 Eval 连接运行证据、候选改进与独立验收。
+AgentStrata 提供自研 Agent、LangGraph/Codex 双 runtime、外部桥接及 Harness/Eval 驱动的持续改进。
 初次了解项目先看[首页](../README.md)，理解模块关系看[框架示意图](../README.md#框架总览)，技术约束与源码入口见[架构总览](reference/architecture.md)。
 
 本页供使用者与开发者选择操作路径；AI 协作者从 [AGENTS](../AGENTS.md)按任务逐层读取。
 guides 解释如何操作，reference 维护当前机制与修改边界，specs 保留长期约束及待验收条件。
 
+## 理解新架构与按阶段开发
+
+[Agent、外部桥接与持续改进主计划](../specs/application-harness-framework/spec.md)是新架构的唯一实施计划，
+包含固定版本的开源源码参考、最小公开契约和 [M0、M1、M1.1 与 M2—M7](../specs/application-harness-framework/spec.md#分阶段开发)的前置条件与验收标准。
+M1 已提供独立应用与 Agent 配置；M1.1 收敛为 LangGraph/Codex。当前已有运行、评测、修复与指定接入，桥接基线、需求改进及版本自动启用仍按后续阶段开发。
+参与新框架开发时先选择阶段，再读取相关领域，不把计划中的接口当作当前操作入口。
+
 ## 选择使用路径
 
 | 目标 | 下一步 |
 | --- | --- |
+| 理解目标架构与现有差距 | [主计划](../specs/application-harness-framework/spec.md)、[当前架构](reference/architecture.md) |
+| 按阶段开发应用接入与优化能力 | [阶段范围与完成条件](../specs/application-harness-framework/spec.md#分阶段开发) |
+| 配置独立 Agent 或迁移旧内联文件 | [配置归属](reference/configuration.md#配置归属与文件引用)、[迁移步骤](guides/instances.md#迁移内联-agent-配置) |
 | 准备源码开发环境 | [开发指南](guides/development.md) |
 | 评测 Agent 或比较改动 | [Evaluation 指南](guides/evaluation.md) |
 | 修复失败与启动自身治理 | [Harness 指南](guides/harness.md) |
 | 运行机器人应用 | [首次部署](guides/deployment.md) / [实例运维](guides/instances.md) |
+| 使用已有 Live2D 客户端或生成器 | [Live2D 指南](guides/live2d.md) |
 
 ## Harness 与 Evaluation
 

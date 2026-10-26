@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import shutil
 import textwrap
@@ -27,7 +29,7 @@ def _write_bot(base: Path, servers_yaml: str) -> Path:
     (bot_dir / "mcp").mkdir(parents=True)
     (bot_dir / "persona.md").write_text("test bot\n", encoding="utf-8")
     (bot_dir / "mcp" / "servers.yaml").write_text(servers_yaml, encoding="utf-8")
-    (bot_dir / "bot.yaml").write_text(
+    write_application(bot_dir / "bot.yaml",
         textwrap.dedent(
             """\
             id: test-bot

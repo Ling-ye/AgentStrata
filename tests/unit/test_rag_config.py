@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import textwrap
 import unittest
@@ -34,7 +36,7 @@ def _write_bot(base: Path, *, rag_sources: str | None = None) -> Path:
     if rag_sources is not None:
         lines.extend(["context:", "  rag:", "    sources: rag/sources.yaml"])
     lines.extend(["deploy:", "  target: wsl2"])
-    (bot_dir / "bot.yaml").write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_application(bot_dir / "bot.yaml", "\n".join(lines) + "\n", encoding="utf-8")
     return bot_dir / "bot.yaml"
 
 

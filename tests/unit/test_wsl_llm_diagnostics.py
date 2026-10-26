@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import subprocess
 import sys
@@ -26,7 +28,7 @@ def test_shared_prefix_parser_supports_slot_legacy_and_default(
 
     for name, (content, expected) in cases.items():
         bot_spec = tmp_path / name
-        bot_spec.write_text(content, encoding="utf-8")
+        write_application(bot_spec, content, encoding="utf-8")
         result = subprocess.run(
             [
                 "bash",
@@ -69,7 +71,7 @@ def test_bot_wrapper_uses_current_botspec_chat_env_prefix(tmp_path: Path) -> Non
         runtime = tmp_path / instance
         bot_spec = runtime / "bots" / instance / "bot.yaml"
         bot_spec.parent.mkdir(parents=True)
-        bot_spec.write_text(
+        write_application(bot_spec,
             "llm:\n"
             "  chat:\n"
             f"    env_prefix: {prefix}\n",
@@ -169,7 +171,7 @@ def test_bootstrap_reconciles_runtime_before_env_loader_executes_python(
 
     bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
     bot_spec.parent.mkdir(parents=True)
-    bot_spec.write_text("id: test-bot\ngateway:\n  host: 127.0.0.1\nchannels:\n  qq: {}\n", encoding="utf-8")
+    write_application(bot_spec, "id: test-bot\ngateway:\n  host: 127.0.0.1\nchannels:\n  qq: {}\n", encoding="utf-8")
     home = tmp_path / "home"
     home.mkdir()
     runtime_env = home / ".chatcopilot-test-bot.env"

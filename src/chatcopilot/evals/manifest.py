@@ -506,7 +506,7 @@ def _parse_case_requirements(
     raw = _strict_mapping(value, source, f"{field}.requirements")
     _reject_unknown(raw, _REQUIREMENT_FIELDS, f"{source}: {field}.requirements")
     runtime_ids = _string_list(raw.get("runtime_ids"), source, f"{field}.requirements.runtime_ids")
-    unknown_runtime_ids = sorted(set(runtime_ids) - {"native", "langgraph", "codex"})
+    unknown_runtime_ids = sorted(set(runtime_ids) - {"langgraph", "codex"})
     if unknown_runtime_ids:
         raise ValueError(
             f"{source}: {field}.requirements.runtime_ids contains unsupported values: "

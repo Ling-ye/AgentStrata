@@ -37,6 +37,53 @@ def test_vtuber_service_description_exports_its_observable_agent(tmp_path):
     assert [s["name"] for s in result["services"]] == ["client", "gateway"]
 
 
+@pytest.mark.parametrize("runtime_id", ["langgraph", "codex"])
+def test_vtuber_keeps_application_profile_and_model_snapshot_independent(tmp_path, monkeypatch, runtime_id):
+    import sys
+    import yaml
+    from chatcopilot.botspec.loader import load_botspec
+    from chatcopilot.core.settings import load_local_env_values
+    from integrations.open_llm_vtuber.agentstrata_vtuber import assets
+    from integrations.open_llm_vtuber.agentstrata_vtuber.deployment import configure
+
+    monkeypatch.setattr(assets, "prepare_assets", lambda *args: None)
+    root = tmp_path / "installation"
+    backend = root / "runtime/apps/backend"
+    (backend / "config_templates").mkdir(parents=True)
+    (backend / "config_templates/conf.ZH.default.yaml").write_text(
+        "system_config: {}\ncharacter_config:\n  agent_config: {}\n")
+    native = tmp_path / "codex"
+    native.write_bytes(b"\x7fELFfixture")
+    monkeypatch.setenv("FIXTURE_CODEX", str(native))
+    monkeypatch.setenv("FIXTURE_API_KEY", "synthetic-model-credential")
+    connection = ({"kind": "codex", "auth": {"mode": "chatgpt", "profile": "main"},
+                   "codex_bin_env": "FIXTURE_CODEX"} if runtime_id == "codex" else
+                  {"kind": "openai_responses", "auth": {"mode": "api_key", "key_env": "FIXTURE_API_KEY"}})
+    host_models = tmp_path / "host-models.json"
+    document = {"connections": {"fixture": connection},
+                "profiles": {"fixture": {"connection": "fixture", "model": "original-model"}},
+                "bindings": {"chat": "fixture"}}
+    host_models.write_text(json.dumps(document))
+    request = {"root": str(root), "host": {"model_config": str(host_models), "model_binding": "chat",
+               "source_url": "https://example.com/source", "python": sys.executable},
+               "options": {"port": 12393, "gateway_port": 18791, "runtime": runtime_id}}
+    configure(request, {"backend": backend})
+    app_path = root / "config/bot.yaml"
+    assert set(yaml.safe_load(app_path.read_text())).isdisjoint({"llm", "prompts", "tools", "agents", "context"})
+    spec = load_botspec(app_path)
+    assert spec.agents.runtime == runtime_id
+    assert spec.application.agent_profile.source_path == root / "config/agent.yaml"
+    environment = load_local_env_values(root / "config/runtime.env", expand_home=True)
+    assert environment["AGENTSTRATA_LLM_CONFIG"] == str(root / "config/model.json")
+    snapshot = (root / "config/model.json").read_bytes()
+    assert b"synthetic-model-credential" not in snapshot
+    document["profiles"]["fixture"]["model"] = "changed-host-model"
+    host_models.write_text(json.dumps(document))
+    configure(request, {"backend": backend})
+    assert (root / "config/model.json").read_bytes() == snapshot
+    assert json.loads(snapshot)["profiles"]["fixture"]["model"] == "original-model"
+
+
 class _Gateway:
     def __init__(self, *, lose_ack=False, running=False, text="final answer"):
         self.calls = []

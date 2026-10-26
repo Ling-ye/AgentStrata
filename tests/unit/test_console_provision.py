@@ -1,3 +1,5 @@
+
+from tests.application_fixture import write_application
 import subprocess
 from pathlib import Path
 import re
@@ -47,7 +49,7 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
         if platform == "qq"
         else ["platform:", f"  type: {platform}", f"  adapter: {platform}_acp"]
     )
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         "\n".join(
             [
                 f"id: {instance_id}",
@@ -65,7 +67,7 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
                 "  packs: []",
                 "  features: []",
                 "agents:",
-                "  runtime: native",
+                "  runtime: langgraph",
                 "workspace:",
                 "  root_env: CHATCOPILOT_WORKSPACE_ROOT",
                 "deploy:",
@@ -96,7 +98,7 @@ def _inst(tmp_path: Path, *, platform: str, env_prefix: str = "CHATCOPILOT_CHAT"
 def _starter_inst(tmp_path: Path) -> BotInstance:
     inst = _inst(tmp_path, platform="qq")
     bot_yaml = Path(inst.bot_spec)
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         "id: sample-qq\n"
         "display_name: sample-qq\n"
         "gateway:\n"
@@ -130,7 +132,7 @@ def _starter_inst(tmp_path: Path) -> BotInstance:
         "    - chat.file_uploads\n"
         "    - chat.private_workspace\n"
         "agents:\n"
-        "  runtime: native\n"
+        "  runtime: langgraph\n"
         "  presets: []\n"
         "workspace:\n"
         "  root_env: CHATCOPILOT_WORKSPACE_ROOT\n"

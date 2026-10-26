@@ -280,7 +280,7 @@ def test_retired_runtime_vocabulary_rejects_backend_name(checker, tmp_path, monk
     source_root = tmp_path / "src/chatcopilot"
     probe = source_root / "agent/session.py"
     probe.parent.mkdir(parents=True)
-    probe.write_text('backend_name = "native"\n', encoding="utf-8")
+    probe.write_text('backend_name = "langgraph"\n', encoding="utf-8")
     monkeypatch.setattr(checker, "ROOT", tmp_path)
     monkeypatch.setattr(checker, "SRC", source_root)
 

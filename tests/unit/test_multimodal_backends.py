@@ -10,7 +10,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
-from chatcopilot.agent.session import AgentSession
+from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import (
     AgentTask,
@@ -90,13 +90,13 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     image_path.write_bytes(_PNG_BYTES)
     resource = _image_resource(image_path)
     completions = _Completions()
-    session = AgentSession(
+    session = LangGraphAgentSession(
         session_id="multimodal-native",
         llm=_llm_client(completions),
         executor=ToolExecutor(caller_role_hint="owner", tools=[]),
         tools_schema=[],
         prompt_plan=prompt_plan("system"),
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
         stream_first_turn=False,
     )
     events: list[object] = []
@@ -126,7 +126,7 @@ def test_native_expands_image_only_at_request_boundary(tmp_path: Path) -> None:
     assert "data:image" not in transcript
     assert "base64," not in transcript
     dispatch = next(event for event in events if isinstance(event, InputResourcesDispatched))
-    assert dispatch.runtime_id == "native"
+    assert dispatch.runtime_id == "langgraph"
     assert dispatch.turn_index == 3
     assert dispatch.request_id
     assert dispatch.resources[0].sequence == 0
@@ -163,7 +163,7 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
         "type": "function",
         "function": {"name": "ping", "arguments": "{}"},
     }
-    session = AgentSession(
+    session = LangGraphAgentSession(
         session_id="multimodal-tool-loop",
         llm=_ScriptedLLM(
             [
@@ -174,7 +174,7 @@ def test_native_tool_loop_keeps_resource_receipts_on_every_context_snapshot(
         executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
         tools_schema=[build_openai_schema(ping)],
         prompt_plan=prompt_plan("system"),
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
         stream_first_turn=False,
     )
     events: list[object] = []

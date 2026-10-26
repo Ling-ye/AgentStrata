@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import importlib.util
 import os
 import stat
@@ -33,7 +35,7 @@ def _write_bot(
     (bot_dir / "persona.md").write_text("test bot\n", encoding="utf-8")
     (bot_dir / "mcp" / "servers.yaml").write_text(mcp_servers, encoding="utf-8")
     bot_path = bot_dir / "bot.yaml"
-    bot_path.write_text(
+    write_application(bot_path,
         "\n".join(
             (
                 f"id: {name}",
@@ -50,7 +52,7 @@ def _write_bot(
                 "  mcp:",
                 "    servers: mcp/servers.yaml",
                 "agents:",
-                "  runtime: native",
+                "  runtime: langgraph",
                 f"  {search_block_name}:",
                 *(
                     (f"    enabled: {unified_enabled}",)

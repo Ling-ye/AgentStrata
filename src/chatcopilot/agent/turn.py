@@ -1,8 +1,7 @@
-"""Shared per-turn runtime operations for agent runtimes.
+"""Per-turn operations for the LangGraph runtime.
 
-Runtime adapters decide control flow: Native uses a Python loop, LangGraph uses a
-``StateGraph``.  This module owns the common Agent-layer semantics that should
-not vary by runtime: task framing, ``AgentEvent`` emission, tool-result
+LangGraph owns control flow. This module owns Agent-layer semantics:
+task framing, ``AgentEvent`` emission, tool-result
 messages, lifecycle intents, produced resources, and ``AgentResult`` assembly.
 """
 
@@ -205,12 +204,7 @@ class TurnOps:
         _safe_emit(self.on_event, event)
 
     def should_stop_before_llm(self, state: TurnState) -> bool:
-        if state.done:
-            return True
-        if self.session._hard_timed_out(state.started_at) or self.session._soft_timed_out(
-            state.started_at
-        ):
-            self.finish_timeout(state, hard=self.session._hard_timed_out(state.started_at))
+        if self.should_stop_before_tool(state):
             return True
         if self.session.hard_iteration_cap is not None and state.iteration >= self.session.hard_iteration_cap:
             self.session._repair_orphan_tool_calls(self.session._messages)
@@ -220,6 +214,41 @@ class TurnOps:
             )
             self.finish_text(state, text, stop_reason="iteration_cap")
             return True
+        if (
+            state.iteration >= self.session.max_tool_iterations
+            and not state.wrapup_injected
+            and not self.session._is_healthy(
+                state.recent_tool_fingerprints, state.consecutive_failures
+            )
+        ):
+            state.wrapup_injected = True
+            state.wrapup_remaining = 2
+        if state.wrapup_injected and state.wrapup_remaining <= 0:
+            self.session._repair_orphan_tool_calls(self.session._messages)
+            self.finish_text(
+                state,
+                f"（已用完 {state.iteration} 轮迭代（soft={self.session.max_tool_iterations}），"
+                "收尾后停止本轮。如需继续请追问。）",
+                stop_reason="iteration_cap",
+            )
+            return True
+        return False
+
+    def should_stop_before_tool(self, state: TurnState) -> bool:
+        """Check cancellation and deadlines before any model or tool side effect."""
+        self.raise_if_cancelled()
+        if state.done:
+            return True
+        if self.session._hard_timed_out(state.started_at):
+            self.finish_timeout(state, hard=True)
+            return True
+        if not state.wrapup_injected and self.session._soft_timed_out(state.started_at):
+            if self.session.hard_timeout_seconds is None:
+                self.finish_timeout(state)
+                return True
+            if not self.session._has_recent_tool_activity(state.last_tool_finish_time):
+                state.wrapup_injected = True
+                state.wrapup_remaining = 2
         return False
 
     def call_llm(self, state: TurnState) -> ChatResult | None:
@@ -443,6 +472,8 @@ class TurnOps:
 
         if not result.tool_calls:
             self.finish_without_tool_result(state, result_content=result.content)
+        elif state.wrapup_injected:
+            state.wrapup_remaining -= 1
         return result
 
     def last_assistant_tool_calls(self) -> list[dict[str, Any]]:
@@ -451,7 +482,8 @@ class TurnOps:
         return list(calls or [])
 
     def execute_tool_call(self, state: TurnState, tool_call: dict[str, Any]) -> None:
-        self.raise_if_cancelled()
+        if self.should_stop_before_tool(state):
+            return
         model_name, model_args = self.session._parse_tool_call(tool_call)
         disclosure = self.session.disclosure
         discovery = disclosure is not None and model_name in {"tool_search", "tool_describe"}

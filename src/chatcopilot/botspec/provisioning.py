@@ -238,6 +238,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         allowed_top_level = {
             "id",
             "display_name",
+            "agent_profile",
             "gateway",
             "channels",
             "llm",
@@ -251,6 +252,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         }
         llm_raw = raw.get("llm", {})
         chat_raw = llm_raw.get("chat", {}) if isinstance(llm_raw, dict) else {}
+        research_raw = llm_raw.get("research", {}) if isinstance(llm_raw, dict) else {}
         gateway_raw = raw.get("gateway", {})
         channels_raw = raw.get("channels", {})
         qq_raw = channels_raw.get("qq", {}) if isinstance(channels_raw, dict) else {}
@@ -275,9 +277,11 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
                     "mention_only_groups",
                 }
             )
-            and _mapping_keys_at_most(raw, "llm", {"chat"})
+            and _mapping_keys_at_most(raw, "llm", {"chat", "research"})
             and isinstance(chat_raw, dict)
-            and set(chat_raw).issubset({"env_prefix"})
+            and set(chat_raw).issubset({"env_prefix", "binding"})
+            and isinstance(research_raw, dict)
+            and set(research_raw).issubset({"binding"})
             and _mapping_keys_at_most(
                 raw,
                 "prompts",
@@ -326,7 +330,7 @@ def is_guided_starter_spec(spec: BotSpec) -> bool:
         and spec.prompts.refusal_style == "prompts/refusal-style.md"
         and not spec.prompts.role_styles
         and not spec.prompts.mode_styles
-        and spec.agents.runtime == "native"
+        and spec.agents.runtime == "langgraph"
         and set(spec.tools.packs) == {"workspace.read_write", "memory.chat"}
         and set(spec.tools.features) == {
             "chat.file_uploads",

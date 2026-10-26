@@ -1,4 +1,4 @@
-"""Explicit Native and LangGraph runtime adapters."""
+"""LangGraph runtime adapter and host-owned session assembly."""
 from __future__ import annotations
 
 import uuid
@@ -28,12 +28,12 @@ from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 
 
-class _InProcessRuntimeAdapter:
+class LangGraphRuntimeAdapter:
     def __init__(
-        self, runtime_id: str, *, tool_names: set[str],
+        self, *, tool_names: set[str],
         session_factory: Callable[[RuntimeOpenRequest], Any] | None = None,
     ) -> None:
-        self.runtime_id = runtime_id
+        self.runtime_id = "langgraph"
         self._session_factory = session_factory
         self._capabilities = RuntimeCapabilities(
             names=frozenset(
@@ -114,8 +114,8 @@ class _InProcessRuntimeAdapter:
         return self._resolve(session).snapshot_transcript()
 
 
-def _build_inprocess_runtime_adapter(
-    adapter_type: type[_InProcessRuntimeAdapter], session_cls: type[AgentSession], *,
+def build_langgraph_runtime_adapter(
+    *,
     route: ResolvedRuntimeRoute,
     tool_names: set[str], llm: LLMClient | None = None,
     runtime_config: ChatConfig | None = None,
@@ -125,9 +125,10 @@ def _build_inprocess_runtime_adapter(
     tool_payload_filter: ToolPayloadFilter | None = None,
     retriever: Retriever | None = None,
     **_: Any,
-) -> _InProcessRuntimeAdapter:
-    expected_runtime_id = "native" if adapter_type is NativeRuntimeAdapter else "langgraph"
-    if route.runtime_id != expected_runtime_id:
+) -> LangGraphRuntimeAdapter:
+    from chatcopilot.agent.langgraph_session import LangGraphAgentSession
+
+    if route.runtime_id != "langgraph":
         raise ValueError("runtime route does not match in-process adapter")
     def create_session(request: RuntimeOpenRequest) -> AgentSession:
         if llm is None or runtime_config is None or tool_executor is None:
@@ -161,7 +162,7 @@ def _build_inprocess_runtime_adapter(
         )
 
         _defaults_rt = ChatConfig().runtime
-        return session_cls(
+        return LangGraphAgentSession(
             session_id=request.session_id,
             llm=llm,
             executor=tool_executor,
@@ -208,33 +209,9 @@ def _build_inprocess_runtime_adapter(
             retriever=retriever,
         )
 
-    return adapter_type(
+    return LangGraphRuntimeAdapter(
         tool_names=tool_names, session_factory=create_session,
     )
 
 
-class NativeRuntimeAdapter(_InProcessRuntimeAdapter):
-    def __init__(self, *, tool_names, session_factory=None):
-        super().__init__("native", tool_names=tool_names, session_factory=session_factory)
-
-
-class LangGraphRuntimeAdapter(_InProcessRuntimeAdapter):
-    def __init__(self, *, tool_names, session_factory=None):
-        super().__init__("langgraph", tool_names=tool_names, session_factory=session_factory)
-
-
-def build_native_runtime_adapter(**kwargs) -> NativeRuntimeAdapter:
-    return _build_inprocess_runtime_adapter(NativeRuntimeAdapter, AgentSession, **kwargs)
-
-
-def build_langgraph_runtime_adapter(**kwargs) -> LangGraphRuntimeAdapter:
-    from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-    return _build_inprocess_runtime_adapter(LangGraphRuntimeAdapter, LangGraphAgentSession, **kwargs)
-
-
-__all__ = [
-    "NativeRuntimeAdapter",
-    "LangGraphRuntimeAdapter",
-    "build_native_runtime_adapter",
-    "build_langgraph_runtime_adapter",
-]
+__all__ = ["LangGraphRuntimeAdapter", "build_langgraph_runtime_adapter"]

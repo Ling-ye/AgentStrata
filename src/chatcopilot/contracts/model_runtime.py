@@ -10,7 +10,7 @@ from types import MappingProxyType
 from typing import Any, Literal, Mapping, Protocol, TypeAlias
 from urllib.parse import urlsplit
 
-RuntimeId: TypeAlias = Literal["native", "langgraph", "codex"]
+RuntimeId: TypeAlias = Literal["langgraph", "codex"]
 ModelApi: TypeAlias = Literal["chat_completions", "openai_responses", "chatgpt_responses"]
 
 
@@ -179,7 +179,7 @@ class ResolvedRuntimeRoute:
     turn_timeout_seconds: float | None = None
 
     def __post_init__(self) -> None:
-        if self.runtime_id not in {"native", "langgraph", "codex"}:
+        if self.runtime_id not in {"langgraph", "codex"}:
             raise ValueError("unknown Agent runtime")
         if self.turn_timeout_seconds is not None and (
             isinstance(self.turn_timeout_seconds, bool)

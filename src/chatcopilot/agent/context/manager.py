@@ -146,7 +146,7 @@ class ContextManager:
             ):
                 raise ValueError("prompt_prefix_length is outside the message view")
             if prompt_prefix_length and working[0].get("role") != "system":
-                raise ValueError("native prompt prefix must start with a system message")
+                raise ValueError("model prompt prefix must start with a system message")
             prefix_length = prompt_prefix_length
         prompt_prefix = working[:prefix_length]
         conversation = working[prefix_length:]

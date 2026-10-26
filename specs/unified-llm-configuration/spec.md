@@ -9,8 +9,8 @@ created: 2026-09-29
 
 ## Summary
 
-机器人、辅助 Agent、独立 code worker、Harness、代码熵回收和 Evaluation 从同一个
-模型配置文件取得连接、方案和用途引用。Console 集中编辑配置并从实际连接发现模型。
+机器人、辅助 Agent、独立 code worker、Harness、代码熵回收和 Evaluation 复用同一模型配置格式与解析器，
+从各自选定的配置取得连接、方案和用途引用。Console 编辑宿主选定的配置并从实际连接发现模型。
 保存后新任务使用新配置，常驻机器人通过现有应用／重启入口加载。
 
 ## Design
@@ -23,7 +23,9 @@ adapter 管协议，原有 Runtime 管 Agent 循环，宿主管身份、权限�
 ### 配置与解析
 
 - 统一保存配置为 `~/.config/agentstrata/llm.json`，可通过绝对路径
-  `AGENTSTRATA_LLM_CONFIG` 指定。所有宿主部署使用同一来源。
+  `AGENTSTRATA_LLM_CONFIG` 指定。每个宿主使用明确选定的来源；实例也可引用自己的配置快照。
+  [应用与 Agent 配置分离](../application-harness-framework/spec.md)使用实例独立的用途名，
+  保留共享连接和方案的显式引用。Live2D 新安装为LangGraph/Codex 两种 runtime 保存实例模型快照，凭据仍只保存引用。
 - 首次尚无保存文件时，可读取同目录的 `llm.defaults.json`；自定义路径对应同名
   `*.defaults.json`。手动修改或前端保存后，以整份保存配置为准，不叠加默认字段，
   不因保存文件损坏而回退默认值。显式任务快照不使用默认文件。

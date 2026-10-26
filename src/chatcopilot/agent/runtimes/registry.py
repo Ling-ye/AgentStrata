@@ -34,12 +34,6 @@ class RuntimeAdapterRegistry:
         return factory(route=route, **kwargs)
 
 
-def _native_factory(**kwargs: Any) -> RuntimeAdapter:
-    from chatcopilot.agent.runtimes.inprocess import build_native_runtime_adapter
-
-    return build_native_runtime_adapter(**kwargs)
-
-
 def _langgraph_factory(**kwargs: Any) -> RuntimeAdapter:
     from chatcopilot.agent.runtimes.inprocess import build_langgraph_runtime_adapter
 
@@ -54,7 +48,6 @@ def _codex_factory(**kwargs: Any) -> RuntimeAdapter:
 
 RUNTIME_ADAPTERS = RuntimeAdapterRegistry(
     {
-        "native": _native_factory,
         "langgraph": _langgraph_factory,
         "codex": _codex_factory,
     }

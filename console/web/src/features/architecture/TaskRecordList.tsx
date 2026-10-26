@@ -70,7 +70,7 @@ export default function TaskRecordList({ instanceId, selected, data, loading, er
         <Input aria-label="组件筛选" placeholder="工具 / 插件 ID" allowClear value={filters.component ?? ""} onChange={(component) => onFilter({ component })} />
         <Input aria-label="错误码筛选" placeholder="错误码" allowClear value={filters.error_code ?? ""} onChange={(error_code) => onFilter({ error_code })} />
         <Select aria-label="Runtime 筛选" value={filters.runtime_id || ""} onChange={(runtime_id) => onFilter({ runtime_id })} options={[
-          { value: "", label: "全部 Runtime" }, ...["native", "langgraph", "codex"].map((value) => ({ value, label: value }))]} />
+          { value: "", label: "全部 Runtime" }, ...["native", "langgraph", "codex"].map((value) => ({ value, label: value === "native" ? "Native（已退役，仅历史）" : value }))]} />
         <Input aria-label="最短耗时" placeholder="最短耗时（毫秒）" value={filters.min_ms == null ? "" : String(filters.min_ms)}
           onChange={(value) => { if (!value || /^\d+$/.test(value)) onFilter({ min_ms: value ? Number(value) : undefined }); }} />
       </div></details>

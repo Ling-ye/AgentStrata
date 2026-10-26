@@ -1,4 +1,6 @@
 
+from tests.application_fixture import write_application
+
 from chatcopilot.core.config import LLMConfig
 from pathlib import Path
 from contextlib import nullcontext
@@ -341,7 +343,7 @@ def test_hidden_state_created_after_scope_is_never_exposed(tmp_path):
     assert (state / "auth").read_text() == "private"
 
 
-@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
+@pytest.mark.parametrize("runtime_id", ["langgraph"])
 @pytest.mark.parametrize("role", [Role.OWNER, Role.USER])
 def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, runtime_id, role):
     from tests.prompt_plan_fixture import prompt_input, runtime_route
@@ -415,7 +417,7 @@ def test_agent_model_tool_flow_writes_only_bound_resources(tmp_path, runtime_id,
         runtime.close()
 
 
-@pytest.mark.parametrize("runtime_id", ["native", "langgraph", "codex"])
+@pytest.mark.parametrize("runtime_id", ["langgraph", "codex"])
 @pytest.mark.parametrize("kind", ["group", "p2p"])
 def test_persona_research_commits_and_next_turn_loads_in_each_backend(
     tmp_path, monkeypatch, runtime_id, kind
@@ -568,17 +570,17 @@ def test_retired_model_role_config_reports_migration(tmp_path):
     import yaml
     from chatcopilot.botspec.loader import load_botspec
 
-    data = yaml.safe_load(Path("bots/lingye-copilot-qq/bot.yaml").read_text())
+    data = load_botspec(Path("bots/lingye-copilot-qq/bot.yaml")).raw
     data["llm"]["code"]["allowed_roles"] = ["user"]
     path = tmp_path / "bot.yaml"
-    path.write_text(yaml.safe_dump(data))
+    write_application(path, yaml.safe_dump(data))
     with pytest.raises(ValueError, match="llm.code.allowed_roles is retired"):
         load_botspec(path)
 
 
 def test_member_cannot_schedule_hidden_lifecycle_tool(tmp_path):
     from tests.prompt_plan_fixture import prompt_plan
-    from chatcopilot.agent.session import AgentSession
+    from chatcopilot.agent.langgraph_session import LangGraphAgentSession
     from chatcopilot.agent.tools.executor import ToolExecutor
     from chatcopilot.core.llm_client import ChatResult
     from chatcopilot.contracts.agent import AgentTask
@@ -604,13 +606,13 @@ def test_member_cannot_schedule_hidden_lifecycle_tool(tmp_path):
                 else ChatResult(content="done")
             )
 
-    session = AgentSession(
+    session = LangGraphAgentSession(
         session_id="member",
         llm=Model(),
         executor=ToolExecutor(tools=[], caller_role_hint="user"),
         tools_schema=[],
         prompt_plan=prompt_plan(role="user"),
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
     )
     result = session.run_task(AgentTask("ordinary task"), on_event=lambda e: None)
     assert result.lifecycle_intents == ()

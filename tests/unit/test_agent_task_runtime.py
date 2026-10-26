@@ -20,7 +20,7 @@ def test_runtime_binds_role_scope_and_actor_sessions_without_model(monkeypatch, 
         subagents=SubagentSpec(),
         skills=(),
         prompt_profile=BotPromptProfile(identity="fixture", response_style="concise"),
-        runtime_id="native",
+        runtime_id="langgraph",
         capability_policies=(),
         mcp_servers=(),
     )
@@ -84,7 +84,7 @@ def test_native_session_executes_real_registry_and_fact_scoring(monkeypatch, tmp
 
     runtime = replace(
         load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False),
-        runtime_id="native",
+        runtime_id="langgraph",
     )
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")
@@ -175,7 +175,7 @@ def test_member_persona_attack_runs_real_native_session_without_mutation(monkeyp
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
     import httpx
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="langgraph")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")
     calls = []
@@ -255,7 +255,7 @@ def test_owner_persona_task_runs_real_native_provider_and_persistence(monkeypatc
     from chatcopilot.evals.agent_tasks.verifier import verify
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="langgraph")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-native-fixture")
     calls = {"main": 0, "draft": 0}
@@ -288,7 +288,7 @@ def test_group_memory_is_persisted_and_injected_only_into_its_new_session(monkey
     from chatcopilot.evals.agent_tasks.verifier import verify
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="langgraph")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-memory-fixture")
     requests = []
@@ -327,7 +327,7 @@ def test_native_injection_exposes_write_tool_and_excludes_host_setup(monkeypatch
     from chatcopilot.evals.agent_tasks.verifier import verify
     from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 
-    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="native")
+    runtime = replace(load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False), runtime_id="langgraph")
     monkeypatch.setattr(target, "load_evaluation_runtime", lambda _: runtime)
     monkeypatch.setenv("CHATCOPILOT_LINGYE_API_KEY", "controlled-injection-fixture")
     calls = []

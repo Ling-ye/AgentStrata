@@ -231,7 +231,7 @@ def _image_dispatch_matches_staged_resources(observation: TrialObservation) -> b
         if (
             isinstance(resources, list)
             and resources == staged
-            and receipt.get("runtime_id") in {"native", "langgraph", "codex"}
+            and receipt.get("runtime_id") in {"langgraph", "codex"}
             and isinstance(receipt.get("turn_index"), int)
             and bool(str(receipt.get("request_id") or ""))
         ):

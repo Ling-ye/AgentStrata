@@ -13,7 +13,7 @@ from chatcopilot.core.config import ChatConfig
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.agent.runtime import AgentRuntime
 from chatcopilot.agent.context.prompt_plan import PromptPlanBuilder
-from chatcopilot.agent.session import AgentSession
+from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.subagents.registry import (
     SearchCircuitBreaker,
     _make_delegate_tool,
@@ -202,13 +202,13 @@ class SearchFallbackTests(unittest.TestCase):
                 {"ok": False, "error_code": "mcp_unavailable"}, ensure_ascii=False
             ),
         }
-        session = AgentSession(
+        session = LangGraphAgentSession(
             session_id="sub",
             llm=_FakeLLM(),
             executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system"),
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
         )
         session._messages.append(
             {"role": "tool", "content": json.dumps(nested, ensure_ascii=False)}

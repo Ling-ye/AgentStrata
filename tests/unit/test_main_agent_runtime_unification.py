@@ -153,7 +153,7 @@ class BackendRegistryTests(TestCase):
         backend.close_session(session)
 
     def test_three_main_backends_are_code_registered(self) -> None:
-        self.assertEqual(RUNTIME_IDS, ("native", "langgraph", "codex"))
+        self.assertEqual(RUNTIME_IDS, ("langgraph", "codex"))
         self.assertEqual(runtime_ids(), frozenset(RUNTIME_IDS))
 
     def test_unknown_runtime_fails_without_fallback(self) -> None:
@@ -175,7 +175,7 @@ class BackendRegistryTests(TestCase):
         self.assertIn("agents.runtime", str(caught.exception))
 
     def test_inprocess_factory_binds_each_open_request_and_isolates_messages(self) -> None:
-        for runtime_id in ("native", "langgraph"):
+        for runtime_id in ("langgraph",):
             with self.subTest(runtime_id=runtime_id):
                 llm = mock.Mock(model="fixture-model")
                 llm.chat.return_value = ChatResult(content="completed")
@@ -1867,7 +1867,7 @@ class BackendStateTransitionTests(TestCase):
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
             prepare_runtime_deployment(
-                instance_id="demo", target_runtime_id="native", workspace_root=root
+                instance_id="demo", target_runtime_id="langgraph", workspace_root=root
             )
             transcript = root / "p2p_user" / "transcripts"
             runtime_state = root / "p2p_user" / ".runtime-sessions"
@@ -1899,19 +1899,19 @@ class BackendStateTransitionTests(TestCase):
             self.assertTrue(group_runtime_state.exists())
             self.assertTrue(group_journal.is_file())
             marker = json.loads((root / ".agent-runtime.json").read_text(encoding="utf-8"))
-            self.assertEqual(marker["runtime_id"], "native")
+            self.assertEqual(marker["runtime_id"], "langgraph")
 
     def test_unchanged_backend_preserves_histories(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp) / "workspace"
             prepare_runtime_deployment(
-                instance_id="demo", target_runtime_id="native", workspace_root=root
+                instance_id="demo", target_runtime_id="langgraph", workspace_root=root
             )
             transcript = root / "user" / "transcripts"
             transcript.mkdir(parents=True)
             (transcript / "turn.jsonl").write_text("history", encoding="utf-8")
             transition = prepare_runtime_deployment(
-                instance_id="demo", target_runtime_id="native", workspace_root=root
+                instance_id="demo", target_runtime_id="langgraph", workspace_root=root
             )
             self.assertFalse(transition.state_deleted)
             self.assertTrue(transcript.exists())

@@ -1855,7 +1855,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
         prompt_profile=BotPromptProfile(identity="bot baseline", response_style="concise"),
         capability_policies=(ToolPackPolicy(id="private", content="PRIVATE CAPABILITY"),),
         skills=("PRIVATE SKILL",),
-        runtime_id="native",
+        runtime_id="langgraph",
     )
     captures: list[dict[str, object]] = []
 
@@ -1895,7 +1895,7 @@ def test_group_owner_materialization_keeps_owner_role_but_public_payloads(
         runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
         project_roots=(),
         command_timeouts=CommandTimeouts(75, 900),
-        runtime_id="native",
+        runtime_id="langgraph",
         open_session=open_session,
         tools=(),
     )

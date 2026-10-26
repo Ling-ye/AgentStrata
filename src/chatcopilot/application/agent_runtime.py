@@ -103,8 +103,8 @@ def project_agent_runtime(
         chat_config.routing.code_task_profile = code.profile_id
         if code.profile_id not in chat_config.routing.code_profiles:
             raise ValueError("独立 worker 必须引用 worker 通道的 Codex 方案")
-    if subagents.native_env_prefix:
-        chat_config.runtime = load_config(env_prefix=subagents.native_env_prefix, environment=env).runtime
+    if subagents.langgraph_env_prefix:
+        chat_config.runtime = load_config(env_prefix=subagents.langgraph_env_prefix, environment=env).runtime
     research_llm_config = load_research_llm_config(
         runtime.spec.llm, fallback=chat_config.llm, environment=env, document=document,
     )

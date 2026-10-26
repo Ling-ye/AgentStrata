@@ -32,6 +32,11 @@ def _new_starter(root: Path) -> Path:
             ]
         )
     assert code == 0
+    models = Path(os.environ["AGENTSTRATA_LLM_CONFIG"])
+    document = json.loads(models.read_text())
+    document["bindings"].update({"bot.my-assistant-qq.chat": document["bindings"]["chat"],
+                                 "bot.my-assistant-qq.research": document["bindings"]["research"]})
+    models.write_text(json.dumps(document))
     return root / "bots" / "my-assistant-qq" / "bot.yaml"
 
 
@@ -41,13 +46,16 @@ def test_starter_scaffold_is_valid_and_contains_only_beginner_capabilities(tmp_p
 
     assert not [item for item in validate_botspec(spec) if item.level == "error"]
     assert spec.llm.env_prefix == "CHATCOPILOT_CHAT"
-    assert spec.agents.runtime == "native"
+    assert spec.agents.runtime == "langgraph"
     assert spec.tools.packs == ("workspace.read_write", "memory.chat")
     assert spec.tools.features == ("chat.file_uploads", "chat.private_workspace")
     assert not hasattr(spec, "access")
     assert (bot_yaml.parent / "prompts" / "refusal-style.md").is_file()
     example = (bot_yaml.parent / "local.env.example").read_text(encoding="utf-8")
-    payload = yaml.safe_load(bot_yaml.read_text(encoding="utf-8"))
+    payload = spec.raw
+    assert yaml.safe_load(bot_yaml.read_text())["agent_profile"] == "agent.yaml"
+    assert "tools" not in yaml.safe_load(bot_yaml.read_text())
+    assert spec.llm.chat.binding == "bot.my-assistant-qq.chat"
     assert payload["tools"]["packs"] == ["workspace.read_write", "memory.chat"]
     assert "platform" not in payload
     assert payload["gateway"]["protocol_version"] == 1
@@ -73,14 +81,14 @@ def test_starter_scaffold_is_valid_and_contains_only_beginner_capabilities(tmp_p
     assert "NAPCAT_SHM_SIZE" not in example
 
 
-def test_minimal_scaffold_keeps_existing_shape(tmp_path: Path) -> None:
+def test_minimal_scaffold_splits_profile_with_minimal_capabilities(tmp_path: Path) -> None:
     (tmp_path / "bots").mkdir()
     with mock.patch.dict(os.environ, {"CHATCOPILOT_HOME": str(tmp_path)}, clear=False):
         code = bot_cli_main(["new", "minimal-bot", "--platform", "qq"])
 
     assert code == 0
     bot_dir = tmp_path / "bots" / "minimal-bot"
-    payload = yaml.safe_load((bot_dir / "bot.yaml").read_text(encoding="utf-8"))
+    payload = load_botspec(bot_dir / "bot.yaml").raw
     assert payload["tools"] == {"packs": [], "features": []}
     assert "access" not in payload
     assert not (bot_dir / "local.env.example").exists()
@@ -205,9 +213,10 @@ def test_guided_configure_rotates_invalid_existing_access_token(tmp_path: Path) 
 
 def test_nonstarter_configure_preserves_existing_qq_allowlist(tmp_path: Path) -> None:
     bot_yaml = _new_starter(tmp_path)
-    payload = yaml.safe_load(bot_yaml.read_text(encoding="utf-8"))
+    profile_yaml = bot_yaml.with_name("agent.yaml")
+    payload = yaml.safe_load(profile_yaml.read_text(encoding="utf-8"))
     payload["tools"]["packs"] = ["workspace.read_write"]
-    bot_yaml.write_text(
+    profile_yaml.write_text(
         yaml.safe_dump(payload, allow_unicode=True, sort_keys=False),
         encoding="utf-8",
     )

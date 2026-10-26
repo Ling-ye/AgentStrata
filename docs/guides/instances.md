@@ -47,7 +47,11 @@ python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml
 python -m chatcopilot bot provision-env --bot bots/<id>/bot.yaml --dry-run
 ```
 
-修改 BotSpec、prompt、MCP 绑定、`local.env`、Python 代码或依赖后：
+`bot.yaml` 保存渠道、部署及 `agent_profile` 引用；模型、runtime、提示词和工具放在对应 `agent.yaml`。
+新建应用需要在统一模型配置中绑定自己的 `bot.<id>.chat` 和 `bot.<id>.research`；更换一个应用的绑定
+不会修改其他用途。完整字段归属见[配置参考](../reference/configuration.md#配置归属与文件引用)。
+
+修改应用描述、Agent profile、prompt、MCP 绑定、`local.env`、Python 代码或依赖后：
 
 ```bash
 bash deploy/wsl/update_instance.sh --instance <id> --dry-run
@@ -60,6 +64,25 @@ bootstrap。命令失败会停止后续阶段，不提供自动回滚。首次�
 ```bash
 bash deploy/wsl/update_instance.sh --instance <id> --enable
 ```
+
+### 迁移内联 Agent 配置
+
+旧版在 `bot.yaml` 中直接保存 `llm/prompts/tools/agents/context`。先停止目标实例，再用新版本 CLI
+预览和应用拆分；插件实例使用自己的停止入口，命令参数可以是其实际 `config/bot.yaml` 路径。
+
+```bash
+python -m chatcopilot botspec migrate-profile bots/<id>/bot.yaml
+python -m chatcopilot botspec migrate-profile bots/<id>/bot.yaml --apply
+python -m chatcopilot botspec validate bots/<id>/bot.yaml
+```
+
+默认只预览。`--apply` 在原文件旁保留带内容摘要的 `*.agent-profile-<digest>.bak` 私有备份，
+先写入 `agent.yaml`，再原子替换应用文件；备份由已有 `*.bak` 忽略规则排除。字段值、模型绑定、相对资源引用、
+身份、部署目录和工作区保持原义，凭据、会话、人格和记忆不改动。已有不同的 profile、文件链接或迁移期间的
+源文件变化会阻止覆盖。重试只复用内容完全一致的中间文件；已拆分配置仅校验引用，不再次拆分。
+
+迁移成功后按既有更新与启动流程使用新版本。需要撤回时，停止新版本并使用备份和匹配的旧运行版本；
+新加载器不回退到旧单文件结构。该命令不提交 Git、不操作 systemd，也不处理 Harness 任务数据库。
 
 ### 生命周期
 

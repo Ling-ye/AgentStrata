@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import re
 import subprocess
@@ -94,7 +96,7 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     for root in (source, runtime):
         bot_dir = root / "bots/test-bot"
         bot_dir.mkdir(parents=True)
-        (bot_dir / "bot.yaml").write_text("id: test-bot\n", encoding="utf-8")
+        write_application(bot_dir / "bot.yaml", "id: test-bot\n", encoding="utf-8")
     (source / "bots/test-bot/local.env").write_text(
         "CHATCOPILOT_CHAT_API_KEY=test\n",
         encoding="utf-8",
@@ -103,7 +105,7 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
     fake_python = (
         "#!/usr/bin/env bash\n"
         'if [ -n "${CHATCOPILOT_REQUIREMENT_BOT:-}" ]; then\n'
-        '  if grep -Fq -- "- dev.code_tasks" "$CHATCOPILOT_REQUIREMENT_BOT"; then echo 1; else echo 0; fi\n'
+        '  if grep -Fq -- "- dev.code_tasks" "$(dirname "$CHATCOPILOT_REQUIREMENT_BOT")/agent.yaml"; then echo 1; else echo 0; fi\n'
         "  exit 0\n"
         "fi\n"
         'if [[ "$*" == *"provision-env"* ]]; then\n'
@@ -137,6 +139,7 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         'if [ -f "$sync_src/bots/test-bot/bot.yaml" ]; then\n'
         '  mkdir -p "$sync_dst/bots/test-bot"\n'
         '  cp "$sync_src/bots/test-bot/bot.yaml" "$sync_dst/bots/test-bot/bot.yaml"\n'
+        '  cp "$sync_src/bots/test-bot/agent.yaml" "$sync_dst/bots/test-bot/agent.yaml"\n'
         "fi\n"
         'if [ -f "$sync_src/uv.lock" ]; then\n'
         '  cp "$sync_src/uv.lock" "$sync_dst/uv.lock"\n'
@@ -396,13 +399,14 @@ def test_update_script_enable_is_post_start_and_fail_closed() -> None:
 def test_update_script_uses_fast_path_when_rebuild_inputs_match(tmp_path: Path) -> None:
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     updated_bot = "id: test-bot\nmarker: fast-update-applied\n"
-    (source / "bots/test-bot/bot.yaml").write_text(updated_bot, encoding="utf-8")
+    write_application(source / "bots/test-bot/bot.yaml", updated_bot, encoding="utf-8")
 
     result = _run_update_fixture(source, runtime, stage_log, fake_bin)
 
     assert result.returncode == 0, result.stdout + result.stderr
     assert "mode:     fast" in result.stdout
-    assert (runtime / "bots/test-bot/bot.yaml").read_text(encoding="utf-8") == updated_bot
+    assert (runtime / "bots/test-bot/bot.yaml").read_bytes() == (source / "bots/test-bot/bot.yaml").read_bytes()
+    assert (runtime / "bots/test-bot/agent.yaml").read_bytes() == (source / "bots/test-bot/agent.yaml").read_bytes()
     assert stage_log.read_text(encoding="utf-8").splitlines() == [
         "source-deps",
         "provision",
@@ -419,7 +423,7 @@ def test_update_script_starts_and_enables_worker_only_when_pack_is_enabled(
 ) -> None:
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     bot = "id: test-bot\ntools:\n  packs:\n  - dev.code_tasks\n"
-    (source / "bots/test-bot/bot.yaml").write_text(bot, encoding="utf-8")
+    write_application(source / "bots/test-bot/bot.yaml", bot, encoding="utf-8")
     systemctl_log = tmp_path / "systemctl.log"
 
     result = _run_update_fixture(
@@ -510,7 +514,7 @@ def test_changed_files_mode_compares_canonical_source_inputs(tmp_path: Path) -> 
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     (overlay / "bots/test-bot").mkdir(parents=True)
-    (overlay / "bots/test-bot/bot.yaml").write_text("id: test-bot\n", encoding="utf-8")
+    write_application(overlay / "bots/test-bot/bot.yaml", "id: test-bot\n", encoding="utf-8")
     (source / "uv.lock").write_text("unrelated source drift\n", encoding="utf-8")
 
     result = _run_update_fixture(
@@ -562,7 +566,7 @@ def test_changed_files_mode_rejects_unselected_missing_runtime_input(
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     (overlay / "bots/test-bot").mkdir(parents=True)
-    (overlay / "bots/test-bot/bot.yaml").write_text("id: test-bot\n", encoding="utf-8")
+    write_application(overlay / "bots/test-bot/bot.yaml", "id: test-bot\n", encoding="utf-8")
     (runtime / "uv.lock").unlink()
 
     result = _run_update_fixture(
@@ -586,7 +590,7 @@ def test_changed_files_mode_rejects_bot_snapshot_drift(tmp_path: Path) -> None:
     source, runtime, stage_log, fake_bin = _make_update_fixture(tmp_path)
     overlay = tmp_path / "overlay"
     (overlay / "bots/test-bot").mkdir(parents=True)
-    (overlay / "bots/test-bot/bot.yaml").write_text(
+    write_application(overlay / "bots/test-bot/bot.yaml",
         "id: test-bot\nmarker: frozen\n",
         encoding="utf-8",
     )
@@ -613,7 +617,7 @@ def test_changed_files_mode_rejects_unselected_bot_source_drift(tmp_path: Path) 
         (runtime / "uv.lock").read_text(encoding="utf-8"),
         encoding="utf-8",
     )
-    (source / "bots/test-bot/bot.yaml").write_text(
+    write_application(source / "bots/test-bot/bot.yaml",
         "id: test-bot\nmarker: unselected-source-drift\n",
         encoding="utf-8",
     )
@@ -958,7 +962,7 @@ def test_apply_tools_api_creates_unified_update_task(tmp_path: Path) -> None:
     repo = tmp_path / "ChatCopilot"
     bot_yaml = repo / "bots" / "sample-bot" / "bot.yaml"
     bot_yaml.parent.mkdir(parents=True)
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         "id: sample-bot\ntools:\n  packs:\n    - old.pack\n",
         encoding="utf-8",
     )
@@ -992,7 +996,7 @@ def test_apply_tools_api_creates_unified_update_task(tmp_path: Path) -> None:
             assert task is not None
             list(task.follow(timeout=1))
             assert task.status == "done", task.lines
-        data = YAML(typ="safe").load(bot_yaml.read_text(encoding="utf-8"))
+        data = YAML(typ="safe").load(bot_yaml.with_name("agent.yaml").read_text(encoding="utf-8"))
         assert data["tools"]["packs"] == ["workspace.read_write"]
     finally:
         app.state.tasks = previous_manager
@@ -1004,7 +1008,9 @@ def test_apply_tools_conflict_does_not_mutate_config(tmp_path: Path) -> None:
     bot_yaml = repo / "bots" / "sample-bot" / "bot.yaml"
     bot_yaml.parent.mkdir(parents=True)
     original = "id: sample-bot\ntools:\n  packs:\n    - old.pack\n"
-    bot_yaml.write_text(original, encoding="utf-8")
+    write_application(bot_yaml, original, encoding="utf-8")
+    before_application = bot_yaml.read_bytes()
+    before_profile = bot_yaml.with_name("agent.yaml").read_bytes()
     entered = threading.Event()
     release = threading.Event()
 
@@ -1037,7 +1043,8 @@ def test_apply_tools_conflict_does_not_mutate_config(tmp_path: Path) -> None:
             )
 
         assert response.status_code == 409
-        assert bot_yaml.read_text(encoding="utf-8") == original
+        assert bot_yaml.read_bytes() == before_application
+        assert bot_yaml.with_name("agent.yaml").read_bytes() == before_profile
     finally:
         release.set()
         list(active.follow(timeout=1))
@@ -1050,7 +1057,7 @@ def test_tools_api_clears_existing_mcp_servers(tmp_path: Path) -> None:
     bot_yaml = repo / "bots" / "sample-bot" / "bot.yaml"
     servers_yaml = bot_yaml.parent / "mcp" / "servers.yaml"
     servers_yaml.parent.mkdir(parents=True)
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         "id: sample-bot\n"
         "tools:\n"
         "  packs:\n"

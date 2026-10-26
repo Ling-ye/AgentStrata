@@ -12,8 +12,8 @@ from unittest.mock import patch
 
 from chatcopilot.core.llm_client import ChatResult
 from chatcopilot.contracts.agent import AgentTask
-from chatcopilot.agent.session import AgentSession
-from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_native_prefix
+from chatcopilot.agent.langgraph_session import LangGraphAgentSession
+from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_model_prefix
 from chatcopilot.contracts.prompt import BotPromptProfile
 from chatcopilot.contracts.workspace import WORKSPACE_SCOPE_GROUP_SHARED
 from chatcopilot.agent.tools.executor import ToolExecutor
@@ -55,7 +55,7 @@ def _test_prompt_plan(workspace: Workspace, **kwargs):
                     for key, value in mode_prompts.items()
                 },
             ),
-            runtime_id="native",
+            runtime_id="langgraph",
             model=None,
             role=role.value if hasattr(role, "value") else str(role),
             channel_kind=(
@@ -72,14 +72,14 @@ def _test_prompt_plan(workspace: Workspace, **kwargs):
 def render_test_prompt(workspace: Workspace, **kwargs) -> str:
     return "\n".join(
         message["content"]
-        for message in render_native_prefix(_test_prompt_plan(workspace, **kwargs))
+        for message in render_model_prefix(_test_prompt_plan(workspace, **kwargs))
     )
 
 
 def _rendered_session_prompt(session: SessionState) -> str:
     return "\n".join(
         message["content"]
-        for message in render_native_prefix(session.require_session().prompt_plan)
+        for message in render_model_prefix(session.require_session().prompt_plan)
     )
 
 
@@ -314,7 +314,7 @@ class DebugModeAccessTests(unittest.TestCase):
         )
         debug_tool = _build_set_debug_mode_tool(lambda: state_ref["session"])
         tools = [mode_tool, debug_tool]
-        agent_session = AgentSession(
+        agent_session = LangGraphAgentSession(
             session_id="sid",
             llm=_FakeLLM(llm_results),
             executor=ToolExecutor(tools=tools, caller_role_hint=role.value),
@@ -325,7 +325,7 @@ class DebugModeAccessTests(unittest.TestCase):
                 assistant_mode=assistant_mode,
                 mode_prompts=_MODE_PROMPTS,
             ),
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
         )
         agent_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
             tool_names=frozenset(tool.name for tool in tools)
@@ -336,7 +336,7 @@ class DebugModeAccessTests(unittest.TestCase):
             role=role,
             assistant_mode=assistant_mode,
             runtime=SimpleNamespace(
-                runtime_id="native",
+                runtime_id="langgraph",
                 prompt_profile=BotPromptProfile(
                     identity="Test assistant",
                     response_style="Return concise test responses.",

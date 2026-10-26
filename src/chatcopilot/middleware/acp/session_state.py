@@ -1,12 +1,12 @@
 """ACP 单个会话的状态容器。
 
 middleware/acp 内部用 ``SessionState`` 承载一次 ACP session 的全部上下文：
-``Workspace`` + ``Role`` + ``AgentSession`` + 当前业务模式/调试模式 + bot runtime
+``Workspace`` + ``Role`` + ``LangGraphAgentSession`` + 当前业务模式/调试模式 + bot runtime
 快照（用于重建 PromptPlan）。这样 ACP server 的各个 handler 不直接持有
-``AgentSession``，所有"角色 / 模式 / workspace"语义都通过本对象访问。
+``LangGraphAgentSession``，所有"角色 / 模式 / workspace"语义都通过本对象访问。
 
 设计意图：
-- ``AgentSession`` 是 agent 层的纯 chat loop，对上不感知 Role / 模式 / 平台。
+- ``LangGraphAgentSession`` 是 agent 层的纯 chat loop，对上不感知 Role / 模式 / 平台。
 - 各种平台 / 协议语义（debug_mode / assistant_mode / workspace / role）由 ACP
   层在 ``SessionState`` 里维持。
 - transcript 落盘由 middleware 负责，通过 ``persist_transcript()`` 在每轮末尾调用。
@@ -143,7 +143,7 @@ class SessionState:
         return getattr(self.runtime, "skills", ())
 
     # ------------------------------------------------------------------
-    # AgentSession 的便捷代理（让上层无需访问 .session 内部）
+    # LangGraphAgentSession 的便捷代理（让上层无需访问 .session 内部）
     # ------------------------------------------------------------------
     @property
     def is_materialized(self) -> bool:
@@ -291,7 +291,7 @@ class SessionState:
 
     @property
     def _messages(self) -> list:
-        """直接代理 AgentSession 的内部 messages 列表（供 transcript / 调试只读）。"""
+        """直接代理 LangGraphAgentSession 的内部 messages 列表（供 transcript / 调试只读）。"""
         if self.session is not None:
             from chatcopilot.contracts.model_runtime import json_value
             return json_value(self.session.snapshot_transcript().messages)
@@ -403,12 +403,12 @@ def _make_test_session_state(
     role: Optional[Role] = None,
     assistant_mode: Optional[AssistantMode] = None,
 ) -> "SessionState":
-    """测试用：构造一个最小可用的 SessionState（含一个不会调用 LLM 的 AgentSession）。
+    """测试用：构造一个最小可用的 SessionState（含一个不会调用 LLM 的 LangGraphAgentSession）。
 
     handlers 默认抛 NotImplementedError；调用方按需 monkey-patch
     ``state.session.run_task`` 注入假实现。
     """
-    from chatcopilot.agent.session import AgentSession
+    from chatcopilot.agent.langgraph_session import LangGraphAgentSession
     from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder
     from chatcopilot.agent.tools.executor import ToolExecutor
     from chatcopilot.contracts.prompt import BotPromptProfile
@@ -421,7 +421,7 @@ def _make_test_session_state(
     plan = PromptPlanBuilder().build(
         PromptBuildInput(
             profile=profile,
-            runtime_id="native",
+            runtime_id="langgraph",
             model=None,
             role=(role or Role.USER).value,
             channel_kind="group" if workspace.chat_kind == "group" else "private",
@@ -429,13 +429,13 @@ def _make_test_session_state(
         )
     )
 
-    fake_session = AgentSession(
+    fake_session = LangGraphAgentSession(
         session_id=session_id,
         llm=None,  # type: ignore[arg-type]
         executor=ToolExecutor(tools=[]),
         tools_schema=[],
         prompt_plan=plan,
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
     )
     fake_session.capabilities = SimpleNamespace(  # type: ignore[attr-defined]
         tool_names=frozenset()
@@ -446,7 +446,7 @@ def _make_test_session_state(
         role=role or Role.USER,
         assistant_mode=assistant_mode or AssistantMode.PERFORMANCE,
         runtime=SimpleNamespace(
-            runtime_id="native",
+            runtime_id="langgraph",
             platform_type="test",
             prompt_profile=profile,
             capability_policies=(),

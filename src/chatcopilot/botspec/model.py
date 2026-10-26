@@ -9,6 +9,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+from chatcopilot.contracts.application import ApplicationSpec
+
 from chatcopilot.contracts.subagents import (
     CachePolicySpec as CachePolicySpec,
     ContextPolicySpec as ContextPolicySpec,
@@ -233,6 +235,8 @@ class ContextSpec:
 
 @dataclass(frozen=True)
 class BotSpec:
+    """Typed assembly view compiled from application and Agent declarations."""
+
     id: str
     display_name: str
     platform: PlatformSpec
@@ -248,15 +252,25 @@ class BotSpec:
     deploy: DeploySpec = field(default_factory=DeploySpec)
     packaging: PackagingSpec = field(default_factory=PackagingSpec)
     raw: dict[str, Any] = field(default_factory=dict, repr=False)
+    application: ApplicationSpec | None = field(default=None, repr=False)
 
     @property
     def base_dir(self) -> Path:
         return self.source_path.parent
 
     def resolve_path(self, value: str | None) -> Path | None:
+        """Resolve Agent-owned resources beside the referenced profile."""
+        root = self.application.agent_profile.base_dir if self.application else self.base_dir
+        return self._resolve_path(root, value)
+
+    def resolve_application_path(self, value: str | None) -> Path | None:
+        return self._resolve_path(self.base_dir, value)
+
+    @staticmethod
+    def _resolve_path(root: Path, value: str | None) -> Path | None:
         if not value:
             return None
         path = Path(value)
         if path.is_absolute():
             return path
-        return self.base_dir / path
+        return root / path

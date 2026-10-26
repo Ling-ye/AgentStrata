@@ -21,7 +21,6 @@ from chatcopilot.contracts.agent import (
     ToolStarted,
 )
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.subagents.registry import build_subagent_tools
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.botspec.model import SubagentBudgetSpec, SubagentSpec
@@ -84,7 +83,6 @@ def _call(name: str, args: dict, call_id: str = "c1") -> ChatResult:
 class AgentTraceTests(unittest.TestCase):
     def test_native_and_langgraph_record_each_public_model_response(self) -> None:
         for session_type, runtime_id in (
-            (AgentSession, "native"),
             (LangGraphAgentSession, "langgraph"),
         ):
             with self.subTest(runtime_id=runtime_id):
@@ -121,7 +119,6 @@ class AgentTraceTests(unittest.TestCase):
 
     def test_native_and_langgraph_share_context_snapshot_conformance(self) -> None:
         for session_type, backend in (
-            (AgentSession, "native"),
             (LangGraphAgentSession, "langgraph"),
         ):
             with self.subTest(runtime_id=backend):
@@ -160,7 +157,6 @@ class AgentTraceTests(unittest.TestCase):
 
     def test_top_level_calls_do_not_reference_an_unrecorded_root(self) -> None:
         for session_type, runtime_id in (
-            (AgentSession, "native"),
             (LangGraphAgentSession, "langgraph"),
         ):
             with self.subTest(runtime_id=runtime_id):
@@ -182,7 +178,6 @@ class AgentTraceTests(unittest.TestCase):
         self,
     ) -> None:
         for session_type, backend in (
-            (AgentSession, "native"),
             (LangGraphAgentSession, "langgraph"),
         ):
             with self.subTest(runtime_id=backend):
@@ -229,13 +224,13 @@ class AgentTraceTests(unittest.TestCase):
         ping = _tool("ping", category="agent")
         first = _call("ping", {"reasoning": "public tool argument"})
         first.reasoning_content = "provider private chain of thought"
-        session = AgentSession(
+        session = LangGraphAgentSession(
             session_id="sid-private-reasoning",
             llm=_ScriptedLLM([first, ChatResult(content="完成")]),
             executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
             prompt_plan=prompt_plan("baseline"),
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
         )
         events: list[object] = []
 
@@ -255,13 +250,13 @@ class AgentTraceTests(unittest.TestCase):
     def test_main_tool_spans_are_stamped(self) -> None:
         ping = _tool("ping", category="agent")
         llm = _ScriptedLLM([_call("ping", {}), ChatResult(content="完成")])
-        session = AgentSession(
+        session = LangGraphAgentSession(
             session_id="sid",
             llm=llm,
             executor=ToolExecutor(caller_role_hint="owner", tools=[ping]),
             tools_schema=[build_openai_schema(ping)],
             prompt_plan=prompt_plan("baseline"),
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
         )
         events = []
         session.run_task(
@@ -281,7 +276,7 @@ class AgentTraceTests(unittest.TestCase):
         self.assertEqual(len(llm_starts), len(llm_calls))
         self.assertEqual(len(contexts), len(llm_calls))
         self.assertEqual(contexts[0].coverage, "exact_model_input")
-        self.assertEqual(contexts[0].runtime_id, "native")
+        self.assertEqual(contexts[0].runtime_id, "langgraph")
         self.assertEqual(contexts[0].span_id, llm_starts[0].span_id)
         self.assertEqual(contexts[0].snapshot_id, llm_starts[0].context_snapshot_id)
         self.assertEqual(contexts[0].effective_messages[0]["role"], "system")
@@ -328,13 +323,13 @@ class AgentTraceTests(unittest.TestCase):
                 ChatResult(content="已总结"),
             ]
         )
-        session = AgentSession(
+        session = LangGraphAgentSession(
             session_id="sid",
             llm=main_llm,
             executor=ToolExecutor(caller_role_hint="owner", tools=[delegate]),
             tools_schema=[build_openai_schema(delegate)],
             prompt_plan=prompt_plan("baseline"),
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
         )
         events = []
         session.run_task(AgentTask(text="go", execution=TurnExecutionContext(trace=TraceContext("T"))), on_event=events.append)
@@ -357,7 +352,7 @@ class AgentTraceTests(unittest.TestCase):
             and event.depth > 0
         ]
         self.assertTrue(nested_runtime_events)
-        self.assertEqual({event.runtime_id for event in nested_runtime_events}, {"native"})
+        self.assertEqual({event.runtime_id for event in nested_runtime_events}, {"langgraph"})
 
         # SpanFinished 携带 transcript 与结构化结果，供 recorder 落盘。
         self.assertTrue(span_finished[0].ok)

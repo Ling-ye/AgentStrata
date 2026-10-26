@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 from pathlib import Path
 from unittest import mock
@@ -15,7 +17,7 @@ def _write_bot(tmp_path: Path, wiki_yaml: str) -> Path:
     (bot_dir / "prompts").mkdir(parents=True)
     (bot_dir / "prompts" / "persona.md").write_text("Wiki bot\n", encoding="utf-8")
     path = bot_dir / "bot.yaml"
-    path.write_text(
+    write_application(path,
         "\n".join(
             [
                 "id: wiki-bot",

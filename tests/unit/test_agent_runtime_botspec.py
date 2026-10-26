@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import textwrap
 import unittest
 from pathlib import Path
@@ -31,17 +33,29 @@ def _write_bot(base: Path, agents_block: str = "") -> Path:
     if agents_block.strip():
         lines.append("agents:")
         lines.extend(textwrap.indent(agents_block.strip(), "  ").splitlines())
-    bot_yaml.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    write_application(bot_yaml, "\n".join(lines) + "\n", encoding="utf-8")
     return bot_yaml
 
 
 class RuntimeAdapterBotSpecTests(unittest.TestCase):
-    def test_default_agent_runtime_is_native(self) -> None:
+    def test_retired_native_configuration_is_rejected_without_rewriting_files(self) -> None:
+        for declaration, message in (
+            ("runtime: native", "Native runtime 已退役"),
+            ("runtime: codex\nruntime_options:\n  native:\n    env_prefix: PRIVATE", "runtime_options.native 已废弃"),
+        ):
+            with self.subTest(declaration=declaration), TemporaryDirectory(dir="/tmp") as tmp:
+                path = _write_bot(Path(tmp), declaration)
+                before = {p: p.read_bytes() for p in path.parent.glob("*.yaml")}
+                with self.assertRaisesRegex(ValueError, message):
+                    load_botspec(path)
+                self.assertEqual(before, {p: p.read_bytes() for p in before})
+
+    def test_default_agent_runtime_is_langgraph(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
             spec = load_botspec(_write_bot(Path(tmp)))
             errors = [issue for issue in validate_botspec(spec) if issue.level == "error"]
 
-        self.assertEqual(spec.agents.runtime, "native")
+        self.assertEqual(spec.agents.runtime, "langgraph")
         self.assertEqual(errors, [])
 
     def test_langgraph_backend_is_parsed_and_assembled(self) -> None:
@@ -86,7 +100,7 @@ class RuntimeAdapterBotSpecTests(unittest.TestCase):
             ]
 
         self.assertEqual(len(errors), 1)
-        self.assertIn("native, langgraph, codex", errors[0].message)
+        self.assertIn("langgraph, codex", errors[0].message)
 
     def test_removed_agents_persona_control_points_to_tool_pack(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
@@ -102,8 +116,8 @@ class RuntimeAdapterBotSpecTests(unittest.TestCase):
 
     def test_removed_default_route_is_an_immediate_validation_error(self) -> None:
         with TemporaryDirectory(dir="/tmp") as tmp:
-            path = _write_bot(Path(tmp), "runtime: native")
-            with path.open("a", encoding="utf-8") as handle:
+            path = _write_bot(Path(tmp), "runtime: langgraph")
+            with path.with_name("agent.yaml").open("a", encoding="utf-8") as handle:
                 handle.write(
                     "llm:\n  code:\n    default_route: code\n"
                 )
@@ -127,8 +141,8 @@ class RuntimeAdapterBotSpecTests(unittest.TestCase):
             ("research", "web_search", "live"),
         ):
             with self.subTest(slot=slot, name=name), TemporaryDirectory(dir="/tmp") as tmp:
-                path = _write_bot(Path(tmp), "runtime: native")
-                with path.open("a", encoding="utf-8") as handle:
+                path = _write_bot(Path(tmp), "runtime: langgraph")
+                with path.with_name("agent.yaml").open("a", encoding="utf-8") as handle:
                     handle.write(f"llm:\n  {slot}:\n    {name}: {value}\n")
                 errors = [issue.field for issue in validate_botspec(load_botspec(path))
                           if issue.level == "error"]

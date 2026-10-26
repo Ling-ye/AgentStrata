@@ -35,7 +35,8 @@ def configuration_invariants(raw: dict[str, Any]) -> dict[str, Any]:
 def configuration_path(name: str, bot_id: str | None = None) -> bool:
     parts = Path(name).parts
     return (len(parts) >= 3 and parts[0] == "bots" and (bot_id is None or parts[1] == bot_id)
-            and (parts[2:] == ("bot.yaml",) or (parts[2] == "prompts" and name.endswith(".md"))))
+            and (parts[2:] in {("bot.yaml",), ("agent.yaml",)}
+                 or (parts[2] == "prompts" and name.endswith(".md"))))
 
 
 def validate_configuration(before: bytes, after: bytes) -> None:

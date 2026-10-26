@@ -49,14 +49,16 @@ def _mcp_catalog() -> dict[str, dict[str, Any]]:
 def _bot_mcp_bindings(inst: BotInstance) -> list[dict[str, Any]]:
     """Resolve bot MCP bindings against the catalog + infra status."""
     bot_yaml = _bot_spec_path(inst)
-    bot_data = load_yaml_or_empty(bot_yaml)
+    from chatcopilot.core.application_configuration import load_application_spec
+    application = load_application_spec(bot_yaml)
+    bot_data = application.agent_profile.raw
     tools = bot_data.get("tools") if isinstance(bot_data.get("tools"), dict) else {}
     mcp = tools.get("mcp") if isinstance(tools.get("mcp"), dict) else {}
     servers_rel = mcp.get("servers") if isinstance(mcp, dict) else None
     if not servers_rel:
         return []
 
-    servers_path = bot_yaml.parent / str(servers_rel)
+    servers_path = application.agent_profile.base_dir / str(servers_rel)
     servers_data = load_yaml_or_empty(servers_path)
     refs = servers_data.get("servers", [])
     if not isinstance(refs, list):
@@ -268,8 +270,10 @@ def _bot_config(bot_data: dict[str, Any], base_dir: Path) -> dict[str, Any]:
 def bot_inventory(inst: BotInstance) -> dict[str, Any]:
     """Full tool composition inventory for a bot instance."""
     bot_yaml = _bot_spec_path(inst)
-    bot_data = load_yaml_or_empty(bot_yaml)
-    base_dir = bot_yaml.parent
+    from chatcopilot.core.application_configuration import load_application_spec
+    application = load_application_spec(bot_yaml)
+    bot_data = application.resolved_configuration()
+    base_dir = application.agent_profile.base_dir
 
     tool_packs, hidden_tools = _bot_tool_packs(bot_data)
     tool_features = _bot_tool_features(bot_data)
@@ -296,7 +300,7 @@ def _structure_config(data: dict[str, Any]) -> dict[str, Any]:
     context = data.get("context") if isinstance(data.get("context"), dict) else {}
     runtime_id = agents.get("runtime")
     return {
-        "runtime_id": runtime_id if runtime_id in {"native", "langgraph", "codex"} else "unknown",
+        "runtime_id": runtime_id if runtime_id in {"langgraph", "codex"} else "unknown",
         "prompt_schema_version": prompts.get("schema_version") if type(prompts.get("schema_version")) is int else None,
         "prompt_sections": [key for key in ("identity", "response_style", "refusal_style", "role_styles", "mode_styles") if prompts.get(key)],
         "context_sources": [key for key in ("rag", "wiki", "codebases", "playbooks", "dev") if context.get(key)],

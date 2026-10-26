@@ -7,7 +7,7 @@ from chatcopilot.core.config import LLMConfig
 
 
 def runtime_route(
-    runtime_id: str = "native",
+    runtime_id: str = "langgraph",
     config: LLMConfig | None = None,
 ) -> ResolvedRuntimeRoute:
     if config is None:
@@ -31,7 +31,7 @@ def runtime_route(
 def prompt_plan(
     identity: str = "Test assistant",
     *,
-    runtime_id: str = "native",
+    runtime_id: str = "langgraph",
     role: str = "owner",
     channel_kind: str = "private",
 ) -> PromptPlan:
@@ -48,7 +48,7 @@ def prompt_plan(
 def prompt_input(
     identity: str = "Test assistant",
     *,
-    runtime_id: str = "native",
+    runtime_id: str = "langgraph",
     role: str = "owner",
     channel_kind: str = "private",
 ) -> PromptBuildInput:

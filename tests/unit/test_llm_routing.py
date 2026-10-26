@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import unittest
 from contextlib import redirect_stdout
@@ -111,7 +113,7 @@ class LingyeDirectCodexConfigTests(unittest.TestCase):
             bot_dir = Path(tmp) / "route-demo"
             bot_dir.mkdir()
             (bot_dir / "persona.md").write_text("route demo\n", encoding="utf-8")
-            (bot_dir / "bot.yaml").write_text(
+            write_application(bot_dir / "bot.yaml",
                 "\n".join(
                     [
                         "id: route-demo",

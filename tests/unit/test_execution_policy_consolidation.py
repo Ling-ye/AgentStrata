@@ -161,9 +161,8 @@ def test_memory_durability_is_not_a_keyword_rejection():
     assert not evaluate_memory_content("我的手机号属于个人隐私", scope="group").allowed
 
 
-@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
+@pytest.mark.parametrize("runtime_id", ["langgraph"])
 def test_default_agent_can_complete_beyond_thirty_turns_and_explicit_cap_still_stops(runtime_id):
-    from chatcopilot.agent.session import AgentSession
     from chatcopilot.agent.langgraph_session import LangGraphAgentSession
     from chatcopilot.agent.tools.executor import ToolExecutor
     from chatcopilot.contracts.agent import AgentTask
@@ -172,7 +171,7 @@ def test_default_agent_can_complete_beyond_thirty_turns_and_explicit_cap_still_s
     from tests.prompt_plan_fixture import prompt_plan
     from tests.unit.test_langgraph_session import _FakeLLM, _tool_call, _make_tool
 
-    cls = AgentSession if runtime_id == "native" else LangGraphAgentSession
+    cls = LangGraphAgentSession
     tool = _make_tool()
     for cap, reason, calls in ((None, "end_turn", 36), (4, "iteration_cap", 4)):
         llm = _FakeLLM([ChatResult(tool_calls=[_tool_call(tool.name, {"value": str(i)})])

@@ -787,7 +787,7 @@ class AttachmentGateTests(unittest.TestCase):
                     identity="Test assistant",
                     response_style="简洁回复。",
                 ),
-                runtime_id="native",
+                runtime_id="langgraph",
                 model=None,
                 role="owner",
                 channel_kind="private",

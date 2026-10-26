@@ -407,7 +407,7 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
         tools=(web_fetch, _tool("normal_tool")),
         tools_schema=(),
         runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
-        route=_runtime_route("native"),
+        route=_runtime_route("langgraph"),
         subagents=SubagentSpec(
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),
@@ -430,7 +430,7 @@ def test_runtime_hides_internal_information_tools_when_research_enabled() -> Non
     assert "browse_dynamic_page" not in names
 
 
-@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
+@pytest.mark.parametrize("runtime_id", ["langgraph"])
 def test_native_and_langgraph_expose_search_information_for_direct_provider(
     runtime_id: str,
 ) -> None:
@@ -637,7 +637,7 @@ def test_runtime_permission_filter_prevents_url_read_bypass() -> None:
         tools=(web_fetch,),
         tools_schema=(),
         runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
-        route=_runtime_route("native"),
+        route=_runtime_route("langgraph"),
         subagents=SubagentSpec(
             research_enabled=True,
             research_budget=SubagentBudgetSpec(),

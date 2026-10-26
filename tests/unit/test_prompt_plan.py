@@ -8,7 +8,7 @@ from chatcopilot.agent.context.prompt_plan import (
     PromptBuildInput,
     PromptPlanBuilder,
     render_codex_prompt,
-    render_native_prefix,
+    render_model_prefix,
     render_receipt,
 )
 from chatcopilot.contracts.prompt import BotPromptProfile, PromptLayer, PromptPlan
@@ -23,7 +23,7 @@ def _input(**overrides):
             refusal_style="Refuse briefly.",
             role_styles={"owner": "Use direct technical language."},
         ),
-        "runtime_id": "native",
+        "runtime_id": "langgraph",
         "model": "chat-model",
         "role": "owner",
         "channel_kind": "group",
@@ -73,7 +73,7 @@ def test_search_information_adds_host_managed_search_policy() -> None:
 
 
 def test_untrusted_persona_memory_and_history_never_render_as_system_policy() -> None:
-    messages = render_native_prefix(PromptPlanBuilder().build(_input()))
+    messages = render_model_prefix(PromptPlanBuilder().build(_input()))
     assert len(messages) == 3
     assert messages[0]["role"] == "system"
     assert messages[1]["role"] == "user"
@@ -151,7 +151,7 @@ def test_duplicate_layer_ids_and_unknown_runtime_values_fail_closed() -> None:
     with pytest.raises(ValueError, match="duplicate prompt layer ids"):
         PromptPlan(
             layers=(layer, layer),
-            effective_runtime_id="native",
+            effective_runtime_id="langgraph",
             effective_model=None,
             role="owner",
             channel_kind="private",
@@ -159,7 +159,7 @@ def test_duplicate_layer_ids_and_unknown_runtime_values_fail_closed() -> None:
     with pytest.raises(ValueError, match="unsupported prompt role"):
         PromptPlan(
             layers=(layer,),
-            effective_runtime_id="native",
+            effective_runtime_id="langgraph",
             effective_model=None,
             role="guest",
             channel_kind="private",

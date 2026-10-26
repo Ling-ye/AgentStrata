@@ -92,6 +92,44 @@ class LangGraphRuntimeTests(unittest.TestCase):
 
 @unittest.skipUnless(_has_langgraph(), "langgraph is not installed")
 class LangGraphSessionTests(unittest.TestCase):
+    def test_soft_budget_wraps_up_repeated_tools_but_allows_progress(self) -> None:
+        for repeated, expected_calls, expected_stop in ((True, 5, "iteration_cap"), (False, 7, "end_turn")):
+            with self.subTest(repeated=repeated):
+                tool = _make_tool()
+                llm = _FakeLLM([
+                    *[ChatResult(tool_calls=[_tool_call("sample_tool", {"value": "same" if repeated else str(i)})])
+                      for i in range(6)],
+                    ChatResult(content="完成"),
+                ])
+                session = LangGraphAgentSession(
+                    session_id="budget", llm=llm, executor=ToolExecutor(tools=[tool], caller_role_hint="owner"),
+                    tools_schema=[build_openai_schema(tool)], prompt_plan=prompt_plan(),
+                    resolved_runtime_id="langgraph", max_tool_iterations=1, hard_iteration_cap=10,
+                )
+                result = session.run_task(AgentTask("执行任务"), on_event=lambda _: None)
+                self.assertEqual(result.stop_reason, expected_stop)
+                self.assertEqual(len(llm.calls), expected_calls)
+
+    def test_deadline_between_tools_prevents_later_side_effect_and_repairs_history(self) -> None:
+        executed = []
+        tool = ToolDef(
+            name="write_marker", summary="write marker", input_schema=object_schema(), output_schema=object_schema(),
+            handler=lambda _args, _context: (executed.append(True) or ToolResult(ok=True, summary="written")),
+        )
+        calls = [{**_tool_call("write_marker", {}), "id": f"call-{i}"} for i in range(2)]
+        session = LangGraphAgentSession(
+            session_id="deadline", llm=_FakeLLM([ChatResult(tool_calls=calls)]),
+            executor=ToolExecutor(tools=[tool], caller_role_hint="owner"), tools_schema=[build_openai_schema(tool)],
+            prompt_plan=prompt_plan(), resolved_runtime_id="langgraph", hard_timeout_seconds=10,
+        )
+        session._hard_timed_out = lambda _started: bool(executed)
+        result = session.run_task(AgentTask("write twice"), on_event=lambda _: None)
+        self.assertEqual(result.stop_reason, "timeout_cap")
+        self.assertEqual(executed, [True])
+        pending = [m for m in session.snapshot_messages() if m.get("tool_call_id") == "call-1"]
+        self.assertEqual(len(pending), 1)
+        self.assertFalse(json.loads(pending[0]["content"])["ok"])
+
     def test_tool_loop_runs_through_state_graph(self) -> None:
         tool = _make_tool()
         llm = _FakeLLM(

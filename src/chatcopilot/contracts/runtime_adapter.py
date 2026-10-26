@@ -1,4 +1,4 @@
-"""Provider-neutral contracts for the three main-agent runtimes."""
+"""Provider-neutral contracts for the two main-agent runtimes."""
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -16,7 +16,7 @@ from chatcopilot.contracts.execution import TranscriptSnapshot
 from chatcopilot.contracts.model_runtime import ResolvedRuntimeRoute
 
 
-RUNTIME_IDS: tuple[str, ...] = ("native", "langgraph", "codex")
+RUNTIME_IDS: tuple[str, ...] = ("langgraph", "codex")
 CAPABILITY_CHAT = "chat"
 CAPABILITY_TOOLS = "tools"
 CAPABILITY_NATIVE_RESUME = "native_resume"

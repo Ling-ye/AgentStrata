@@ -187,7 +187,7 @@ def main() -> int:
         request = {"root": str(root), "uv": str(uv),
             "host": {"python": str(python), "source_url": "https://example.com/source",
                      "model_config": str(root / "config/model.json"), "model_binding": "chat"},
-            "options": {"port": args.port, "gateway_port": args.port + 1, "runtime": "native"}}
+            "options": {"port": args.port, "gateway_port": args.port + 1, "runtime": "langgraph"}}
         request_path = root / "config/request.json"
         write_private(request_path, json.dumps(request))
         # This script is also copied: the child cannot import checkout modules.

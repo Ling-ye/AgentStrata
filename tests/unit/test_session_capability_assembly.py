@@ -54,7 +54,7 @@ def _context() -> SessionCapabilityContext:
     llm = cast(LLMClient, object())
     return SessionCapabilityContext(
         session_id="session-1",
-        runtime_id="native",
+        runtime_id="langgraph",
         main_llm=llm,
         research_llm=llm,
         runtime_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), ),
@@ -364,7 +364,7 @@ def test_detached_runtime_allows_unknown_local_provider_pack() -> None:
 
     runtime = runtime_module.build_agent_runtime(
         chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="test-key")),
-        route=runtime_route("native", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
+        route=runtime_route("langgraph", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
         tool_packs=(),
         runtime_providers=(local_provider,),
         assembly_profile="detached",
@@ -400,7 +400,7 @@ def test_runtime_closes_mcp_when_loaded_provider_fails_validation(
     with pytest.raises(ToolMaterializationError, match="invalid_tool_audiences"):
         runtime_module.build_agent_runtime(
             chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="test-key")),
-            route=runtime_route("native", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
+            route=runtime_route("langgraph", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
             tool_packs=(),
             mcp_servers=(McpServerConfig(id="invalid-provider"),),
         )
@@ -432,7 +432,7 @@ def test_successful_runtime_owns_mcp_until_close(
 
     runtime = runtime_module.build_agent_runtime(
         chat_config=ChatConfig(llm=LLMConfig(model="gpt-4o-mini", api_key="test-key")),
-        route=runtime_route("native", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
+        route=runtime_route("langgraph", LLMConfig(model="gpt-4o-mini", api_key="test-key")),
         tool_packs=(),
         mcp_servers=(McpServerConfig(id="valid-provider"),),
     )

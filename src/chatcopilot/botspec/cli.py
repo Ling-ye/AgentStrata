@@ -188,16 +188,19 @@ def _cmd_new(args: argparse.Namespace) -> int:
 
     (target / "prompts").mkdir(parents=True, exist_ok=True)
     bot_yaml = target / "bot.yaml"
-    bot_yaml.write_text(
-        _render_bot_yaml(
+    from chatcopilot.core.application_configuration import split_configuration
+    import yaml
+    application, profile = split_configuration(yaml.safe_load(_render_bot_yaml(
             bot_id,
             platform_type,
             adapter,
             display_name,
             preset=preset,
-        ),
-        encoding="utf-8",
-    )
+        )))
+    (target / "agent.yaml").write_text(yaml.safe_dump(profile, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    headers = f"id: {bot_id}\ndisplay_name: {json.dumps(display_name, ensure_ascii=False)}\n"
+    body = {key: value for key, value in application.items() if key not in {"id", "display_name"}}
+    bot_yaml.write_text(headers + yaml.safe_dump(body, allow_unicode=True, sort_keys=False), encoding="utf-8")
     (target / "prompts" / "identity.md").write_text(
         _IDENTITY_PROMPT_TEMPLATE.format(display_name=display_name),
         encoding="utf-8",
@@ -218,6 +221,7 @@ def _cmd_new(args: argparse.Namespace) -> int:
 
     print(f"[OK] 已生成机器人骨架：{target}")
     print(f"     bot.yaml      {bot_yaml}")
+    print("     agent.yaml")
     print("     prompts/identity.md")
     print("     prompts/response-style.md")
     if preset == "starter":
@@ -231,6 +235,7 @@ def _cmd_new(args: argparse.Namespace) -> int:
             default = f"（默认 {spec.default}）" if spec.default else ""
             print(f"  - {spec.env_key}  [{tag}]{default}  {spec.description}")
     print("\n校验：python -m chatcopilot botspec validate " + str(bot_yaml))
+    print(f"模型配置：为 bot.{bot_id}.chat 和 bot.{bot_id}.research 分别绑定模型方案。")
     return 0
 
 
@@ -297,6 +302,9 @@ def _render_bot_yaml(
         "llm:\n"
         "  chat:\n"
         "    env_prefix: CHATCOPILOT_CHAT\n"
+        f"    binding: bot.{bot_id}.chat\n"
+        "  research:\n"
+        f"    binding: bot.{bot_id}.research\n"
         "\n"
         "prompts:\n"
         "  schema_version: 2\n"
@@ -309,7 +317,7 @@ def _render_bot_yaml(
         f"{features}"
         "\n"
         "agents:\n"
-        "  runtime: native\n"
+        "  runtime: langgraph\n"
         "  presets: []\n"
         "\n"
         "workspace:\n"
@@ -385,7 +393,7 @@ def _cmd_configure(args: argparse.Namespace) -> int:
     if spec.platform.type != "qq":
         print("[ERR] 引导式 configure 当前只支持 QQ")
         return 2
-    if spec.agents.runtime != "native" or "dev.code_tasks" in spec.tools.packs:
+    if spec.agents.runtime != "langgraph" or "dev.code_tasks" in spec.tools.packs:
         print("[ERR] 该 Bot 含高级 runtime 或代码任务配置，请使用 docs/guides/deployment.md 高级流程")
         return 2
 

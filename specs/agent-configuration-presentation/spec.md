@@ -31,7 +31,7 @@ Console 的 Agent 层完整展示实例参数，区分主 Agent、基础模型�
 
 ## Acceptance
 
-- Codex、Native、LangGraph 的实例默认模型正确；模型槽、环境覆盖与继承不混淆。
+- Codex、LangGraph 的实例默认模型正确；模型槽、环境覆盖与继承不混淆。
 - 各实例解析无进程环境污染，inspection 不产生运行副作用。
 - 预设、自定义 Agent、停用 provider、默认值和不适用参数完整可见。
 - 草稿、搜索、深链接、历史配置与无观测状态准确；展示元数据不导致待应用。

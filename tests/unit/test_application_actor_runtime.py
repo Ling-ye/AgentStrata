@@ -104,7 +104,7 @@ class _FakeSession:
 
 class _FakeAgentRuntime:
     def __init__(self) -> None:
-        self.runtime_id = "native"
+        self.runtime_id = "langgraph"
         self.retriever = object()
         self.research_model_client = None
         self.route = SimpleNamespace(model=SimpleNamespace(model="test-model"))
@@ -139,7 +139,7 @@ def _runtime(tmp_path: Path) -> Any:
             identity="Test assistant",
             response_style="Be concise.",
         ),
-        runtime_id="native",
+        runtime_id="langgraph",
         access=SimpleNamespace(owner_only_project_access=True),
         capability_policies=(policy,),
         skills=(skill,),

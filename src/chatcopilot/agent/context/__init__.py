@@ -4,7 +4,7 @@ from chatcopilot.agent.context.prompt_plan import (
     PromptBuildInput,
     PromptPlanBuilder,
     render_codex_prompt,
-    render_native_prefix,
+    render_model_prefix,
     render_receipt,
 )
 from chatcopilot.agent.context.task_framing import (
@@ -22,7 +22,7 @@ __all__ = [
     "frame_task_content",
     "frame_task_message",
     "render_codex_prompt",
-    "render_native_prefix",
+    "render_model_prefix",
     "render_receipt",
     "validated_image_resource_receipts",
 ]

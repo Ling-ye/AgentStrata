@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import hashlib
 import json
 import logging
@@ -22,7 +24,7 @@ from chatcopilot.gateway.state_store import GatewayStateError, GatewayStateStore
 def recorded(tmp_path):
     state = GatewayStateStore(tmp_path / 'gateway')
     generation = state.acquire_writer_generation()
-    recorder = ObservationRecorder(state, generation, configuration={'layers': [], 'entities': [], 'runtime_id': 'native'})
+    recorder = ObservationRecorder(state, generation, configuration={'layers': [], 'entities': [], 'runtime_id': 'langgraph'})
     return state, generation, recorder
 
 
@@ -35,7 +37,7 @@ def make_run(recorded, suffix='one', *, at=None, complete=False):
                          account=ChannelAccountRef('fixture', 'account'), conversation=ConversationRef('p2p', suffix))
     state.begin_run(generation=generation, session_id=session_id, run_id=run_id,
                     input_fingerprint=hashlib.sha256(suffix.encode()).hexdigest(), now=now)
-    recorder.store.bind_run(run_id, config_id=recorder.config_id, runtime_id='native', model='fixture-model', role='owner')
+    recorder.store.bind_run(run_id, config_id=recorder.config_id, runtime_id='langgraph', model='fixture-model', role='owner')
     state.start_run(generation=generation, session_id=session_id, run_id=run_id, now=now + 1)
     if complete:
         state.finish_run(generation=generation, session_id=session_id, run_id=run_id, outcome='completed',
@@ -128,7 +130,7 @@ def test_private_body_values_scope_and_reasoning_omission(recorded):
     state, generation, recorder = recorded
     run_id = make_run(recorded)
     observer = RunObserver(state, generation, run_id)
-    observer(ContextSnapshotPrepared('context', 'native', 'fixture', 1,
+    observer(ContextSnapshotPrepared('context', 'langgraph', 'fixture', 1,
         ({'role': 'assistant', 'content': 'visible', 'reasoning_content': 'private-thought'},),
         ({'role': 'user', 'content': 'api_key=fixture-credential'},)))
     event = detail(recorder.store, run_id)['observations'][-1]
@@ -246,7 +248,7 @@ def test_runtime_stage_preserves_boundary_bodies_timing_and_call_binding(recorde
                 observer(LlmCallStarted('fixture', 1, trace_id=run, span_id='call-1', parent_span_id='host:actor'))
                 observer(LlmCallFinished('fixture', 1, trace_id=run, span_id='call-1', parent_span_id='host:actor',
                     visible_response={'content': 'model-visible-body', 'coverage': 'model_response', 'capture_state': 'available'}))
-                observer(InputResourcesDispatched('native', 0, 'call-1', (InputResourceReceipt(1, 'image/png', 12, 'a' * 64),)))
+                observer(InputResourcesDispatched('langgraph', 0, 'call-1', (InputResourceReceipt(1, 'image/png', 12, 'a' * 64),)))
                 observer(TurnError('fixture_error', 'Agent-visible error'))
                 logging.getLogger('fixture.execution').warning('stage-bound-log')
                 stage.complete({'final_text': 'agent-visible-body'})
@@ -330,7 +332,7 @@ def test_runtime_observation_failure_preserves_business_exception_and_context(re
 
 
 def test_configuration_instances_have_different_entities_and_values():
-    one = configuration_projection({'agents': {'runtime_id': 'native'}, 'tools': {'packs': ['workspace.read_write']}})
+    one = configuration_projection({'agents': {'runtime_id': 'langgraph'}, 'tools': {'packs': ['workspace.read_write']}})
     two = configuration_projection({'agents': {'runtime_id': 'codex'}, 'tools': {'packs': ['memory.chat']}})
     assert one != two
     assert any(item['id'] == 'pack:memory.chat' for item in two['entities'])
@@ -344,7 +346,7 @@ def test_configuration_snapshots_are_immutable(recorded):
     recorder.configuration = {'layers': [], 'entities': [], 'runtime_id': 'codex'}
     recorder.refresh()
     assert recorder.config_id != key
-    assert recorder.store.configuration(key)['runtime_id'] == 'native'
+    assert recorder.store.configuration(key)['runtime_id'] == 'langgraph'
     assert detail(recorder.store, run)['run']['config_id'] == key
 
 
@@ -454,11 +456,11 @@ def test_loaded_instances_use_effective_models_registry_and_plugin_health(tmp_pa
         folder.mkdir()
         (folder / 'identity.md').write_text('fixture identity')
         spec_path = folder / 'bot.yaml'
-        spec_path.write_text(f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\nagents:\n  runtime: native\ntools:\n  packs: [{pack}]\n')
+        write_application(spec_path, f'id: fixture-{index}\nprompts:\n  schema_version: 2\n  identity: identity.md\nagents:\n  runtime: langgraph\ntools:\n  packs: [{pack}]\n')
         spec = load_botspec(spec_path)
         llm_config = LLMConfig(api_key='fixture', model=f'model-{index}')
         agent = build_agent_runtime(
-            chat_config=ChatConfig(llm=llm_config), route=runtime_route("native", llm_config),
+            chat_config=ChatConfig(llm=llm_config), route=runtime_route("langgraph", llm_config),
             tool_packs=(pack,),
         )
         try:

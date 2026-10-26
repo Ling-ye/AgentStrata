@@ -62,5 +62,6 @@ full-benchmark scores. Unknown constraints, missing parameters, and checker exce
 are grading errors. Language detection uses a private seeded detector and does not
 silently accept detection errors. All grading runs through DeepEval evaluate().
 
-The suite version changes without rewriting previous artifacts; quick remains 10,
+Version 4 limits runtime constraints to LangGraph and Codex while retaining the retired fixture status.
+Previous artifacts keep their recorded runtime identity; quick remains 10,
 security remains 3, and the two experience-source cases remain custom-only.

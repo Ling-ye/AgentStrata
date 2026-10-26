@@ -35,6 +35,7 @@ _FIXED_CORE = (
     "source_manifest.py",
     "inspection.py",
     "candidate_configuration.py",
+    "application_configuration.py",
 )
 _FIXED_AUTHORITY = ("src/chatcopilot/authorization/policy.py", "src/chatcopilot/contracts/execution_scope.py")
 
@@ -69,7 +70,7 @@ def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False,
             if (policy_path(name) or not permitted_change(name, governance=True, learning=learning))
             and not any((root / name).is_relative_to(directory) for directory in directories))
     bot = root / "bots" / bot_id
-    configuration = tuple(p for p in bot.iterdir() if p.name not in {"bot.yaml", "prompts"}) if bot_id and bot.is_dir() else ()
+    configuration = tuple(p for p in bot.iterdir() if p.name not in {"bot.yaml", "agent.yaml", "prompts"}) if bot_id and bot.is_dir() else ()
     return configuration + tuple(root / name for name in _FIXED_AUTHORITY if (root / name).exists()) + tuple(
         root / "src" / "chatcopilot" / "core" / name
         for name in _FIXED_CORE
@@ -120,7 +121,7 @@ def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None, *
     if any(not permitted_change(name, bot_id, governance=governance, learning=learning) for name in changed):
         raise HarnessError("protected_change", "候选修改了测试、评分或运行控制文件")
     for name in changed:
-        if configuration_path(name) and name.endswith("/bot.yaml"):
+        if configuration_path(name) and Path(name).name in {"bot.yaml", "agent.yaml"}:
             if name not in baseline or name not in current:
                 raise HarnessError("protected_change", "不能创建或删除机器人运行包络")
             original = subprocess.run(["git", "-C", str(worktree), "show", "HEAD:" + name],

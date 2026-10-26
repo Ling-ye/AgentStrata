@@ -74,7 +74,7 @@ def test_every_turn_refreshes_group_persona_and_memory_for_all_actors(
         prompt_profile=BotPromptProfile(identity="baseline", response_style="concise"),
         capability_policies=(),
         skills=(),
-        runtime_id="native",
+        runtime_id="langgraph",
     )
     captures: list[tuple[str, str]] = []
 

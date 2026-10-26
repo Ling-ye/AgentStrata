@@ -119,6 +119,9 @@ def _canonical_starter_text(bot_id: str = "my-assistant-qq") -> str:
         "llm:\n"
         "  chat:\n"
         "    env_prefix: CHATCOPILOT_CHAT\n"
+        f"    binding: bot.{bot_id}.chat\n"
+        "  research:\n"
+        f"    binding: bot.{bot_id}.research\n"
         "\n"
         "prompts:\n"
         "  schema_version: 2\n"
@@ -135,7 +138,7 @@ def _canonical_starter_text(bot_id: str = "my-assistant-qq") -> str:
         "  - chat.private_workspace\n"
         "\n"
         "agents:\n"
-        "  runtime: native\n"
+        "  runtime: langgraph\n"
         "  presets: []\n"
         "\n"
         "workspace:\n"
@@ -149,16 +152,20 @@ def _canonical_starter_text(bot_id: str = "my-assistant-qq") -> str:
         f"  log_dir: ~/chatcopilot-logs/{bot_id}\n"
         f"  env_file: ~/.chatcopilot-{bot_id}.env\n"
         f"  project_name: chatcopilot-{bot_id}\n"
-        "\n"
-        "access:\n"
-        "  owner_only_project_access: true\n"
     )
 
 
 def _write_resume_bot(env: dict[str, str], text: str) -> Path:
     bot_dir = Path(env["FAKE_REPO_ROOT"]) / "bots" / "my-assistant-qq"
     (bot_dir / "prompts").mkdir(parents=True)
-    (bot_dir / "bot.yaml").write_text(text, encoding="utf-8")
+    documents = {"application": [], "profile": []}
+    selected = "application"
+    for line in text.splitlines(keepends=True):
+        if line.strip() and not line.startswith((" ", "#", "\t")):
+            selected = "profile" if line.split(":", 1)[0] in {"llm", "prompts", "tools", "agents", "context"} else "application"
+        documents[selected].append(line)
+    (bot_dir / "bot.yaml").write_text("".join(documents["application"]) + "agent_profile: agent.yaml\n", encoding="utf-8")
+    (bot_dir / "agent.yaml").write_text("".join(documents["profile"]), encoding="utf-8")
     for name in ("identity.md", "response-style.md", "refusal-style.md"):
         (bot_dir / "prompts" / name).write_text(f"# {name}\n", encoding="utf-8")
     return bot_dir
@@ -1203,7 +1210,7 @@ def test_resume_rejects_unreadable_prompt_before_system_mutation(
     ("old", "new"),
     (
         ("    provider: onebot_v11\n", "    provider: onebot_v11\n    legacy: true\n"),
-        ("access:\n", "advanced: true\n\naccess:\n"),
+        ("workspace:\n", "advanced: true\n\nworkspace:\n"),
         ("  features:\n", "  mcp: {}\n  features:\n"),
         ("    provider: onebot_v11\n", "    provider: onebot_v11\n    legacy: &legacy qq\n"),
         ("    provider: onebot_v11\n", "    provider: onebot_v11\n    legacy: !str qq\n"),

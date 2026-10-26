@@ -352,7 +352,7 @@ def test_code_recovery_cases_declare_atomic_eval_only_tool_surfaces() -> None:
 
     for case_id, tool_names in expected.items():
         case = cases[case_id]
-        assert case["requirements"] == {"runtime_ids": ["native", "langgraph", "codex"]}
+        assert case["requirements"] == {"runtime_ids": ["langgraph", "codex"]}
         assert case["policy"]["allowed_tools"] == tool_names
         assert case["policy"]["required_tools"] == tool_names
         assert "development" not in case["requirements"].get("tool_packs", [])

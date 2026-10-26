@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import textwrap
 from pathlib import Path
 from unittest import mock
@@ -27,7 +29,7 @@ def _write_bot(tmp_path: Path) -> Path:
     (bot_dir / "mcp" / "servers.yaml").write_text("servers: []\n", encoding="utf-8")
     (bot_dir / "skills" / "manifest.yaml").write_text("skills: []\n", encoding="utf-8")
     bot_yaml = bot_dir / "bot.yaml"
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         textwrap.dedent(
             """\
             id: test-bot

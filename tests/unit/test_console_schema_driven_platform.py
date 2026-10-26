@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 from pathlib import Path
 
 from console.control import operations
@@ -32,7 +34,7 @@ def test_provision_schema_is_adapter_driven(monkeypatch, tmp_path: Path) -> None
     bot_dir = tmp_path / "bots" / "mock-bot"
     bot_dir.mkdir(parents=True)
     bot_yaml = bot_dir / "bot.yaml"
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         "id: mock-bot\n"
         "display_name: MockBot\n"
         "platform:\n"
@@ -50,7 +52,7 @@ def test_provision_schema_is_adapter_driven(monkeypatch, tmp_path: Path) -> None
         "  packs: []\n"
         "  features: []\n"
         "agents:\n"
-        "  runtime: native\n",
+        "  runtime: langgraph\n",
         encoding="utf-8",
     )
     inst = BotInstance(

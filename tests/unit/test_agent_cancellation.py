@@ -21,9 +21,8 @@ from tests.prompt_plan_fixture import prompt_plan, runtime_route
 
 from chatcopilot.agent.runtimes import RuntimeAgentSession
 from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
-from chatcopilot.agent.runtimes.inprocess import NativeRuntimeAdapter
+from chatcopilot.agent.runtimes.inprocess import LangGraphRuntimeAdapter
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import (
     AgentTask,
@@ -68,15 +67,15 @@ def _tool_call(name: str) -> dict:
     }
 
 
-def _make_session(llm, tools: list[ToolDef] | None = None) -> AgentSession:
+def _make_session(llm, tools: list[ToolDef] | None = None) -> LangGraphAgentSession:
     selected = list(tools or [])
-    return AgentSession(
+    return LangGraphAgentSession(
         session_id="cancel-test",
         llm=llm,
         executor=ToolExecutor(caller_role_hint="owner", tools=selected),
         tools_schema=[build_openai_schema(tool) for tool in selected],
         prompt_plan=prompt_plan("system"),
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
     )
 
 
@@ -252,7 +251,7 @@ class CancellationContractTests(unittest.TestCase):
     def test_inprocess_backend_propagates_probe_to_native_session(self) -> None:
         llm = _FakeLLM([ChatResult(content="must not run")])
         native = _make_session(llm)
-        backend = NativeRuntimeAdapter(
+        backend = LangGraphRuntimeAdapter(
             tool_names=set(), session_factory=lambda _request: native,
         )
         ref = backend.open_session(

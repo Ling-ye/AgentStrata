@@ -1324,7 +1324,8 @@ class CodexRuntimeAdapter:
         binding = RuntimeSessionBinding.from_payload(payload)
         if binding.actor_key != acp_session_id:
             raise ValueError(f"Codex session state identity mismatch: {path}")
-        if binding.scope_digest != policy_fingerprint or binding.status != "active" or binding.resume_policy != "restartable":
+        if (binding.runtime_id != "codex" or binding.scope_digest != policy_fingerprint
+                or binding.status != "active" or binding.resume_policy != "restartable"):
             return "", 0
         generation = binding.auth_identity_epoch
         if not isinstance(generation, int) or isinstance(generation, bool) or generation < 0:

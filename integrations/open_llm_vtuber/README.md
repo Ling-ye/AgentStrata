@@ -2,6 +2,8 @@
 
 本组件在独立的客户端环境中运行，不被 AgentStrata 核心导入。
 对话使用既有 GatewayClient；头像工具通过客户端后端的 MCP 端点提供。
+应用描述 `config/bot.yaml` 引用独立的 `config/agent.yaml`。LangGraph/Codex 两种 runtime 均使用安装自己的
+模型配置快照，凭据继续保留引用，用户状态目录保持独立；旧内联文件通过宿主 CLI 显式迁移。
 
 安装、环境、固定版本和实际验收步骤见[Live2D 接入指南](../../docs/guides/live2d.md)。
 接口归属见[运行链](../../docs/reference/runtime.md#独立交互客户端)，

@@ -60,7 +60,7 @@ def trial_payload(description, *, evaluation_id="eval-fixture", kind="suite"):
         return description
     defaults = dict(trial_id="trial-fixture", evaluation_id=evaluation_id, kind=kind, bot="controlled",
         profile="", suite_id="fixture-suite", case_ref="fixture-suite:a", case_id="a", dimension="test",
-        target_id="main", target_fingerprint="fingerprint", executor="agent_configured", runtime_id="native",
+        target_id="main", target_fingerprint="fingerprint", executor="agent_configured", runtime_id="langgraph",
         model="controlled", reasoning_effort="", attempt=1, order=1, outcome="passed")
     return to_jsonable(trial_result(**{**defaults, **description}))
 

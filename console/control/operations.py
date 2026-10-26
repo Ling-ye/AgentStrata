@@ -329,7 +329,7 @@ def _enabled_search_provider_kinds(bot_data: dict[str, Any]) -> set[str]:
 
 def bot_enabled_services(inst: BotInstance) -> list[dict[str, object]]:
     """Return services enabled by this bot's BotSpec and platform binding."""
-    bot_data = _load_yaml_mapping(_bot_spec_path(inst))
+    bot_data = _application_configuration(_bot_spec_path(inst))
     tool_packs = _bot_tool_pack_ids(bot_data)
     search_provider_kinds = _enabled_search_provider_kinds(bot_data)
     status_by_id = {str(item.get("id")): item for item in services.all_services_status()}
@@ -434,7 +434,7 @@ def status(inst: BotInstance, *, include_services: bool = True) -> Dict[str, obj
     else:
         result["mcp_services"] = []
         result["enabled_services"] = []
-    bot_data = _load_yaml_mapping(_bot_spec_path(inst))
+    bot_data = _application_configuration(_bot_spec_path(inst))
     result["tool_packs"] = _bot_tool_packs_grouped(bot_data)
     result["checks"], result["reasons"] = _status_checks(result)
     return result
@@ -938,6 +938,11 @@ def _load_yaml_mapping(path: Path) -> dict[str, Any]:
     return load_yaml_mapping_or_empty(path)
 
 
+def _application_configuration(path: Path) -> dict[str, Any]:
+    from chatcopilot.core.application_configuration import load_application_spec
+    return load_application_spec(path).resolved_configuration()
+
+
 def _bot_spec_path(inst: BotInstance) -> Path:
     raw = Path(inst.bot_spec)
     if raw.is_absolute():
@@ -1043,7 +1048,9 @@ def _bot_tool_packs_grouped(bot_data: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _bot_uses_mcp_ref(inst: BotInstance, ref: str) -> bool:
     bot_yaml = _bot_spec_path(inst)
-    data = _load_yaml_mapping(bot_yaml)
+    from chatcopilot.core.application_configuration import load_application_spec
+    application = load_application_spec(bot_yaml)
+    data = application.agent_profile.raw
     tools = data.get("tools") if isinstance(data.get("tools"), dict) else {}
     mcp = tools.get("mcp") if isinstance(tools.get("mcp"), dict) else {}
     servers_value = mcp.get("servers") if isinstance(mcp, dict) else None
@@ -1051,7 +1058,7 @@ def _bot_uses_mcp_ref(inst: BotInstance, ref: str) -> bool:
         return False
     servers_path = Path(str(servers_value))
     if not servers_path.is_absolute():
-        servers_path = bot_yaml.parent / servers_path
+        servers_path = application.agent_profile.base_dir / servers_path
     servers_data = _load_yaml_mapping(servers_path)
     servers = servers_data.get("servers", [])
     if not isinstance(servers, list):

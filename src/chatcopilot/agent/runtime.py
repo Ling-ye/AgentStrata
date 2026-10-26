@@ -4,7 +4,7 @@
 会话调用 :meth:`AgentRuntime.new_session` 取得 ``AgentSession``。AgentRuntime
 持有：
 
-- Native/LangGraph 主模型客户端与显式命名的宿主辅助模型客户端
+- LangGraph 主模型客户端与显式命名的宿主辅助模型客户端
 - ToolExecutor + 全量 tools schema（融合 builtin + external_tools + mcp client）
 - 可信 PromptBuildInput（由唯一 PromptPlanBuilder 构造不可变 plan）
 - 可选的 SkillIndex（形成唯一 capability.skills layer）
@@ -114,7 +114,7 @@ class AgentRuntime:
         if self.runtime_id == "codex" and self.main_model_client is not None:
             raise ValueError("Codex runtime cannot own a host main-model client")
         if self.runtime_id != "codex" and self.main_model_client is None:
-            raise ValueError("Native and LangGraph runtimes require a main-model client")
+            raise ValueError("LangGraph runtime requires a main-model client")
         if self.subagent_default_model_client is None:
             if self.main_model_client is None:
                 raise ValueError("Codex runtime requires an explicit host auxiliary-model client")

@@ -166,7 +166,11 @@ class RuntimeSessionBinding:
     status: Literal["active", "invalidated", "archived"] = "active"
 
     def __post_init__(self):
-        if self.runtime_id not in {"native", "langgraph", "codex"} or self.resume_policy not in {
+        # Retired bindings remain readable evidence, never an active execution route.
+        supported = self.runtime_id in {"langgraph", "codex"} or (
+            self.runtime_id == "native" and self.status in {"invalidated", "archived"}
+        )
+        if not supported or self.resume_policy not in {
             "live_only",
             "restartable",
         }:

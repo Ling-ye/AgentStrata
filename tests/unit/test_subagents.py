@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 from tests.prompt_plan_fixture import prompt_input, runtime_route
 
 from dataclasses import replace
@@ -396,7 +398,7 @@ class SubagentTests(unittest.TestCase):
             root = Path(temp_dir)
             bot_path = root / "bots" / "sample-bot" / "bot.yaml"
             bot_path.parent.mkdir(parents=True)
-            bot_path.write_text("id: sample-bot\n", encoding="utf-8")
+            write_application(bot_path, "id: sample-bot\n", encoding="utf-8")
             args["bot"] = str(bot_path)
             AdapterApprovalStore.for_bot(bot_path).approve(
                 envelope=envelope,
@@ -458,7 +460,7 @@ class SubagentTests(unittest.TestCase):
             root = Path(temp_dir)
             bot_path = root / "bots" / "sample-bot" / "bot.yaml"
             bot_path.parent.mkdir(parents=True)
-            bot_path.write_text("id: sample-bot\n", encoding="utf-8")
+            write_application(bot_path, "id: sample-bot\n", encoding="utf-8")
             args = {
                 "objective": "Integrate an unapproved adapter",
                 "write_scope": "src/chatcopilot/external_tools/sample",
@@ -794,7 +796,7 @@ class SubagentTests(unittest.TestCase):
                     max_tool_retries=1,
                 )
             ),
-            route=runtime_route("native"),
+            route=runtime_route("langgraph"),
             subagents=SubagentSpec(
                 include=("mcp_query",),
                 agents={"mcp_query": SubagentBudgetSpec(max_model_turns=1, max_tool_calls=1)},

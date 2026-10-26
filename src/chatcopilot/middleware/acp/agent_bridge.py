@@ -478,7 +478,7 @@ def _prompt_input(
     ]
     if group:
         session_lines.append("群共享空间不提升成员角色；不得读取其它群、私聊或旧成员目录。")
-    runtime_id = str(runtime.runtime_id or "native").strip().lower()
+    runtime_id = str(runtime.runtime_id or "langgraph").strip().lower()
     model = (llm_model or "").strip() or None
     policies, _ = _prompt_projection(runtime, role, ws)
     return PromptBuildInput(

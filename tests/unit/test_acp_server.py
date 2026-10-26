@@ -37,7 +37,7 @@ def _runtime() -> SimpleNamespace:
         rag_sources=(),
         mcp_servers=(object(),),
         subagents=SubagentSpec(),
-        runtime_id="native",
+        runtime_id="langgraph",
         spec=SimpleNamespace(
             context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_LAZYTEST")
         ),

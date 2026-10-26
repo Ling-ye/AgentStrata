@@ -39,7 +39,7 @@ def _request(root):
         case=EvalCase("sample", "template", "test", "answer"),
         dimension="test",
         target=core.EvaluationTarget(
-            "main", "main", "agent_configured", "native", "controlled", "", "fingerprint"
+            "main", "main", "agent_configured", "langgraph", "controlled", "", "fingerprint"
         ),
         attempt=1,
         order=1,

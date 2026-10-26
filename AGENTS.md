@@ -5,13 +5,22 @@
 
 ## 项目定位
 
-AgentStrata 是具备自我优化能力的开源 Agent 框架，自研 Harness 与 Eval 是核心特色。
-Harness 定义修复、角色分权、候选与独立验收，Eval 定义评测对象、执行条件、结果与证据；
-四层运行架构、上下文、工具和权限契约由项目自行定义。
+AgentStrata 提供自研 Agent 系统、外部项目桥接，以及基于 Harness 与 Eval 的持续改进机制。
+LangGraph 与 Codex 按实例配置选择，Live2D、QQ/NapCat 等通过现有渠道、客户端或工具接口接入。
+[主计划](specs/application-harness-framework/spec.md)定义 M0、M1、M1.1 与 M2—M7；按指定阶段实施，
+以 Agent 及其使用外部能力的效果为主要改进对象，fork 与部署按实际接入需要展开。
+
+当前已有配置分离、双 runtime、Eval、故障修复、代码治理与 QQ／Live2D 接入。
+Harness 编排直接使用 LangGraph，项目定义角色权限、候选、证据与独立验收。
+需求改进与实例自动启用按后续阶段落实，不把目标能力写成已完成。
+Native 独立执行路径退役，旧配置需重新配置；业务历史、人格、记忆与凭据保留。
+
+应用 `bot.yaml` 引用独立 Agent profile，运行层复用原类型化装配结果；旧内联配置须显式迁移，
+不在加载时回退或改写文件。字段归属与原有共享引用的含义见[配置](docs/reference/configuration.md#配置归属与文件引用)。
 
 执行方式与模型按配置路由，框架能力由公共契约定义；某个执行入口的默认适配不代表框架唯一执行方式。
 项目定位、执行路由、设计参考与实际依赖分别说明，具体事实以[架构总览](docs/reference/architecture.md)及领域正文为准。
-自我优化通过故障修复、代码熵治理和受限 Skill 学习实现，当前任务使用冻结规则，有效改动由后续任务加载。
+当前自我优化通过故障修复、代码熵治理和受限 Skill 学习实现，当前任务使用冻结规则，有效改动由后续任务加载。
 
 ## 协作与授权
 
@@ -38,6 +47,8 @@ Harness 定义修复、角色分权、候选与独立验收，Eval 定义评测�
 
 | 当前任务 | 首读 | 何时继续展开 |
 | --- | --- | --- |
+| 分阶段开发、双 runtime、外部桥接与需求改进 | [主计划与阶段](specs/application-harness-framework/spec.md#分阶段开发) | 先确认本阶段及前置条件，再进入相关领域；公开契约、复用源码与迁移方案见同一主计划 |
+| 外部应用插件、适配器与 Live2D | [独立客户端](docs/reference/runtime.md#独立交互客户端)、[软件插件](docs/reference/runtime.md#外部软件插件管理) | 当前操作读 [Live2D 指南](docs/guides/live2d.md)；fork、自动接入与版本启用按主计划推进 |
 | Harness 修复、验收与返工 | [角色](docs/reference/harness.md#按需角色协作)、[验收](docs/reference/harness.md#对照验证与独立验收) | 执行器或恢复问题读同页相应章节；图设计变化读 [Harness 编排规格](specs/harness-langgraph/spec.md) |
 | Eval、评分、Case 或对照结果 | [Evaluation](docs/reference/evaluation.md) | 执行归属与生命周期读[服务协议](docs/reference/evaluation-service.md)；题目变化读[用例约束](docs/reference/evaluation-cases.md) |
 | 自身治理、Skill 学习或交付 | [代码熵](docs/reference/code-health.md) | 检查规则读[黄金原则](docs/reference/harness-principles.md)；远端操作与清理读[交付契约](docs/reference/delivery.md) |

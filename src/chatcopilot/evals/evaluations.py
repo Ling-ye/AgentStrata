@@ -88,7 +88,7 @@ CancelCheck = Callable[[], bool]
 TrialExecutor = Callable[["TrialExecutionRequest"], "EvaluationTrial"]
 _ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,128}$")
 _TERMINAL_STATUSES = frozenset({"completed", "partial", "cancelled", "interrupted", "error"})
-_DEFAULT_COMPARISON_TARGETS = ("codex", "native")
+_DEFAULT_COMPARISON_TARGETS = ("codex", "langgraph")
 _TIE_THRESHOLD = 0.05
 
 
@@ -1333,7 +1333,7 @@ def _validate_suite(
             checks.extend(case_checks)
             if any(not bool(item.get("ok")) for item in case_checks):
                 return ()
-            runtime_id = str(getattr(runtime, "runtime_id", "native"))
+            runtime_id = str(getattr(runtime, "runtime_id", "langgraph"))
             selected_drivers = {_case_plugin_driver(manifest, case)[1] for case in selected}
             needs_agent = bool(
                 selected_drivers.intersection({"agent_configured", "agent_isolated"})
@@ -1569,7 +1569,7 @@ def _suite_case_preflight(
         # Keep direct callers fail-closed while the public validation path
         # loads this once, before dry-run/external-write branching.
         definitions = _validated_capability_definitions(manifest, cases)
-    runtime_id = str(getattr(runtime, "runtime_id", "native"))
+    runtime_id = str(getattr(runtime, "runtime_id", "langgraph"))
     platform = str(getattr(runtime, "platform_type", ""))
     features = set(str(value) for value in getattr(runtime, "tool_features", ()))
     # Case requirements use product-capability names while BotSpec keeps its
@@ -2602,19 +2602,19 @@ def _isolated_target(
             config_fingerprint=config_fingerprint,
             model_config=config.llm,
         )
-    elif normalized == "native":
+    elif normalized == "langgraph":
         model = str(config.llm.model or "")
         credential_ready = _model_auth_ready(config.llm)
         ready = bool(model) and credential_ready
         detail = (
-            f"runtime_id=native, model={model or 'missing'}, "
+            f"runtime_id=langgraph, model={model or 'missing'}, "
             f"credential={'configured' if credential_ready else 'missing'}"
         )
         target = _make_target(
-            target_id="native",
-            label="Native Agent",
+            target_id="langgraph",
+            label="LangGraph Agent",
             executor="agent_isolated",
-            runtime_id="native",
+            runtime_id="langgraph",
             model=model,
             reasoning_effort="",
             config_fingerprint=config_fingerprint,

@@ -358,7 +358,7 @@ def _write_comparison_test_sitecustomize(tmp_path: Path) -> Path:
 
 
             def _target(target_id):
-                backend = "codex" if target_id == "codex" else "native"
+                backend = "codex" if target_id == "codex" else "langgraph"
                 fingerprint = ("c" if target_id == "codex" else "n") * 64
                 return {
                     "target_id": target_id,
@@ -1364,7 +1364,7 @@ def test_real_managed_worker_cancels_at_a_complete_group_boundary(
                 "bot_id": "lingye-copilot-qq",
                 "profile_id": profile.profile_id,
                 "preset": "custom",
-                "target_ids": ["codex", "native"],
+                "target_ids": ["codex", "langgraph"],
                 "case_refs": [case_ref],
                 "repetitions": repetitions,
                 "max_wall_seconds": 30,
@@ -1415,7 +1415,7 @@ def test_real_managed_worker_cancels_at_a_complete_group_boundary(
             key = (str(trial["case_ref"]), int(trial["attempt"]))
             targets_by_group.setdefault(key, set()).add(str(trial["target_id"]))
         assert targets_by_group
-        assert all(targets == {"codex", "native"} for targets in targets_by_group.values())
+        assert all(targets == {"codex", "langgraph"} for targets in targets_by_group.values())
         assert not list(artifact_root.glob(".active-*.json"))
         assert not cancel_path.exists()
     finally:

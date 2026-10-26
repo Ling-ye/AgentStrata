@@ -11,7 +11,7 @@ from chatcopilot.evals.application import EvaluationApplication
 from chatcopilot.evals.application.result_store import EvaluationResultStore
 
 
-def seed(application, number=1, *, bot="bot-a"):
+def seed(application, number=1, *, bot="bot-a", runtime_id="langgraph"):
     identifier = f"eval-read-{number:04d}"
     directory = application.root / identifier
     directory.mkdir(mode=0o700)
@@ -38,7 +38,7 @@ def seed(application, number=1, *, bot="bot-a"):
             {
                 "target_id": "main",
                 "executor": "agent_configured",
-                "runtime_id": "native",
+                "runtime_id": runtime_id,
                 "model": "controlled",
             }
         ],
@@ -89,6 +89,13 @@ def seed(application, number=1, *, bot="bot-a"):
         path.write_text(json.dumps(value))
         path.chmod(0o600)
     return identifier
+
+
+def test_retired_runtime_history_keeps_original_identity(tmp_path):
+    application = EvaluationApplication(root=tmp_path / "evaluations", repository_root=tmp_path, worker=LocalEvaluationWorker())
+    identifier = seed(application, runtime_id="native")
+    result = application.get(identifier)["result"]
+    assert result["targets"][0]["runtime_id"] == "native"
 
 
 def test_history_is_paginated_across_bots_without_reading_bodies(tmp_path):

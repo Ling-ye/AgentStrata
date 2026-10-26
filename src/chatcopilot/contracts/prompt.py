@@ -44,7 +44,7 @@ _KIND_TRUST = {
 _KINDS = frozenset(_KIND_TRUST)
 _TRUST = frozenset(_KIND_TRUST.values())
 _CACHE_SCOPES = frozenset({"global", "bot", "session", "turn"})
-_RUNTIME_IDS = frozenset({"native", "langgraph", "codex"})
+_RUNTIME_IDS = frozenset({"langgraph", "codex"})
 _ROLES = frozenset({"owner", "admin", "user"})
 _CHANNELS = frozenset({"private", "group"})
 

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import shutil
 import subprocess
@@ -34,7 +36,7 @@ def _registration_fixture(
     packs = "  - dev.code_tasks\n" if requires_code_worker else "  - memory.chat\n"
     bot_dir = repository / "bots" / "starter"
     bot_dir.mkdir(parents=True)
-    (bot_dir / "bot.yaml").write_text(
+    write_application(bot_dir / "bot.yaml",
         "id: starter\n"
         "tools:\n"
         "  packs:\n"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import textwrap
 from pathlib import Path
 
@@ -84,7 +86,7 @@ def test_console_inventory_resolves_mcp_refs_from_component_catalog(tmp_path, mo
         encoding="utf-8",
     )
     bot_yaml = bot_dir / "bot.yaml"
-    bot_yaml.write_text(
+    write_application(bot_yaml,
         textwrap.dedent(
             """            id: test-bot
             display_name: Test Bot
@@ -143,7 +145,7 @@ def test_console_no_longer_reads_mcp_catalog_yaml_directly() -> None:
 def test_inventory_with_enabled_pack_uses_current_catalog_contract(tmp_path) -> None:
     from console.control import inventory
     bot_yaml = tmp_path / "bot.yaml"
-    bot_yaml.write_text("tools:\n  packs: [workspace.read_write]\nagents:\n  runtime: codex\nprompts:\n  schema_version: 2\n  identity: prompts/identity.md\n")
+    write_application(bot_yaml, "tools:\n  packs: [workspace.read_write]\nagents:\n  runtime: codex\nprompts:\n  schema_version: 2\n  identity: prompts/identity.md\n")
     result = inventory.bot_inventory(BotInstance(instance_id="test-bot", bot_spec=str(bot_yaml)))
     assert result["tool_packs"][0]["has_tools"] is True
     assert result["structure"]["runtime_id"] == "codex"

@@ -79,12 +79,27 @@ ccp_refresh_derived_defaults() {
 
 # ---------------------------------------------------------------------------
 # ccp_bot_chat_env_prefix <bot.yaml>
-#   读取 BotSpec 的 llm.chat.env_prefix；兼容旧 llm.env_prefix，并与 loader
-#   的 CHATCOPILOT_CHAT 默认值保持一致。仅解析这个简单标量，不执行 YAML。
+#   从应用引用的 Agent profile 读取 llm.chat.env_prefix，与 loader 的默认值一致。
+#   部署诊断只提取简单标量；完整配置仍由 Python 加载器校验，不执行 YAML。
 # ---------------------------------------------------------------------------
 ccp_bot_chat_env_prefix() {
-    local _bot="${1:-}"
+    local _bot="${1:-}" _reference _root _profile
     [ -r "$_bot" ] || return 0
+    _reference="$(awk '
+        /^agent_profile[[:space:]]*:/ {
+            value = $0
+            sub(/^agent_profile[[:space:]]*:[[:space:]]*/, "", value)
+            sub(/[[:space:]]+#.*/, "", value)
+            gsub(/^[[:space:]"\047]+|[[:space:]"\047]+$/, "", value)
+            print value
+        }
+    ' "$_bot")"
+    case "$_reference" in ""|/*|*\\*|*$'\n'*) return 0 ;; esac
+    case "/$_reference/" in */../*) return 0 ;; esac
+    _root="$(realpath -e -- "$(dirname "$_bot")" 2>/dev/null)" || return 0
+    [ ! -L "$_root/$_reference" ] || return 0
+    _profile="$(realpath -e -- "$_root/$_reference" 2>/dev/null)" || return 0
+    [[ "$_profile" == "$_root/"* ]] && [ -f "$_profile" ] || return 0
     awk '
         {
             line = $0
@@ -121,7 +136,7 @@ ccp_bot_chat_env_prefix() {
         END {
             if (!found) print (legacy != "" ? legacy : "CHATCOPILOT_CHAT")
         }
-    ' "$_bot"
+    ' "$_profile"
 }
 
 # ---------------------------------------------------------------------------

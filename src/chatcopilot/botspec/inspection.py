@@ -90,8 +90,11 @@ def configuration_projection(
     for config in plain(skills):
         name = config.get("id", config.get("name", "skill"))
         add("capability", f"skill:{name}", name, config)
-    add("botspec", "config:instance", "BotSpec", {"id": data.get("id"), "schema_version": data.get("schema_version"),
-                                                     "display_name": data.get("display_name")})
+    application = data.get("application") or {}
+    declaration = application.get("raw") or {}
+    add("botspec", "config:instance", "应用配置", {"id": data.get("id"), "schema_version": data.get("schema_version"),
+                                                     "display_name": data.get("display_name"),
+                                                     "agent_profile": declaration.get("agent_profile")})
     add("contracts", "protocol:versions", "数据版本", {
         "gateway": (data.get("gateway") or {}).get("protocol_version"),
         "prompts": (data.get("prompts") or {}).get("schema_version"), "observation": 1,

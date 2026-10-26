@@ -13,7 +13,7 @@ from chatcopilot.contracts.model_runtime import RuntimeId
 class AgentSessionProtocol(Protocol):
     """Minimal session surface consumed outside the concrete agent loop.
 
-    Native ``AgentSession`` and the LangGraph-backed session both implement this
+    The LangGraph session and the Codex runtime session both implement this
     interface so middleware can stay independent from the selected agent runtime.
     """
 

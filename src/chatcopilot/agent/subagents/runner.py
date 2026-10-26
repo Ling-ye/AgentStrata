@@ -26,7 +26,7 @@ from chatcopilot.contracts.agent import (
     SpanFinished,
     SpanStarted,
 )
-from chatcopilot.agent.session import AgentSession
+from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.turn_support import safe_emit
 from chatcopilot.core.observability_redaction import omit_private_reasoning_messages
 from chatcopilot.contracts.cancellation import CancellationRequested
@@ -134,7 +134,7 @@ class SubagentRunner:
         depth = parent.depth + 1 if parent is not None else 0
         safe_emit(sink, SpanStarted(name=f"subagent:{subagent_name}", kind="subagent",
             trace_id=trace_id, span_id=span_id, parent_span_id=parent_span, depth=depth,
-            observed_at=time.time(), runtime_id="native",
+            observed_at=time.time(), runtime_id="langgraph",
             data={"input": task.to_dict(), "configuration": asdict(config)}))
         details: dict = {}
         try:
@@ -170,7 +170,7 @@ class SubagentRunner:
                     parent_span_id=parent_span,
                     depth=depth,
                     observed_at=time.time(),
-                    runtime_id="native",
+                    runtime_id="langgraph",
                     summary=str(exc),
                     data={
                         "status": "cancelled"
@@ -187,7 +187,7 @@ class SubagentRunner:
             output = result.summary
         safe_emit(sink, SpanFinished(name=f"subagent:{subagent_name}", kind="subagent", ok=result.ok,
             trace_id=trace_id, span_id=span_id, parent_span_id=parent_span, depth=depth,
-            observed_at=time.time(), runtime_id="native",
+            observed_at=time.time(), runtime_id="langgraph",
             summary=str(output.get("summary", "")) if isinstance(output, dict) else str(output),
             data={"result": output, "cache_status": result.cache_status, "error_code": result.error_code, **details}))
         return result
@@ -338,7 +338,7 @@ class SubagentRunner:
                     identity=role_prompt,
                     response_style="Return the final result only through submit_result.",
                 ),
-                runtime_id="native",
+                runtime_id="langgraph",
                 model=model_name,
                 role=caller_role,
                 channel_kind="private",
@@ -350,7 +350,7 @@ class SubagentRunner:
         )
         model_turns = config.max_model_turns
         timeout = config.timeout_seconds
-        session = AgentSession(
+        session = LangGraphAgentSession(
             session_id=f"{session_id}:subagent:{subagent_name}",
             llm=llm,
             executor=ToolExecutor(
@@ -363,7 +363,7 @@ class SubagentRunner:
             ),
             tools_schema=tools_schema,
             prompt_plan=prompt_plan,
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
             context_manager=ContextManager(
                 max_context_tokens=min(
                     self._main_config.runtime.max_context_tokens,
@@ -512,7 +512,7 @@ class SubagentRunner:
             raise ValueError(f"subagent LLM profile was not materialized: {model_binding}") from exc
 
 
-def _extract_partial_findings(session: AgentSession) -> list[dict]:
+def _extract_partial_findings(session: LangGraphAgentSession) -> list[dict]:
     """Extract search/extract results from a subagent's internal tool messages.
 
     When a subagent hits its budget cap before calling submit_result, the
@@ -567,7 +567,7 @@ _MCP_FAILURE_CODES = frozenset(
 )
 
 
-def _extract_mcp_error_code(session: AgentSession) -> str | None:
+def _extract_mcp_error_code(session: LangGraphAgentSession) -> str | None:
     """Find a stable MCP failure code inside nested ToolResult JSON payloads."""
     import json as _json
 

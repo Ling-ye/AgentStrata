@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from tests.application_fixture import write_application
 from chatcopilot.botspec.model import LLMSpec
 
 from tests.evaluation_fixtures import trial_result, replace_trial
@@ -102,7 +104,7 @@ def _custom_request(
         "bot": "lingye-copilot-qq",
         "profile": profile.profile_id,
         "preset": "custom",
-        "targets": targets or ["codex", "native"],
+        "targets": targets or ["codex", "langgraph"],
         "case_refs": case_refs or [profile.cases[0].ref],
         "repetitions": repetitions,
         "max_wall_seconds": max_wall_seconds,
@@ -224,7 +226,7 @@ def _trace_capture_executor(request: TrialExecutionRequest) -> EvaluationTrial:
     from chatcopilot.evals.event_projection import project_evaluation_event
     text = "完整上下文" * 100000
     project_evaluation_event(LlmCallStarted(model="synthetic", iteration=0, trace_id="t", span_id="m"))
-    project_evaluation_event(ContextSnapshotPrepared(snapshot_id="ctx", runtime_id="native", model="synthetic", iteration=0,
+    project_evaluation_event(ContextSnapshotPrepared(snapshot_id="ctx", runtime_id="langgraph", model="synthetic", iteration=0,
         trace_id="t", span_id="m", session_messages=({"role": "user", "content": text},),
         effective_messages=({"role": "user", "content": text},)))
     project_evaluation_event(LlmCallFinished(model="synthetic", iteration=0, ok=True,
@@ -376,7 +378,7 @@ def test_strict_quick_request_rejects_all_creation_overrides() -> None:
         "bot": "lingye-copilot-qq",
         "profile": "agent-comparison-mvp",
         "preset": "quick",
-        "targets": ["codex", "native"],
+        "targets": ["codex", "langgraph"],
         "case_refs": ["ifeval:ifeval-fixed-1075"],
         "repetitions": 1,
         "max_wall_seconds": 30,
@@ -1209,8 +1211,8 @@ def test_orchestrator_uses_seeded_complete_target_groups_and_canonical_state(
     )
 
     groups = [seen[index : index + 2] for index in range(0, len(seen), 2)]
-    assert all({item[2] for item in group} == {"codex", "native"} for group in groups)
-    assert [group[0][2] for group in groups] == ["native", "codex", "native", "codex"]
+    assert all({item[2] for item in group} == {"codex", "langgraph"} for group in groups)
+    assert [group[0][2] for group in groups] == ["langgraph", "codex", "langgraph", "codex"]
     assert result.status == "completed"
     assert len(result.trials) == 8
     state = json.loads((output / "state.json").read_text(encoding="utf-8"))
@@ -1789,7 +1791,7 @@ def test_trial_authority_mutation_is_indeterminate_and_quarantined(
     output = tmp_path / "eval-artifact-integrity-violation"
     request = _custom_request(
         evaluation_id="eval-artifact-integrity-violation",
-        targets=["native"],
+        targets=["langgraph"],
     )
 
     def mutate_authority(trial_request: TrialExecutionRequest) -> EvaluationTrial:
@@ -1831,7 +1833,7 @@ def test_core_converts_oversized_trial_evidence_to_indeterminate_error(
     result = run_evaluation(
         _custom_request(
             evaluation_id="eval-oversized-evidence",
-            targets=["native"],
+            targets=["langgraph"],
         ),
         output=output,
         trial_executor=execute,
@@ -1855,7 +1857,7 @@ def test_core_rejects_recursive_trial_evidence_before_redaction(tmp_path: Path) 
     result = run_evaluation(
         _custom_request(
             evaluation_id="eval-recursive-evidence",
-            targets=["native"],
+            targets=["langgraph"],
         ),
         output=output,
         trial_executor=execute,
@@ -1894,7 +1896,7 @@ def test_cancel_and_resume_operate_only_at_complete_target_group_boundaries(
 
     assert cancelled.status == "cancelled"
     assert len(cancelled.trials) == 2
-    assert {target for _attempt, target in calls} == {"codex", "native"}
+    assert {target for _attempt, target in calls} == {"codex", "langgraph"}
 
     calls.clear()
     resumed = run_evaluation(
@@ -1906,7 +1908,7 @@ def test_cancel_and_resume_operate_only_at_complete_target_group_boundaries(
 
     assert resumed.status == "completed"
     assert len(resumed.trials) == 4
-    assert calls == [(2, "codex"), (2, "native")]
+    assert calls == [(2, "codex"), (2, "langgraph")]
     assert resumed.started_at == cancelled.started_at
     assert resumed.duration_seconds >= cancelled.duration_seconds
 
@@ -2457,7 +2459,7 @@ def test_target_runtime_fingerprint_covers_resolved_chat_behavior(
         tool_packs=(),
         tool_features=(),
         exclude_tools=(),
-        runtime_id="native",
+        runtime_id="langgraph",
         subagents={},
         access={},
     )
@@ -2841,7 +2843,7 @@ def test_single_target_does_not_generate_a_fake_win(tmp_path: Path) -> None:
     result = run_evaluation(
         _custom_request(
             evaluation_id="eval-single-target",
-            targets=["native"],
+            targets=["langgraph"],
         ),
         output=output,
         trial_executor=lambda request: _trial(request),
@@ -2870,10 +2872,10 @@ def test_dimension_aggregation_accumulates_multiple_cases() -> None:
             "a" * 64,
         ),
         EvaluationTarget(
-            "native",
+            "langgraph",
             "Native",
             "agent_isolated",
-            "native",
+            "langgraph",
             "model",
             "",
             "b" * 64,
@@ -3369,7 +3371,7 @@ def test_cli_freezes_bot_environment_before_validation_and_execution(
     repository = _write_repository_markers(tmp_path / "repo")
     bot_dir = repository / "bots/example"
     bot_dir.mkdir(parents=True)
-    (bot_dir / "bot.yaml").write_text(
+    write_application(bot_dir / "bot.yaml",
         "id: example\n"
         "llm:\n"
         "  chat:\n"
@@ -3436,7 +3438,7 @@ def test_cli_environment_error_does_not_echo_local_env_secret(
     repository = _write_repository_markers(tmp_path / "repo")
     bot_dir = repository / "bots/example"
     bot_dir.mkdir(parents=True)
-    (bot_dir / "bot.yaml").write_text("id: example\n", encoding="utf-8")
+    write_application(bot_dir / "bot.yaml", "id: example\n", encoding="utf-8")
     secret = "private-unclosed-local-env-value"
     (bot_dir / "local.env").write_text(
         f'export CHATCOPILOT_PRIVATE_FIXTURE="{secret}\n',
@@ -3793,7 +3795,7 @@ def test_parse_custom_requires_every_budget_and_selection_field() -> None:
                 "bot": "lingye-copilot-qq",
                 "profile": "agent-comparison-mvp",
                 "preset": "custom",
-                "targets": ["native"],
+                "targets": ["langgraph"],
             }
         )
 

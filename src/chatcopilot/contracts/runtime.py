@@ -61,7 +61,7 @@ class SubagentBudgetPlan:
 
 @dataclass(frozen=True)
 class SubagentPlan:
-    runtime_id: str = "native"
+    runtime_id: str = "langgraph"
     include: tuple[str, ...] = ()
     defaults: SubagentBudgetPlan = field(default_factory=SubagentBudgetPlan)
     search_budget: SubagentBudgetPlan = field(default_factory=SubagentBudgetPlan)
@@ -76,7 +76,7 @@ class SubagentPlan:
 
 @dataclass(frozen=True)
 class AgentRuntimePlan:
-    runtime_id: str = "native"
+    runtime_id: str = "langgraph"
     tool_packs: tuple[str, ...] = ()
     exclude_tools: tuple[str, ...] = ()
     mcp_servers: tuple[McpServerConfig, ...] = ()

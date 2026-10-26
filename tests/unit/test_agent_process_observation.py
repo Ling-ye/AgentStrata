@@ -8,7 +8,6 @@ import pytest
 from chatcopilot.agent.runtimes.codex_events import CodexJsonlProjector
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
 from chatcopilot.agent.process import ProcessMessage
-from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import (
     AgentMessageObserved, AgentTask, ContextSnapshotPrepared, FinalText,
@@ -30,7 +29,7 @@ def recorded(tmp_path):
 
 @pytest.mark.parametrize(
     ("session_type", "runtime_id"),
-    [(AgentSession, "native"), (LangGraphAgentSession, "langgraph")],
+    [(LangGraphAgentSession, "langgraph")],
 )
 def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(
     recorded, session_type, runtime_id
@@ -99,7 +98,7 @@ def test_actual_rounds_and_filtered_tool_messages_reach_observation_index(
 
 def test_context_input_references_only_describe_actual_tool_messages():
     event = ContextSnapshotPrepared(
-        snapshot_id='ctx', runtime_id='native', model='fixture', iteration=1,
+        snapshot_id='ctx', runtime_id='langgraph', model='fixture', iteration=1,
         session_messages=({'role': 'tool', 'tool_call_id': 'removed-by-context'},),
         effective_messages=(
             {'role': 'user', 'tool_call_id': 'not-a-tool'},
@@ -178,7 +177,7 @@ def test_observation_stream_is_bounded_and_does_not_emit_delivery(monkeypatch):
     captured = []
     ticks = iter(range(1000))
     monkeypatch.setattr('chatcopilot.agent.process.time.monotonic', lambda: next(ticks) * 2)
-    message = ProcessMessage(captured.append, trace_id='t', parent_span_id='model', runtime_id='native', depth=0)
+    message = ProcessMessage(captured.append, trace_id='t', parent_span_id='model', runtime_id='langgraph', depth=0)
     for _ in range(100):
         message.append('x' * 1024)
     message.finish()

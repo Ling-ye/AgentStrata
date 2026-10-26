@@ -29,7 +29,7 @@ LEGAL = {"LICENSE", "COPYRIGHT", "NOTICE.md", "Open-LLM-VTuber-LICENSE.txt",
          "Open-LLM-VTuber-Web-LICENSE.txt"}
 RESOURCES = {"upstream.json", "artifacts.json", "requirements.lock", "build.lock",
              "requirements.in", "patches/backend.patch", "patches/frontend.patch",
-             "examples/bot/bot.yaml", "examples/bot/mcp.yaml", "examples/bot/identity.md",
+             "examples/bot/bot.yaml", "examples/bot/agent.yaml", "examples/bot/mcp.yaml", "examples/bot/identity.md",
              "examples/bot/response-style.md", "config.example.json", ".env.example"}
 
 

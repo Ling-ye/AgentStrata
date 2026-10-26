@@ -72,7 +72,7 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
             rag_sources=(),
             mcp_servers=(),
             subagents=replacement_subagents,
-            runtime_id="native",
+            runtime_id="langgraph",
         ),
     )
 
@@ -81,7 +81,7 @@ def test_detached_profile_and_overrides_are_explicit() -> None:
     assert projection.mcp_servers == ()
     assert projection.subagents == replacement_subagents
     assert projection.subagents is not replacement_subagents
-    assert projection.route.runtime_id == "native"
+    assert projection.route.runtime_id == "langgraph"
     assert projection.assembly_profile == "detached"
 
 

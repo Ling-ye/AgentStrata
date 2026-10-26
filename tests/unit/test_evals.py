@@ -530,7 +530,7 @@ class EvalRunnerTests(unittest.TestCase):
                     {
                         "target_id": "configured",
                         "executor": "agent_configured",
-                        "runtime_id": "native",
+                        "runtime_id": "langgraph",
                         "fingerprint": "same-target-fingerprint",
                     }
                 ],
@@ -575,7 +575,7 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "configured",
                     "executor": "agent_configured",
-                    "runtime_id": "native",
+                    "runtime_id": "langgraph",
                 }
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],
@@ -610,7 +610,7 @@ class EvalRunnerTests(unittest.TestCase):
                         {
                             "target_id": "other-target",
                             "executor": "agent_configured",
-                            "runtime_id": "native",
+                            "runtime_id": "langgraph",
                         }
                     ],
                 },
@@ -648,7 +648,7 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "configured",
                     "executor": "agent_configured",
-                    "runtime_id": "native",
+                    "runtime_id": "langgraph",
                 }
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],
@@ -708,9 +708,9 @@ class EvalRunnerTests(unittest.TestCase):
                     "runtime_id": "codex",
                 },
                 {
-                    "target_id": "native",
+                    "target_id": "langgraph",
                     "executor": "agent_isolated",
-                    "runtime_id": "native",
+                    "runtime_id": "langgraph",
                 },
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],
@@ -743,7 +743,7 @@ class EvalRunnerTests(unittest.TestCase):
                 {
                     "target_id": "configured",
                     "executor": "agent_configured",
-                    "runtime_id": "native",
+                    "runtime_id": "langgraph",
                 }
             ],
             "selected_cases": ["ifeval:ifeval-json-format"],

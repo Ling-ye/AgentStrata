@@ -298,7 +298,7 @@ def test_control_session_materialization_replays_buffered_exchange(tmp_path: Pat
         prompt_profile=BotPromptProfile(identity="system", response_style="concise"),
         capability_policies=(),
         skills=(),
-        runtime_id="native",
+        runtime_id="langgraph",
     )
     workspace = replace(_workspace(tmp_path, "p2p"), user_name="Example User")
     state = _build_session_for_workspace(

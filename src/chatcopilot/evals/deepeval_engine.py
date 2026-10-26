@@ -193,7 +193,7 @@ def _model(config: JudgeConfig) -> Any:
     from chatcopilot.agent.context.prompt_plan import (
         PromptBuildInput,
         PromptPlanBuilder,
-        render_native_prefix,
+        render_model_prefix,
     )
     from chatcopilot.contracts.prompt import BotPromptProfile
     from chatcopilot.core.llm_client import LLMClient
@@ -226,7 +226,7 @@ def _model(config: JudgeConfig) -> Any:
                         identity="AgentStrata evaluation judge.",
                         response_style="Concise, structured evaluation responses.",
                     ),
-                    runtime_id="native",
+                    runtime_id="langgraph",
                     model=config.model,
                     role="user",
                     channel_kind="private",
@@ -237,7 +237,7 @@ def _model(config: JudgeConfig) -> Any:
                     ),
                 )
             )
-            messages = render_native_prefix(plan)
+            messages = render_model_prefix(plan)
             messages.append({"role": "user", "content": prompt})
             if schema is not None:
                 messages.append(

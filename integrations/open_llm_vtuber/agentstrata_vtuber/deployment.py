@@ -89,18 +89,18 @@ def configure(request: dict, sources: dict[str, Path]) -> dict:
             "PYTHONUNBUFFERED": "1",
         }
         values["AGENTSTRATA_AVATAR_CONTROL_AUTH"] = "Bearer " + values["AGENTSTRATA_AVATAR_CONTROL_TOKEN"]
+        selected = document["bindings"][binding]
+        connection_name = document["profiles"][selected]["connection"]
+        connection = dict(document["connections"][connection_name])
         if options["runtime"] == "codex":
             native = _native_codex(model.codex_bin)
             # Keep credentials referenced from the existing connection's env file.
-            selected = document["bindings"][binding]
-            connection_name = document["profiles"][selected]["connection"]
-            connection = dict(document["connections"][connection_name])
             connection["codex_bin_env"] = "AGENTSTRATA_PLUGIN_CODEX_BIN"
             values["AGENTSTRATA_PLUGIN_CODEX_BIN"] = native
-            snapshot = {"connections": {connection_name: connection},
-                "profiles": {selected: document["profiles"][selected]}, "bindings": {binding: selected}}
-            write_private(config / "model.json", json.dumps(snapshot, indent=2) + "\n")
-            values["AGENTSTRATA_LLM_CONFIG"] = str(config / "model.json")
+        snapshot = {"connections": {connection_name: connection},
+            "profiles": {selected: document["profiles"][selected]}, "bindings": {binding: selected}}
+        write_private(config / "model.json", json.dumps(snapshot, indent=2) + "\n")
+        values["AGENTSTRATA_LLM_CONFIG"] = str(config / "model.json")
         # The host binds the empty root to an authenticated Principal before
         # creating actor directories. Precreating one would bypass that ordering.
         private_directory(data / "workspace")
@@ -108,8 +108,10 @@ def configure(request: dict, sources: dict[str, Path]) -> dict:
         for name in ("identity.md", "response-style.md"):
             write_private(config / name, resource("examples/bot/" + name).read_text())
         bot = yaml.safe_load(resource("examples/bot/bot.yaml").read_text())
-        bot["agents"]["runtime"] = options["runtime"]
-        bot["llm"] = {"chat": {"binding": binding}, "research": {"binding": binding}}
+        profile = yaml.safe_load(resource("examples/bot/agent.yaml").read_text())
+        profile["agents"]["runtime"] = options["runtime"]
+        profile["llm"] = {"chat": {"binding": binding}, "research": {"binding": binding}}
+        write_private(config / "agent.yaml", yaml.safe_dump(profile, allow_unicode=True, sort_keys=False))
         write_private(config / "bot.yaml", yaml.safe_dump(bot, allow_unicode=True, sort_keys=False))
         mcp = yaml.safe_load(resource("examples/bot/mcp.yaml").read_text())
         mcp["servers"][0]["url"] = f"http://127.0.0.1:{port}/agentstrata/mcp/"

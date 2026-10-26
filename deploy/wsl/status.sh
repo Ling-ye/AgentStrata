@@ -154,12 +154,10 @@ _status_bot_requires_code_worker() {
 import os
 from pathlib import Path
 
-import yaml
+from chatcopilot.core.application_configuration import load_application_spec
 
 path = Path(os.environ["CHATCOPILOT_STATUS_BOT_SPEC"])
-data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-if not isinstance(data, dict):
-    raise SystemExit(f"invalid BotSpec mapping: {path}")
+data = load_application_spec(path).agent_profile.raw
 tools = data.get("tools") or {}
 if not isinstance(tools, dict):
     raise SystemExit(f"invalid tools mapping in BotSpec: {path}")

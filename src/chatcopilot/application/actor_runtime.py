@@ -483,7 +483,7 @@ class ActorSessionFactory:
         gateway_session = self.session_manager.get_session(session_id)
         return PromptBuildInput(
             profile=self.runtime.prompt_profile,
-            runtime_id=str(self.runtime.runtime_id or "native").strip().lower(),
+            runtime_id=str(self.runtime.runtime_id or "langgraph").strip().lower(),
             model=_effective_model(self.runtime, self.agent_runtime),
             role=role_value(principal.role),
             channel_kind="group" if group else "private",

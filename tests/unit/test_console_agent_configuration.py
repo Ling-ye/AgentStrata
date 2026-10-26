@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import copy
 import json
 import os
@@ -22,7 +24,7 @@ def bot(tmp_path, runtime_id="codex", **agents):
                     "research": {"binding": "research"}, "code": {"enabled": True, "binding": "code"}},
             "agents": {"runtime": runtime_id, **agents}}
     path = tmp_path / "bot.yaml"
-    path.write_text(yaml.safe_dump(data))
+    write_application(path, yaml.safe_dump(data))
     from tests.model_settings_fixture import test_model_document, write_models
     write_models(tmp_path / "models.json", test_model_document())
     return path
@@ -33,7 +35,7 @@ def projected(path, values):
     return {item["id"]: item for item in data["entities"]}
 
 
-@pytest.mark.parametrize("backend,model", [("codex", "chat-fixture"), ("native", "chat-fixture"), ("langgraph", "chat-fixture")])
+@pytest.mark.parametrize("backend,model", [("codex", "chat-fixture"), ("langgraph", "chat-fixture"), ("langgraph", "chat-fixture")])
 def test_instance_models_match_backend_and_full_environment_overrides(tmp_path, monkeypatch, backend, model):
     path = bot(tmp_path, backend)
     settings = path.parent / "models.json"
@@ -86,9 +88,9 @@ def test_inspection_definitions_and_budgets_match_runtime_resolver(tmp_path, mon
     assert rows["subagent:custom_reader"]["membership"] == "custom"
     assert rows["subagent:custom_reader"]["effective_config"]["model"] == "custom-model"
     assert rows["subagent:custom_reader"]["effective_config"]["budget"]["max_tool_calls"] == 2
-    assert rows["subagent:custom_reader"]["field_sources"]["budget.timeout_seconds"] == "BotSpec · agents.defaults.timeout_seconds"
+    assert rows["subagent:custom_reader"]["field_sources"]["budget.timeout_seconds"] == "AgentProfile · agents.defaults.timeout_seconds"
     assert rows["subagent:custom_reader"]["field_sources"]["budget.max_model_turns"] == "代码默认值"
-    assert rows["subagent:mcp_query"]["field_sources"]["budget.timeout_seconds"] == "BotSpec · agents.mcp_query.timeout_seconds"
+    assert rows["subagent:mcp_query"]["field_sources"]["budget.timeout_seconds"] == "AgentProfile · agents.mcp_query.timeout_seconds"
 
 
 def test_defaults_disabled_providers_and_fixed_policy_remain_visible(tmp_path):

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import shlex
 import stat
@@ -101,7 +103,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             )
             (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
-            bot_yaml.write_text(
+            write_application(bot_yaml,
                 textwrap.dedent(
                     """\
                     id: feishu-bot
@@ -212,7 +214,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                 ),
                 1,
             )
-        bot_yaml.write_text(rendered_bot, encoding="utf-8")
+        write_application(bot_yaml, rendered_bot, encoding="utf-8")
         return bot_yaml, runtime_env
 
     def test_qq_provision_rejects_weak_token_without_echoing_it(self) -> None:
@@ -298,7 +300,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             self.assertEqual(stat.S_IMODE(workspace_root.stat().st_mode), 0o700)
 
     def test_qq_provision_chatgpt_auth_does_not_require_main_api_key(self) -> None:
-        for runtime_id in ("native", "codex"):
+        for runtime_id in ("langgraph", "codex"):
             with self.subTest(runtime_id=runtime_id), TemporaryDirectory() as tmp:
                 base = Path(tmp)
                 codex_env = (
@@ -317,7 +319,8 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                         """
                     ),
                 )
-                content = bot_yaml.read_text(encoding="utf-8").replace(
+                profile_yaml = bot_yaml.with_name("agent.yaml")
+                content = profile_yaml.read_text(encoding="utf-8").replace(
                     "prompts:\n",
                     textwrap.dedent(
                         f"""\
@@ -332,7 +335,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     ),
                     1,
                 )
-                bot_yaml.write_text(content, encoding="utf-8")
+                profile_yaml.write_text(content, encoding="utf-8")
 
                 output = StringIO()
                 with redirect_stdout(output):
@@ -354,7 +357,8 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                     """
                 ),
             )
-            content = bot_yaml.read_text(encoding="utf-8").replace(
+            profile_yaml = bot_yaml.with_name("agent.yaml")
+            content = profile_yaml.read_text(encoding="utf-8").replace(
                 "prompts:\n",
                 textwrap.dedent(
                     """\
@@ -367,13 +371,13 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
                           mode: api_key
                           key_env: DECLARED_MAIN_API_KEY
                     agents:
-                      runtime: native
+                      runtime: langgraph
                     prompts:
                     """
                 ),
                 1,
             )
-            bot_yaml.write_text(content, encoding="utf-8")
+            profile_yaml.write_text(content, encoding="utf-8")
             output = StringIO()
 
             with redirect_stdout(output):
@@ -692,7 +696,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             )
             (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
-            bot_yaml.write_text(
+            write_application(bot_yaml,
                 textwrap.dedent(
                     f"""\
                     id: home-path-bot
@@ -766,7 +770,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             )
             (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
-            bot_yaml.write_text(
+            write_application(bot_yaml,
                 textwrap.dedent(
                     f"""\
                     id: test-bot
@@ -824,7 +828,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             )
             (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
-            bot_yaml.write_text(
+            write_application(bot_yaml,
                 textwrap.dedent(
                     f"""\
                     id: sample-bot
@@ -875,7 +879,7 @@ class BotSpecProvisionEnvTests(unittest.TestCase):
             )
             (bot_dir / "local.env").chmod(0o600)
             bot_yaml = bot_dir / "bot.yaml"
-            bot_yaml.write_text(
+            write_application(bot_yaml,
                 textwrap.dedent(
                     f"""\
                     id: route-bot

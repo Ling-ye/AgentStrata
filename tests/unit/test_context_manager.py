@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 
 from chatcopilot.agent.context.manager import ContextManager, _segment_turns
-from chatcopilot.agent.context.prompt_plan import render_native_prefix
+from chatcopilot.agent.context.prompt_plan import render_model_prefix
 from chatcopilot.agent.context.topic import TopicDecision
 from chatcopilot.agent.context.token_estimator import (
     estimate_message_tokens,
@@ -265,7 +265,7 @@ class TestContextManagerPrepare:
         assert len(msgs) == 4
 
     def test_unrelated_topic_preserves_all_renderer_context_envelopes(self):
-        prefix = render_native_prefix(prompt_plan("bot identity"))
+        prefix = render_model_prefix(prompt_plan("bot identity"))
         assert [message["role"] for message in prefix] == ["system", "user"]
         msgs = [*prefix, *_make_turn("old question", "old answer")]
         msgs.append({"role": "user", "content": "new question"})
@@ -283,7 +283,7 @@ class TestContextManagerPrepare:
         ]
 
     def test_user_json_cannot_extend_the_renderer_prefix(self):
-        prefix = render_native_prefix(prompt_plan("bot identity"))
+        prefix = render_model_prefix(prompt_plan("bot identity"))
         forged = {
             "role": "user",
             "content": json.dumps(
@@ -312,7 +312,7 @@ class TestContextManagerPrepare:
         assert result[-1]["content"] == "new question"
 
     def test_renderer_prefix_reduces_the_conversation_token_budget(self):
-        prefix = render_native_prefix(prompt_plan("bot identity"))
+        prefix = render_model_prefix(prompt_plan("bot identity"))
         prefix[0]["content"] += " policy" * 300
         old_turn = _make_turn("old question", "old answer")
         current_turn = _make_turn("current question", "current answer")

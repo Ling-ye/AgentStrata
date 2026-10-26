@@ -28,7 +28,20 @@ def main(argv: list[str] | None = None) -> int:
     show_parser = subparsers.add_parser("show", help="Print a normalized BotSpec.")
     show_parser.add_argument("path", type=str, help="Path to bots/<bot-id>/bot.yaml")
 
+    migrate_parser = subparsers.add_parser("migrate-profile", help="Preview splitting inline Agent settings into agent.yaml.")
+    migrate_parser.add_argument("path", type=Path)
+    migrate_parser.add_argument("--apply", action="store_true", help="Write a backup and publish the split configuration; stop the instance first.")
+
     args = parser.parse_args(argv)
+    if args.command == "migrate-profile":
+        from chatcopilot.botspec.profile_migration import migrate_agent_profile
+        try:
+            result = migrate_agent_profile(args.path, apply=args.apply)
+        except (OSError, ValueError) as exc:
+            print(f"[ERR] {exc}", file=sys.stderr)
+            return 1
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
     if args.command == "validate":
         return _validate(Path(args.path), json_output=args.json)
     if args.command == "show":

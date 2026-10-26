@@ -17,7 +17,7 @@ from chatcopilot.evals.trial_capture import capture
 @pytest.fixture
 def runtime(monkeypatch):
     runtime = load_evaluation_runtime("lingye-copilot-qq", load_local_environment=False)
-    runtime = replace(runtime, runtime_id="native")
+    runtime = replace(runtime, runtime_id="langgraph")
     monkeypatch.setattr(gateway_replay, "load_evaluation_runtime", lambda _: runtime)
     class Calls(list):
         responses = []

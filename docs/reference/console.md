@@ -115,7 +115,7 @@ Agent 顶部展示 Backend 与实例默认模型；`chat` 是基础模型，`res
   工具包、MCP、子 Agent 和 Workflow 在 Agent 层操作；运行特性在 Application 层操作。
   工具包与运行特性分别从对应目录添加；无可添加 Workflow 时不展示添加按钮。
   模型、环境变量、权限和其他未有写入入口的字段保持只读。
-- 后端 `console/control/yaml_editor.py` 使用 `ruamel.yaml` round-trip 编辑 `bot.yaml` 和 `mcp/servers.yaml`，保留注释和格式；该依赖已声明在 `console/requirements.txt`，`deploy_console.sh` / `setup_console.sh` 安装时会一并装入 venv。
+- 后端 `console/control/yaml_editor.py` 使用 `ruamel.yaml` round-trip 编辑应用所引用的 Agent profile 与 MCP 文件，保留注释和格式；工具或子 Agent 编辑不会把字段写回 `bot.yaml`。该依赖已声明在 `console/requirements.txt`，`deploy_console.sh` / `setup_console.sh` 安装时会一并装入 venv。配置来源标明 AgentProfile，观测和 Eval 指纹包含解析后的配置。
 - `console/control/catalog.py` 通过 `component_catalog` 读取 tool pack / tool feature / MCP catalog / subagent preset / workflow DTO，并聚合提示词占位和上下文来源占位为统一 `CatalogItem`。
 -  编辑后点「保存并重启」会先取得同实例 TaskManager 串行资格，再写入源仓配置并调用统一 `update_instance.sh`；该入口通常同步后快速应用配置并重启，只有依赖、安装脚本变化或实例 venv 缺失时才完整 bootstrap。仅「保存配置」同步写源仓。配置修改留在 WSL 源仓，由用户在 WSL git 工作区提交。
 - 仅在存在草稿、待应用配置或正在应用的任务时展示底部操作栏。未部署实例仅可保存；保存失败保留草稿。

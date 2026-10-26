@@ -1,7 +1,7 @@
-"""单个会话的 LLM ↔ 工具对话循环。
+"""LangGraph 会话复用的状态、上下文与工具结果辅助方法。
 
-AgentSession 是 agent 层对外的会话句柄。上层（middleware）通过 ``AgentRuntime``
-拿到 session 后，每次会话调用 :meth:`AgentSession.run_task` 跑一轮：
+AgentSession 只持有会话状态；执行入口由 LangGraphAgentSession 提供。
+上层通过 AgentRuntime 取得运行时会话，回合控制流由 LangGraph 负责：
 
 1. middleware 装好 ``AgentTask``（任务文本 + 资源句柄 + 单轮 system 追加段）
 2. agent 内部用 ``frame_task_message`` 把任务渲染成 user message 入栈
@@ -22,23 +22,15 @@ import json
 import logging
 import time
 from dataclasses import InitVar, dataclass, field
-from typing import Any, Callable, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional
 
 from chatcopilot.agent.context.manager import ContextManager
-from chatcopilot.agent.context.prompt_plan import render_native_prefix
+from chatcopilot.agent.context.prompt_plan import render_model_prefix
 from chatcopilot.agent.context.topic import TopicRelevanceClassifier
 from chatcopilot.core.llm_client import LLMClient
 from chatcopilot.contracts.agent import (
-    AgentResult,
-    AgentTask,
-    DeferredLifecycleIntent,
     EventSink,
-    FinalText,
     TextDelta,
-)
-from chatcopilot.contracts.cancellation import (
-    CancellationProbe,
-    CancellationRequested,
 )
 from chatcopilot.agent.response_integrity import (
     ResponseIntegrityCheck,
@@ -49,10 +41,7 @@ from chatcopilot.contracts.model_runtime import RuntimeId
 from chatcopilot.agent.rag.provider import Retriever, render_rag_snippet
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.agent.tools.disclosure import ToolDisclosureView
-from chatcopilot.agent.turn import TurnOps, TurnState
 from chatcopilot.agent.turn_support import (
-    EMPTY_MODEL_REPLY_TEXT as _EMPTY_MODEL_REPLY_TEXT,
-    paths_to_resources as _paths_to_resources,
     safe_emit as _safe_emit,
 )
 
@@ -61,7 +50,7 @@ _LOGGER = logging.getLogger("chatcopilot.agent.session")
 ToolPayloadFilter = Callable[[Dict[str, Any]], Dict[str, Any]]
 @dataclass
 class AgentSession:
-    """单次会话的状态容器与 chat loop 调度器。"""
+    """LangGraph 使用的会话状态与公共操作，不提供独立执行循环。"""
 
     session_id: str
     llm: LLMClient
@@ -95,12 +84,12 @@ class AgentSession:
     _prompt_prefix_length: int = field(default=0, init=False)
 
     def __post_init__(self, resolved_runtime_id: RuntimeId) -> None:
-        if resolved_runtime_id not in {"native", "langgraph"}:
-            raise ValueError("in-process AgentSession requires native or langgraph runtime_id")
+        if resolved_runtime_id != "langgraph":
+            raise ValueError("in-process AgentSession requires langgraph runtime_id")
         if self.prompt_plan.effective_runtime_id != resolved_runtime_id:
             raise ValueError("PromptPlan runtime_id does not match AgentSession runtime_id")
         self._runtime_id = resolved_runtime_id
-        prefix = render_native_prefix(self.prompt_plan)
+        prefix = render_model_prefix(self.prompt_plan)
         self._messages.extend(prefix)
         self._prompt_prefix_length = len(prefix)
 
@@ -118,7 +107,7 @@ class AgentSession:
 
         if plan.effective_runtime_id != self.runtime_id:
             raise ValueError("PromptPlan runtime_id does not match AgentSession runtime_id")
-        prefix = render_native_prefix(plan)
+        prefix = render_model_prefix(plan)
         old_prefix_length = self._prompt_prefix_length
         self._messages[:old_prefix_length] = prefix
         self.prompt_plan = plan
@@ -126,7 +115,7 @@ class AgentSession:
 
     @property
     def prompt_prefix_length(self) -> int:
-        """Return the host-recorded native renderer prefix length."""
+        """Return the host-recorded model message prefix length."""
 
         return self._prompt_prefix_length
 
@@ -164,130 +153,6 @@ class AgentSession:
     @property
     def message_count(self) -> int:
         return len(self._messages)
-
-    # ------------------------------------------------------------------
-    # 公共入口：跑一轮（AgentTask → LLM ↔ 工具循环 → AgentResult）
-    # ------------------------------------------------------------------
-    def run_task(
-        self,
-        task: AgentTask,
-        *,
-        on_event: EventSink,
-        cancellation: CancellationProbe | None = None,
-    ) -> AgentResult:
-        """同步跑一整轮对话；返回结构化结果。
-
-        上层一般用 ``asyncio.to_thread`` 把本函数挂到线程池；``on_event`` 回调
-        内部可通过 ``run_coroutine_threadsafe`` 把事件投回主 event loop。
-        """
-        ops = TurnOps(
-            session=self,
-            task=task,
-            on_event=on_event,
-            cancellation=cancellation,
-        )
-        state: TurnState | None = None
-        try:
-            state = ops.initial_state()
-            return self._run_task_loop(ops, state)
-        except CancellationRequested:
-            return ops.cancelled_result(state)
-
-    def _run_task_loop(self, ops: TurnOps, state: TurnState) -> AgentResult:
-        while self.hard_iteration_cap is None or state.iteration < self.hard_iteration_cap:
-            # --- hard timeout: unconditional stop ---
-            if self._hard_timed_out(state.started_at):
-                ops.finish_timeout(state, hard=True)
-                return ops.result_from_state(state)
-
-            # --- soft timeout ---
-            if not state.wrapup_injected and self._soft_timed_out(state.started_at):
-                if self.hard_timeout_seconds is None:
-                    # No hard timeout configured -> backward compat: soft = hard cutoff
-                    ops.finish_timeout(state, hard=False)
-                    return ops.result_from_state(state)
-                if not self._has_recent_tool_activity(state.last_tool_finish_time):
-                    _LOGGER.info(
-                        "soft timeout reached with no recent activity, injecting wrap-up | "
-                        "sid=%s elapsed=%.0fs soft=%s",
-                        self.session_id,
-                        time.monotonic() - state.started_at,
-                        self.timeout_seconds,
-                    )
-                    state.wrapup_injected = True
-                    state.wrapup_remaining = 2
-
-            # --- soft iteration cap: health check ---
-            if state.iteration >= self.max_tool_iterations and not state.wrapup_injected:
-                healthy = self._is_healthy(
-                    state.recent_tool_fingerprints,
-                    state.consecutive_failures,
-                )
-                if not healthy:
-                    _LOGGER.info(
-                        "soft iteration cap reached and unhealthy, injecting wrap-up | "
-                        "sid=%s iteration=%d soft=%d",
-                        self.session_id,
-                        state.iteration,
-                        self.max_tool_iterations,
-                    )
-                    state.wrapup_injected = True
-                    state.wrapup_remaining = 2
-                else:
-                    _LOGGER.debug(
-                        "soft iteration cap extended: healthy | sid=%s iteration=%d",
-                        self.session_id,
-                        state.iteration,
-                    )
-
-            # --- wrap-up exhausted: stop ---
-            if state.wrapup_injected and state.wrapup_remaining <= 0:
-                self._repair_orphan_tool_calls(self._messages)
-                cap_text = (
-                    f"（已用完 {state.iteration} 轮迭代（soft={self.max_tool_iterations}），"
-                    "收尾后停止本轮。如需继续请追问。）"
-                )
-                ops.finish_text(state, cap_text, stop_reason="iteration_cap")
-                return ops.result_from_state(state)
-
-            if ops.should_stop_before_llm(state):
-                return ops.result_from_state(state)
-
-            result = ops.call_llm(state)
-            if state.done or result is None:
-                return ops.result_from_state(state)
-
-            if not result.tool_calls:
-                # A completed response has already returned through state.done.
-                continue
-
-            if state.wrapup_injected:
-                state.wrapup_remaining -= 1
-
-            for tc in result.tool_calls:
-                if self._hard_timed_out(state.started_at):
-                    ops.finish_timeout(state, hard=True)
-                    return ops.result_from_state(state)
-                if not state.wrapup_injected and self._soft_timed_out(state.started_at):
-                    if self.hard_timeout_seconds is None:
-                        ops.finish_timeout(state, hard=False)
-                        return ops.result_from_state(state)
-                    if not self._has_recent_tool_activity(state.last_tool_finish_time):
-                        state.wrapup_injected = True
-                        state.wrapup_remaining = 2
-
-                ops.execute_tool_call(state, tc)
-                if state.done:
-                    return ops.result_from_state(state)
-
-        # hard iteration cap reached
-        self._repair_orphan_tool_calls(self._messages)
-        cap_text = (
-            f"（已达迭代硬上限 {self.hard_iteration_cap} 轮，无条件停止。"
-            "如有需要请追问以继续。）"
-        )
-        ops.finish_text(state, cap_text, stop_reason="iteration_cap")
-        return ops.result_from_state(state)
 
     def _run_response_integrity(
         self,
@@ -453,27 +318,6 @@ class AgentSession:
     def _has_recent_tool_activity(self, last_tool_finish_time: float) -> bool:
         return (time.monotonic() - last_tool_finish_time) < self.stall_window_seconds
 
-    def _timeout_result(
-        self,
-        on_event: EventSink,
-        produced_paths: List[Tuple[str, str]],
-        *,
-        hard: bool = False,
-        lifecycle_intents: tuple[DeferredLifecycleIntent, ...] = (),
-    ) -> AgentResult:
-        self._repair_orphan_tool_calls(self._messages)
-        limit = self.hard_timeout_seconds if hard else self.timeout_seconds
-        text = f"（已达执行超时{'硬' if hard else ''}上限 {limit} 秒，停止本轮。）"
-        _safe_emit(on_event, FinalText(text=text))
-        self._messages.append({"role": "assistant", "content": text})
-        return AgentResult(
-            final_text=text,
-            stop_reason="timeout_cap",
-            produced_resources=_paths_to_resources(produced_paths),
-            message_count=len(self._messages),
-            lifecycle_intents=lifecycle_intents,
-        )
-
     # ------------------------------------------------------------------
     # stall / health detection
     # ------------------------------------------------------------------
@@ -534,4 +378,4 @@ class AgentSession:
         return inserted
 
 
-__all__ = ["AgentSession", "ToolPayloadFilter", "_EMPTY_MODEL_REPLY_TEXT"]
+__all__ = ["AgentSession", "ToolPayloadFilter"]

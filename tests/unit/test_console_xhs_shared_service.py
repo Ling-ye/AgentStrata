@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import json
 from pathlib import Path
 
@@ -19,7 +21,7 @@ def _write_bot(tmp_path: Path, servers_yaml: str) -> BotInstance:
     bot_dir = tmp_path / "bots" / "demo-bot"
     (bot_dir / "mcp").mkdir(parents=True)
     (bot_dir / "mcp" / "servers.yaml").write_text(servers_yaml, encoding="utf-8")
-    (bot_dir / "bot.yaml").write_text(
+    write_application(bot_dir / "bot.yaml",
         "\n".join(
             [
                 "id: demo-bot",

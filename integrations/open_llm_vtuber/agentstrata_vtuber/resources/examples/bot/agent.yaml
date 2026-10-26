@@ -1,0 +1,12 @@
+prompts:
+  schema_version: 2
+  identity: identity.md
+  response_style: response-style.md
+tools:
+  packs:
+  - workspace.read_write
+  - memory.chat
+  mcp:
+    servers: mcp.yaml
+agents:
+  runtime: codex

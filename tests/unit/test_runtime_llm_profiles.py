@@ -62,7 +62,7 @@ def _runtime() -> SimpleNamespace:
             ),
             search_providers=(SearchProviderSpec(id="web", kind="tavily"),),
         ),
-        runtime_id="native",
+        runtime_id="langgraph",
     )
 
 
@@ -214,7 +214,7 @@ def test_runtime_reuses_equal_profiles_only_within_each_instance(monkeypatch):
     research = replace(chat, model="research")
     options = {
         "chat_config": ChatConfig(llm=chat), "research_llm_config": research,
-        "route": runtime_route("native", chat),
+        "route": runtime_route("langgraph", chat),
         "search_llm_config": replace(research),
         "subagent_llm_configs": (("CHAT", replace(chat)), ("RESEARCH", replace(research))),
         "tool_packs": (),

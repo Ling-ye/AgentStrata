@@ -64,7 +64,7 @@ def _ready_validator(
                         "agent-comparison-mvp",
                     ),
                     "preset": request.get("preset", "quick"),
-                    "targets": ["codex", "native"],
+                    "targets": ["codex", "langgraph"],
                     "case_refs": [
                         "ifeval:ifeval-fixed-1075",
                         "bfcl:bfcl-simple-weather",
@@ -83,9 +83,9 @@ def _ready_validator(
                         "fingerprint": "target-codex-v1",
                     },
                     {
-                        "target_id": "native",
+                        "target_id": "langgraph",
                         "executor": "agent",
-                        "runtime_id": "native",
+                        "runtime_id": "langgraph",
                         "model": "gpt-5",
                         "reasoning_effort": "high",
                         "fingerprint": "target-native-v1",
@@ -282,7 +282,7 @@ def _persist_evaluation(
             {
                 "profile_id": "agent-comparison-mvp",
                 "preset": "quick",
-                "target_ids": ["codex", "native"],
+                "target_ids": ["codex", "langgraph"],
                 "case_refs": ["ifeval:ifeval-fixed-1075"],
                 "repetitions": 1,
                 "max_wall_seconds": 900,
@@ -393,7 +393,7 @@ def test_quick_create_uses_server_defaults_without_client_overrides(
     payload = response.json()
     assert payload["kind"] == "comparison"
     assert payload["status"] == "queued"
-    assert payload["request"]["target_ids"] == ["codex", "native"]
+    assert payload["request"]["target_ids"] == ["codex", "langgraph"]
     assert payload["progress"] == {
         "completed": 0,
         "total": 4,
@@ -410,7 +410,7 @@ def test_quick_create_uses_server_defaults_without_client_overrides(
             "bot_id": "lingye-copilot-qq",
             "profile_id": "agent-comparison-mvp",
             "preset": "quick",
-            "target_ids": ["codex", "native"],
+            "target_ids": ["codex", "langgraph"],
         },
         {
             "kind": "suite",
@@ -775,7 +775,7 @@ def test_lifecycle_status_and_failed_outcome_are_independent(
             {
                 "trial_id": "trial-1",
                 "case_ref": "ifeval:ifeval-fixed-1075",
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-v1",
                 "outcome": "failed",
             }
@@ -815,7 +815,7 @@ def test_coverage_is_partitioned_by_target_fingerprint(
                 "case_ref": "ifeval:ifeval-fixed-1075",
                 "suite_id": "ifeval",
                 "case_id": "ifeval-fixed-1075",
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-model-a-high",
                 "outcome": "failed",
                 "score": 0.0,
@@ -838,8 +838,8 @@ def test_coverage_is_partitioned_by_target_fingerprint(
     }
     by_target = {item["target_id"]: item for item in coverage["records"]}
     assert by_target["codex"]["last_outcome"] == "passed"
-    assert by_target["native"]["last_outcome"] == "failed"
-    latest_native = by_target["native"]["history"][0]
+    assert by_target["langgraph"]["last_outcome"] == "failed"
+    latest_native = by_target["langgraph"]["history"][0]
     assert latest_native["trial_id"] == "trial-native"
     assert latest_native["attempt"] == 1
     assert latest_native["outcome"] == "failed"
@@ -895,7 +895,7 @@ def test_case_detail_routes_preserve_slashes_in_external_case_ids(
                 "trial_id": "trial-slash",
                 "case_ref": case_ref,
                 "case_id": case_id,
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
             }
@@ -1051,7 +1051,7 @@ def test_result_artifact_symlink_is_rejected_before_read_or_export(
             {
                 "trial_id": "trial-1",
                 "case_ref": "ifeval:ifeval-fixed-1075",
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
             }
@@ -1294,7 +1294,7 @@ def test_application_recovers_checkpoint_without_rewriting_core_result(
                 "trial_id": "trial-1",
                 "case_ref": "ifeval:ifeval-fixed-1075",
                 "case_id": "ifeval-fixed-1075",
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
             }
@@ -1623,7 +1623,7 @@ def test_stopped_worker_restores_terminal_result_without_overwriting_it(
             {
                 "trial_id": "trial-1",
                 "case_ref": "ifeval:ifeval-fixed-1075",
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
             }
@@ -2434,7 +2434,7 @@ def test_case_stream_export_and_delete_share_one_evaluation_resource(
                 "trial_id": "trial-1",
                 "case_ref": "ifeval:ifeval-fixed-1075",
                 "case_id": "ifeval-fixed-1075",
-                "target_id": "native",
+                "target_id": "langgraph",
                 "target_fingerprint": "native-v1",
                 "outcome": "passed",
             }

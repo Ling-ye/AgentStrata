@@ -128,7 +128,7 @@ export default function ModelsPage() {
       </Card>
       <Card title="用途引用">
         <Space direction="vertical" style={{ width: "100%" }}>
-          <Text type="secondary">机器人使用 BotSpec 中的 binding；后台用途为 harness、code_health、evaluation.judge。多个用途可引用同一方案。</Text>
+          <Text type="secondary">应用在 Agent 配置中选择 binding；后台用途为 harness、code_health、evaluation.judge。多个用途可显式引用同一方案。</Text>
           {Object.entries(draft.bindings).map(([purpose, profile]) => <div key={purpose} style={grid}>
             <Text>{purpose}</Text><Select aria-label={`${purpose} 方案`} value={profile} options={profileOptions(draft)} onChange={value => change(next => { next.bindings[purpose] = value; })} />
             <Button size="small" status="danger" onClick={() => change(next => { delete next.bindings[purpose]; })}>解除引用</Button>

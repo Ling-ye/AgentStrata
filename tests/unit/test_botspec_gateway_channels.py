@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 from copy import deepcopy
 from pathlib import Path
 from typing import Any
@@ -51,7 +53,7 @@ def _write_spec(tmp_path: Path, data: dict[str, Any]) -> Path:
     (bot_dir / "identity.md").write_text("Test identity\n", encoding="utf-8")
     (bot_dir / "response-style.md").write_text("Be direct.\n", encoding="utf-8")
     path = bot_dir / "bot.yaml"
-    path.write_text(yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
+    write_application(path, yaml.safe_dump(data, sort_keys=False), encoding="utf-8")
     return path
 
 

@@ -9,20 +9,20 @@ from typing import Any, Mapping
 
 
 def invoke(case, *, chat_config, messages: list[dict], tools: list[dict] | None) -> dict[str, Any]:
-    from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_native_prefix
+    from chatcopilot.agent.context.prompt_plan import PromptBuildInput, PromptPlanBuilder, render_model_prefix
     from chatcopilot.contracts.prompt import BotPromptProfile
     from chatcopilot.evals.trial_capture import record_turn
 
     plan = PromptPlanBuilder().build(PromptBuildInput(
         profile=BotPromptProfile(identity="Independent model evaluation assistant.", response_style="Follow the benchmark task requirements."),
-        runtime_id="native", model=chat_config.llm.model, role="user", channel_kind="private", skill_index=(),
+        runtime_id="langgraph", model=chat_config.llm.model, role="user", channel_kind="private", skill_index=(),
         tool_names=tuple(t["function"]["name"] for t in tools or []),
         session_policy="Generate the requested answer or function calls. No tools are executed in this model evaluation.",
     ))
     # Benchmark system text remains task data, not host policy.
     task_messages = [{"role": "user", "content": "Benchmark context:\n" + m["content"]}
                      if m["role"] == "system" else deepcopy(m) for m in messages]
-    request = {"model": chat_config.llm.model, "messages": [*render_native_prefix(plan), *task_messages], "tools": deepcopy(tools)}
+    request = {"model": chat_config.llm.model, "messages": [*render_model_prefix(plan), *task_messages], "tools": deepcopy(tools)}
     turn = {"turn_index": 0, "conversation_id": case.case_id, "input": case.input,
             "model_request": request, "completed": False}
     record_turn(turn)

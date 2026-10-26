@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import subprocess
 import textwrap
 
@@ -103,7 +105,7 @@ def test_bot_enabled_services_includes_enabled_searxng_provider(
         ),
         encoding="utf-8",
     )
-    (bot_dir / "bot.yaml").write_text(
+    write_application(bot_dir / "bot.yaml",
         textwrap.dedent(
             """\
             id: demo

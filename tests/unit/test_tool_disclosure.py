@@ -7,7 +7,6 @@ from types import SimpleNamespace
 import pytest
 
 from chatcopilot.agent.langgraph_session import LangGraphAgentSession
-from chatcopilot.agent.session import AgentSession
 from chatcopilot.agent.tools.disclosure import ToolDisclosureView
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.agent import AgentTask, ContextSnapshotPrepared, ToolCatalogObserved, ToolFinished, ToolStarted
@@ -83,7 +82,7 @@ def test_bridge_names_are_rejected_at_tool_materialization():
 
 
 @pytest.mark.parametrize("runtime_id,session_type", [
-    ("native", AgentSession), ("langgraph", LangGraphAgentSession),
+    ("langgraph", LangGraphAgentSession),
 ])
 @pytest.mark.parametrize("api", ["chat_completions", "openai_responses"])
 def test_main_runtime_discovers_and_executes_once(runtime_id, session_type, api):
@@ -148,11 +147,11 @@ def test_bridge_rejects_guessed_tool_without_executing_it():
         _call("tool_call", {"name": "owner_secret", "arguments": {}}, "guess"),
         ChatResult(content="unavailable", finish_reason="stop"),
     ]
-    session = AgentSession(
+    session = LangGraphAgentSession(
         session_id="guess", llm=model,
         executor=ToolExecutor(tools=[tool], caller_role_hint="user"),
         tools_schema=view.model_schemas(), disclosure=view,
-        prompt_plan=prompt_plan(), resolved_runtime_id="native", stream_first_turn=False,
+        prompt_plan=prompt_plan(), resolved_runtime_id="langgraph", stream_first_turn=False,
     )
     events = []
     session.run_task(AgentTask("request"), on_event=events.append)

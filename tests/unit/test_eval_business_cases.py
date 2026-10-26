@@ -277,7 +277,7 @@ def test_data_flow_rejects_forged_id_and_save_rejects_symlink(tmp_path):
         save.handler({"content": "replacement"}, ToolContext())
     assert protected.read_text() == "unchanged"
 
-@pytest.mark.parametrize('backend', ['native', 'langgraph'])
+@pytest.mark.parametrize('backend', ['langgraph', 'langgraph'])
 def test_real_backend_two_model_turns_use_actual_tool_result(backend, tmp_path, monkeypatch):
     from chatcopilot.agent import runtime as agent_module
     from chatcopilot.core.config import ChatConfig

@@ -1,6 +1,8 @@
 """BotSpec loader 的 platform.type 白名单校验单测。"""
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import textwrap
 import unittest
 from pathlib import Path
@@ -37,7 +39,7 @@ def _write_bot(
         """
     )
     bot_yaml = bot_dir / "bot.yaml"
-    bot_yaml.write_text(yaml_text, encoding="utf-8")
+    write_application(bot_yaml, yaml_text, encoding="utf-8")
     return bot_yaml
 
 

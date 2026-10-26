@@ -188,7 +188,7 @@ class BackgroundCodingWorkerTests(unittest.TestCase):
             rag_sources=(),
             mcp_servers=mcp_servers,
             subagents=SimpleNamespace(include=("code_implementer", "code_publisher")),
-            runtime_id="native",
+            runtime_id="langgraph",
             prompt_profile=BotPromptProfile(
                 identity="system",
                 response_style="concise",

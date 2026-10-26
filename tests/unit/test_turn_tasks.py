@@ -67,7 +67,7 @@ def test_context_snapshot_is_redacted_bounded_private_and_summarized(
 
     recorder.context_snapshot(
         snapshot_id="ctx_span123",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="test-model",
         iteration=0,
         session_messages=[
@@ -190,7 +190,7 @@ def test_oversized_context_snapshot_is_truncated_below_reader_limit(
 
     recorder.context_snapshot(
         snapshot_id="ctx_large",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="test-model",
         iteration=0,
         session_messages=[
@@ -237,7 +237,7 @@ def test_task_size_fallback_preserves_context_artifact_index(
     )
     recorder.context_snapshot(
         snapshot_id="ctx_preserved",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="test-model",
         iteration=0,
         session_messages=[{"role": "user", "content": "hello"}],
@@ -312,7 +312,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
     )
     recorder.context_snapshot(
         snapshot_id="ctx_5000",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="latest-model",
         iteration=5000,
         session_messages=[{"role": "user", "content": "latest"}],
@@ -327,7 +327,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
     payload["context_snapshots"] = [
         {
             "snapshot_id": f"ctx_{index}",
-            "runtime_id": "native",
+            "runtime_id": "langgraph",
             "model": f"model-{index}",
             "iteration": index,
             "coverage": "exact_model_input",
@@ -346,7 +346,7 @@ def test_task_summary_caps_retain_latest_context_artifact_index(
     ]
     payload["input_resources"] = [
         {
-            "runtime_id": "native",
+            "runtime_id": "langgraph",
             "request_id": f"req_{index}",
             "recorded_at": float(index),
             "resources": [],
@@ -407,7 +407,7 @@ def test_context_snapshot_persistence_failure_is_indexed_as_unavailable(
 
     recorder.context_snapshot(
         snapshot_id="ctx_unavailable",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="test-model",
         iteration=0,
         session_messages=[{"role": "user", "content": "sensitive prompt"}],
@@ -1197,7 +1197,7 @@ def test_context_snapshot_exposes_observability_budget_truncation(
 
     recorder.context_snapshot(
         snapshot_id="ctx_budget",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="test-model",
         iteration=0,
         session_messages=[

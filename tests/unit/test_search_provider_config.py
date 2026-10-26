@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import textwrap
 from pathlib import Path
 
@@ -23,7 +25,7 @@ def _write_bot(tmp_path: Path, unified_search: str) -> Path:
     (bot_dir / "persona.md").write_text("test", encoding="utf-8")
     body = textwrap.indent(textwrap.dedent(unified_search).strip(), "    ")
     path = bot_dir / "bot.yaml"
-    path.write_text(
+    write_application(path,
         "id: test-bot\n"
         "display_name: Test Bot\n"
         "platform:\n"
@@ -36,7 +38,7 @@ def _write_bot(tmp_path: Path, unified_search: str) -> Path:
         "tools:\n"
         "  packs: []\n"
         "agents:\n"
-        "  runtime: native\n"
+        "  runtime: langgraph\n"
         "  unified_search:\n"
         f"{body}\n"
         "deploy:\n"

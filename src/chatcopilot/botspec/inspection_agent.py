@@ -51,8 +51,8 @@ def enrich_agent_configuration(
             chat_config.routing.code_reasoning_effort = code_config.reasoning_effort or ""
             chat_config.routing.code_profiles = profile_choices(document=document, worker=True, connection_id=code_config.connection_id)
             chat_config.routing.code_task_profile = code_config.profile_id
-    if spec.agents.native_env_prefix:
-        chat_config.runtime = load_config(env_prefix=spec.agents.native_env_prefix, environment=environment).runtime
+    if spec.agents.langgraph_env_prefix:
+        chat_config.runtime = load_config(env_prefix=spec.agents.langgraph_env_prefix, environment=environment).runtime
     helper_fallback = chat_config.llm
     sources = sources or {}
     saved = environment if saved_environment is None else saved_environment
@@ -80,7 +80,7 @@ def enrich_agent_configuration(
             if not isinstance(raw, dict) or key not in raw:
                 return "代码默认值"
             raw = raw[key]
-        return "BotSpec · " + path
+        return "AgentProfile · " + path
 
     def model_sources(model_prefix, fallback, *, research_slot=False):
         return {field: "统一模型配置" for field in ("model", "base_url", "api_key", "timeout")}
@@ -89,7 +89,7 @@ def enrich_agent_configuration(
         result = {}
         for key in plain(budget):
             if key in raw:
-                result[key] = f"BotSpec · {path}.{key}"
+                result[key] = f"AgentProfile · {path}.{key}"
             elif key == "model_binding" and research_default and spec.agents.defaults.model_binding is None and spec.llm.research.binding:
                 result[key] = "引用 llm.research.binding"
             else:

@@ -23,7 +23,7 @@ agentstrata plugin install open-llm-vtuber
 agentstrata plugin install open-llm-vtuber --model-binding chat
 ```
 
-默认使用 Codex runtime。其他已配置的执行方式可用 `--option runtime=native` 或
+默认使用 Codex runtime。其他已配置的执行方式可用
 `--option runtime=langgraph`；ChatGPT 订阅认证仍要求 Codex。插件用独立 Python 3.12
 环境运行，上游依赖不会装入主程序环境。插件 Python 声明为 `>=3.12,<3.13`。
 
@@ -51,7 +51,7 @@ agentstrata plugin install open-llm-vtuber --model-binding chat \
 | 安装目录内路径 | 内容与保留方式 |
 | --- | --- |
 | `open-llm-vtuber/runtime/` | 独立 Python、第三方源码、工具及构建产物；卸载删除 |
-| `open-llm-vtuber/config/` | BotSpec、适配配置、ASR/TTS 配置和私有环境文件；卸载保留 |
+| `open-llm-vtuber/config/` | 应用描述、Agent profile、适配配置、ASR/TTS 配置和私有环境文件；卸载保留 |
 | `open-llm-vtuber/data/` | 会话、记忆、独立工作区、模型与下载缓存；卸载保留 |
 | `open-llm-vtuber/logs/` | 安装阶段及客户端日志；卸载保留 |
 | `open-llm-vtuber/installation.json` | 版本、阶段、服务及精确来源记录 |
@@ -69,6 +69,12 @@ agentstrata plugin uninstall open-llm-vtuber
 修正后可重新执行安装。既有手工部署不会被迁移、覆盖或删除。
 
 修改模型、动作、端口或语音配置前先停止服务，维护 `config/` 中对应配置的一致性再启动。
+
+应用文件 `config/bot.yaml` 引用 `config/agent.yaml`；runtime、模型用途、提示词和工具在 profile 中修改。
+新安装的 LangGraph 和 Codex 都使用该安装自己的 `config/model.json` 快照，保留连接的凭据引用，
+不复制 token；修改宿主其他应用或 Harness 的模型用途不会覆盖此快照。运行数据继续保存在原 `data/` 目录。
+旧安装升级前按[配置迁移](instances.md#迁移内联-agent-配置)拆分原 `config/bot.yaml`，迁移不会替换已有模型选择。
+旧实例若显式引用共享模型文件，迁移后仍保留该引用；需要独立调整时使用实例自己的模型配置文件。
 
 ## Console 任务与配置查看
 

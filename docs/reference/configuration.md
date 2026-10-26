@@ -1,19 +1,58 @@
-# BotSpec 与配置
+# 应用、Agent 与实例配置
 
-修改实例能力、模型或环境投影时阅读。使用方法见 [实例运维](../guides/instances.md)，字段解释以 BotSpec 类型与解析器为准。
+修改实例能力、模型或环境投影时阅读。应用描述 `bot.yaml` 引用独立的 Agent 配置文件，默认是同目录
+`agent.yaml`。`ApplicationSpec` 与 `AgentProfile` 保存声明来源，既有 BotSpec 仍是供运行、评测和观测使用的
+类型化装配结果；LangGraph、Codex 继续使用同一执行契约。使用方法见[实例运维](../guides/instances.md)。
 
 统一模型配置与自动发现的设计边界见[架构规格](../../specs/unified-llm-configuration/spec.md)。
 
+## 配置归属与文件引用
+
+| 文件 | 声明内容 |
+| --- | --- |
+| `bot.yaml` | `id`、`display_name`、`platform` 或 `gateway/channels`、`workspace`、`deploy`、`packaging`、`agent_profile` 引用 |
+| `agent.yaml` | `llm`、`prompts`、`tools`、`agents`、`context`；不声明应用身份、渠道或部署 |
+| 实例私有环境与模型配置 | 凭据引用、机器路径、模型连接与方案；继续使用现有环境和模型解析器 |
+
+应用文件不再内联 Agent 字段，也不覆盖所引用 profile 的字段。`agent_profile` 必须指向应用目录内独立的
+普通 YAML 文件，不能使用绝对路径、向外遍历或符号链接文件。Agent 的提示词、MCP、RAG、Skills 和子 Agent
+角色文件相对于 profile 所在目录解析；应用的打包清单仍相对于 `bot.yaml` 解析。
+
+每个新建应用生成自己的 profile 和 `bot.<id>.chat/research` 模型用途名。模型连接与方案可以显式复用，
+不同应用的用途绑定分别配置；如果主动引用同一个全局 binding，其定义仍会共享。Harness、Eval 和应用使用各自
+用途，修改其中一个用途不覆盖其他用途。会话、人格和记忆仍位于实例原有数据目录，拆分配置不迁移这些数据。
+
+旧单文件配置需要[显式迁移](../guides/instances.md#迁移内联-agent-配置)，加载器不会自动兼容或改写文件。
+
 ## 最小示例
+
+应用文件 `bot.yaml`：
 
 ```yaml
 id: my-bot
 display_name: My Bot
+agent_profile: agent.yaml
 
 platform:
   type: feishu
   adapter: feishu_acp
 
+workspace:
+  root_env: CHATCOPILOT_WORKSPACE_ROOT
+
+deploy:
+  target: wsl2
+  instance_id: my-bot
+  workspace_root: ~/chatcopilot-workspaces/my-bot
+  env_file: ~/.chatcopilot-my-bot.env
+
+packaging:
+  allowlist: package.allowlist.yaml
+```
+
+Agent 文件 `agent.yaml`：
+
+```yaml
 llm:
   chat:
     binding: bot.my-bot.chat
@@ -34,22 +73,10 @@ tools:
     servers: mcp/servers.yaml
 
 agents:
-  runtime: native
-
-workspace:
-  root_env: CHATCOPILOT_WORKSPACE_ROOT
-
-deploy:
-  target: wsl2
-  instance_id: my-bot
-  workspace_root: ~/chatcopilot-workspaces/my-bot
-  env_file: ~/.chatcopilot-my-bot.env
-
-packaging:
-  allowlist: package.allowlist.yaml
+  runtime: langgraph
 ```
 
-QQ 使用 Gateway/Channel，而不是 `platform.adapter`：
+QQ 在应用文件中使用 Gateway/Channel，替换 `platform`，并保留 `agent_profile` 引用：
 
 ```yaml
 gateway:
@@ -73,7 +100,9 @@ channels:
 两种形态互斥：QQ Gateway BotSpec 不声明 legacy `platform: qq/qq_acp`，旧 QQ 字段会在
 验证阶段直接拒绝，不会静默回退到 cc-connect/Relay。
 
-## 顶层字段
+## 字段说明
+
+下列字段按上面的文件归属保存；运行装配仍统一校验它们的引用与语义。
 
 ### `platform`
 
@@ -232,12 +261,13 @@ Registry 快照，Agent 与 Console 使用对应 surface 的同源投影。BotSp
 
 ### `agents`
 
-- `runtime`：`native`、`langgraph` 或 `codex`。
+- `runtime`：`langgraph`（默认）或 `codex`。旧 `native` 配置报退役错误，需重新配置。
+- `runtime_options.langgraph.env_prefix`：进程内运行参数的环境前缀；旧 `runtime_options.native` 已废弃。
 - `presets`：公开内置 preset 为 `adapter_forge`、`browser_reader`、`developer`、
   `mcp_query`。
 - budget/override/custom：限制 model turn、tool call、timeout、selector、context 和
   cache。
-- `unified_search.enabled`：为三个 Runtime 启用同一 `search_information` 入口。
+- `unified_search.enabled`：为两个 Runtime 启用同一 `search_information` 入口。
 - `unified_search.timeout_seconds`：统一搜索调度预算，当前 QQ 实例为 600 秒。
 - `unified_search.limits`：URL、深入搜索步骤与页面数量；字段和默认值见[统一搜索入口](context.md#统一搜索入口)。
 - `unified_search.providers`：按顺序声明进程内 Web provider；每项使用
@@ -245,8 +275,8 @@ Registry 快照，Agent 与 Console 使用对应 surface 的同源投影。BotSp
   BotSpec 只保存凭据环境变量名，不保存凭据值。Tavily 与 Brave 只接受审核过的官方
   HTTPS endpoint；SearXNG 只接受回环 endpoint。
 
-Codex 同样装配已启用的统一搜索和委托能力，经 Session Gateway MCP 提供。Evaluation 可以在
-隔离进程把同一 BotSpec 投影为 Native target，但不得写回线上 runtime。小红书等
+Codex 同样装配已启用的统一搜索和委托能力，经宿主动态工具桥接提供。Evaluation 可以在
+隔离进程把同一 BotSpec 投影为 LangGraph target，但不得写回线上 runtime。小红书等
 `risk: search` MCP binding 仍由统一搜索机制作为受限垂直来源执行。
 
 ### `context`
@@ -305,7 +335,7 @@ tenant、文档 ID、账号或 endpoint。
 
 ## BotSpec 四面模型
 
-`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent runtime（`native` / `langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
+`prompts` 管机器人提示词，`tools` 管本地工具包/MCP/工具特性/隐藏工具，`agents` 管主 Agent runtime（`langgraph` / `codex`）、subagent 与搜索能力，`context` 管 RAG、可写私有 Wiki、代码仓库、playbooks 和 dev tools 配置（`context.dev`）。当前内置 workflow registry 为空，文档和配置示例不要写不存在的 `coding` / `research` workflow。
 
 ## 配置解析与模型生命周期
 
@@ -338,6 +368,13 @@ Gateway QQ 使用 `channels.qq`；Feishu legacy 使用 adapter；`chat.file_uplo
 凭据与本人稳定 ID 经 Console 绑定原子写入私有环境文件，运行时仍在模型和资源副作用前校验完整配置。
 
 独立示例见[微信实例](../../bots/lingye-copilot-weixin/README.md)，模板为 `bots/_template/bot.weixin.yaml.template`。
-示例复用原 QQ 实例的集中模型用途和 Agent 配置，但使用不同工作区、认证根与状态目录。
+既有示例保留原 QQ 实例的集中模型用途引用，Agent profile 文件、工作区、认证根与状态目录独立。
+新建模板使用自己的模型用途；如需让既有示例的模型选择也独立，应显式绑定该实例自己的用途。
 安装器使用 `--with-weixin`；微信实例 bootstrap 自动选择该依赖组，Console 安装也包含它。
 未绑定时允许保存实例配置，正式启动要求完成绑定及 Owner 配置。
+
+## 源码入口
+
+- [应用与 Agent 声明](../../src/chatcopilot/contracts/application.py)、[配置文件解析](../../src/chatcopilot/core/application_configuration.py)
+- [类型化装配模型](../../src/chatcopilot/botspec/model.py)、[字段解析与验证](../../src/chatcopilot/botspec/loader.py)
+- [显式配置迁移](../../src/chatcopilot/botspec/profile_migration.py)、[运行装配](../../src/chatcopilot/botspec/runtime.py)

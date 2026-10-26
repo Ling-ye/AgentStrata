@@ -65,7 +65,7 @@ def test_deployment_workspace_can_be_bound_by_the_existing_identity_flow(tmp_pat
     model.write_text(json.dumps(test_model_document()))
     request = {"root": str(root), "host": {"python": sys.executable,
         "source_url": "https://example.com/source", "model_config": str(model), "model_binding": "chat"},
-        "options": {"runtime": "native", "port": 19493, "gateway_port": 19494}}
+        "options": {"runtime": "langgraph", "port": 19493, "gateway_port": 19494}}
     configure(request, {"backend": backend})
     workspace = root / "data/workspace"
     assert not list(workspace.iterdir())

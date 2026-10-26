@@ -299,8 +299,10 @@ def catalog_item(item_id: str) -> CatalogItem | None:
 
 
 def bot_tool_config(bot_yaml_path: Path) -> dict[str, Any]:
-    """Read current tool config from a bot.yaml (four-surface BotSpec)."""
-    data = load_yaml_or_empty(bot_yaml_path)
+    """Read the Agent profile selected by the application declaration."""
+    from chatcopilot.core.application_configuration import load_application_spec
+    application = load_application_spec(bot_yaml_path)
+    data = application.agent_profile.raw
 
     tools_section = data.get("tools", {}) if isinstance(data.get("tools"), dict) else {}
     packs = tools_section.get("packs", []) if isinstance(tools_section, dict) else []
@@ -311,7 +313,7 @@ def bot_tool_config(bot_yaml_path: Path) -> dict[str, Any]:
     servers_rel = mcp.get("servers") if isinstance(mcp, dict) else None
     mcp_servers: list[dict[str, Any]] = []
     if servers_rel:
-        servers_path = bot_yaml_path.parent / str(servers_rel)
+        servers_path = application.agent_profile.base_dir / str(servers_rel)
         servers_data = load_yaml_or_empty(servers_path)
         for item in servers_data.get("servers", []):
             if isinstance(item, dict) and item.get("ref"):

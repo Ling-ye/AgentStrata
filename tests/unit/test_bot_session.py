@@ -1,4 +1,4 @@
-"""AgentSession 行为校验：工具回调、空回复 fallback、事件流。"""
+"""LangGraphAgentSession 行为校验：工具回调、空回复 fallback、事件流。"""
 
 from __future__ import annotations
 
@@ -22,7 +22,8 @@ from chatcopilot.contracts.agent import (
 from chatcopilot.agent.lifecycle import defer_lifecycle_intent
 from chatcopilot.agent.rag import RagHit
 from chatcopilot.agent.response_integrity import ResponseIntegrityResult
-from chatcopilot.agent.session import AgentSession, _EMPTY_MODEL_REPLY_TEXT
+from chatcopilot.agent.langgraph_session import LangGraphAgentSession
+from chatcopilot.agent.turn_support import EMPTY_MODEL_REPLY_TEXT as _EMPTY_MODEL_REPLY_TEXT
 from chatcopilot.agent.tools.executor import ToolExecutor
 from chatcopilot.contracts.tools import (
     ToolContext,
@@ -77,21 +78,21 @@ def _tool_call(name: str, args: dict) -> dict:
     }
 
 
-def _make_session(llm: _FakeLLM, tools: list[ToolDef]) -> AgentSession:
-    return AgentSession(
+def _make_session(llm: _FakeLLM, tools: list[ToolDef]) -> LangGraphAgentSession:
+    return LangGraphAgentSession(
         session_id="sid",
         llm=llm,
         executor=ToolExecutor(caller_role_hint="owner", tools=list(tools)),
         tools_schema=[build_openai_schema(tool) for tool in tools],
         prompt_plan=prompt_plan("system baseline"),
-        resolved_runtime_id="native",
+        resolved_runtime_id="langgraph",
     )
 
 
 class AgentSessionTests(unittest.TestCase):
     def test_runtime_identity_is_required_read_only_and_matches_prompt(self) -> None:
         with self.assertRaises(TypeError):
-            AgentSession(
+            LangGraphAgentSession(
                 session_id="sid",
                 llm=_FakeLLM([]),
                 executor=ToolExecutor(caller_role_hint="owner", tools=[]),
@@ -99,8 +100,8 @@ class AgentSessionTests(unittest.TestCase):
                 prompt_plan=prompt_plan("system baseline"),
             )
 
-        with self.assertRaisesRegex(ValueError, "native or langgraph"):
-            AgentSession(
+        with self.assertRaisesRegex(ValueError, "langgraph"):
+            LangGraphAgentSession(
                 session_id="sid",
                 llm=_FakeLLM([]),
                 executor=ToolExecutor(caller_role_hint="owner", tools=[]),
@@ -110,33 +111,33 @@ class AgentSessionTests(unittest.TestCase):
             )
 
         with self.assertRaisesRegex(ValueError, "PromptPlan runtime_id"):
-            AgentSession(
+            LangGraphAgentSession(
                 session_id="sid",
                 llm=_FakeLLM([]),
                 executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                 tools_schema=[],
-                prompt_plan=prompt_plan("system baseline", runtime_id="langgraph"),
-                resolved_runtime_id="native",
+                prompt_plan=prompt_plan("system baseline", runtime_id="codex"),
+                resolved_runtime_id="langgraph",
             )
 
         session = _make_session(_FakeLLM([]), [])
-        self.assertEqual(session.runtime_id, "native")
+        self.assertEqual(session.runtime_id, "langgraph")
         with self.assertRaises(AttributeError):
             session.runtime_id = "langgraph"  # type: ignore[misc]
         with self.assertRaisesRegex(ValueError, "PromptPlan runtime_id"):
             session.update_context(
-                prompt_plan("other runtime", runtime_id="langgraph")
+                prompt_plan("other runtime", runtime_id="codex")
             )
 
     def test_constructor_cannot_preload_messages_without_prompt_provenance(self) -> None:
         with self.assertRaises(TypeError):
-            AgentSession(
+            LangGraphAgentSession(
                 session_id="sid",
                 llm=_FakeLLM([]),
                 executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                 tools_schema=[],
                 prompt_plan=prompt_plan("system baseline"),
-                resolved_runtime_id="native",
+                resolved_runtime_id="langgraph",
                 _messages=[{"role": "user", "content": "bypass"}],
             )
 
@@ -665,13 +666,13 @@ class AgentSessionTests(unittest.TestCase):
         classifier = _FakeTopicClassifier(
             TopicDecision.unrelated(source="llm", reason="standalone weather question")
         )
-        session = AgentSession(
+        session = LangGraphAgentSession(
             session_id="sid",
             llm=llm,
             executor=ToolExecutor(caller_role_hint="owner", tools=[]),
             tools_schema=[],
             prompt_plan=prompt_plan("system baseline"),
-            resolved_runtime_id="native",
+            resolved_runtime_id="langgraph",
             context_manager=ContextManager(max_context_tokens=50000, sliding_window_turns=10),
             topic_classifier=classifier,
         )
@@ -712,13 +713,13 @@ class AgentSessionTests(unittest.TestCase):
                 classifier = _FakeTopicClassifier(
                     TopicDecision.unrelated(source="llm", reason="standalone")
                 )
-                session = AgentSession(
+                session = LangGraphAgentSession(
                     session_id="sid",
                     llm=llm,
                     executor=ToolExecutor(caller_role_hint="owner", tools=[]),
                     tools_schema=[],
                     prompt_plan=prompt_plan("system baseline"),
-                    resolved_runtime_id="native",
+                    resolved_runtime_id="langgraph",
                     context_manager=ContextManager(
                         max_context_tokens=50000,
                         sliding_window_turns=10,
@@ -822,7 +823,7 @@ class RepairOrphanToolCallsTests(unittest.TestCase):
             {"role": "tool", "tool_call_id": "c1", "name": "t1", "content": "ok"},
             {"role": "assistant", "content": "done"},
         ]
-        count = AgentSession._repair_orphan_tool_calls(messages)
+        count = LangGraphAgentSession._repair_orphan_tool_calls(messages)
         self.assertEqual(count, 0)
         self.assertEqual(len(messages), 5)
 
@@ -839,7 +840,7 @@ class RepairOrphanToolCallsTests(unittest.TestCase):
             {"role": "tool", "tool_call_id": "c1", "name": "t1", "content": "ok"},
             {"role": "assistant", "content": "timeout"},
         ]
-        count = AgentSession._repair_orphan_tool_calls(messages)
+        count = LangGraphAgentSession._repair_orphan_tool_calls(messages)
         self.assertEqual(count, 1)
         self.assertEqual(messages[2]["role"], "tool")
         self.assertEqual(messages[2]["tool_call_id"], "c2")
@@ -859,7 +860,7 @@ class RepairOrphanToolCallsTests(unittest.TestCase):
             },
             {"role": "assistant", "content": "timeout"},
         ]
-        count = AgentSession._repair_orphan_tool_calls(messages)
+        count = LangGraphAgentSession._repair_orphan_tool_calls(messages)
         self.assertEqual(count, 2)
         self.assertEqual(messages[1]["role"], "tool")
         self.assertEqual(messages[2]["role"], "tool")

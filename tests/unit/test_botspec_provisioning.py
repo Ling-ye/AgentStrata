@@ -48,7 +48,7 @@ def _starter_spec(tmp_path: Path) -> BotSpec:
             packs=("workspace.read_write", "memory.chat"),
             features=("chat.file_uploads", "chat.private_workspace"),
         ),
-        agents=SubagentSpec(runtime="native"),
+        agents=SubagentSpec(runtime="langgraph"),
         context=ContextSpec(),
         workspace=WorkspaceSpec(root_env="CHATCOPILOT_WORKSPACE_ROOT"),
         deploy=DeploySpec(

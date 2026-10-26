@@ -23,7 +23,7 @@ Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续�
 
 ## 工具 schema 预算
 
-主 Agent 的工具按会话授权后分为直接和延迟披露。Native/LangGraph 的上下文快照记录实际提交的基础工具与三个桥接 schema；Codex 只记录 adapter 交给 App Server 的动态工具声明，不能由此推断原生模型实际载入的 schema 或 Token。模型通过桥接读取的工具简介和参数仍是资料，不提升信任等级；预算和效果须分别看 schema 估算、模型调用次数、延迟与任务结果。参见[工具按需披露](tools.md#工具按需披露)。
+主 Agent 的工具按会话授权后分为直接和延迟披露。LangGraph 的上下文快照记录实际提交的基础工具与三个桥接 schema；Codex 只记录 adapter 交给 App Server 的动态工具声明，不能由此推断原生模型实际载入的 schema 或 Token。模型通过桥接读取的工具简介和参数仍是资料，不提升信任等级；预算和效果须分别看 schema 估算、模型调用次数、延迟与任务结果。参见[工具按需披露](tools.md#工具按需披露)。
 
 ## 人格与会话记忆独立授权
 
@@ -42,7 +42,7 @@ BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 sess
 
 ## 统一上下文可观测性
 
-主 Agent 与 subagent 的每次 turn 模型调用前必须发 `ContextSnapshotPrepared`；Native/LangGraph 纯文本请求捕获最终提交的 `exact_model_input`，含本地二进制资源或受限字段时降为 `partial` 并只保留 path-free receipt，Codex 捕获 AgentStrata stdin/tool/resource envelope 并以 `adapter_visible` + `provider_opaque` 标明原生 resume/内部 instructions 等不可见状态。隐藏 chain-of-thought 不进入事件或 artifact。Legacy 与 Evaluation 共享快照正文必须在首次落盘前脱敏，独立写入 private bounded artifact；Gateway 的私有观测原值遵循 Console 管理视图契约；`task.json` 只留摘要，Console 只通过 opaque snapshot ID 懒加载，不按 backend 分支。Topic classifier、search router 与 reranker 等独立 helper-model 调用本版本只保留既有 step/usage；确定性的 `ResponseIntegrityCheck` 记录摘要但不产生模型上下文 artifact。
+主 Agent 与 subagent 的每次 turn 模型调用前必须发 `ContextSnapshotPrepared`；LangGraph 纯文本请求捕获最终提交的 `exact_model_input`，含本地二进制资源或受限字段时降为 `partial` 并只保留 path-free receipt，Codex 捕获 AgentStrata stdin/tool/resource envelope 并以 `adapter_visible` + `provider_opaque` 标明原生 resume/内部 instructions 等不可见状态。隐藏 chain-of-thought 不进入事件或 artifact。Legacy 与 Evaluation 共享快照正文必须在首次落盘前脱敏，独立写入 private bounded artifact；Gateway 的私有观测原值遵循 Console 管理视图契约；`task.json` 只留摘要，Console 只通过 opaque snapshot ID 懒加载，不按 backend 分支。Topic classifier、search router 与 reranker 等独立 helper-model 调用本版本只保留既有 step/usage；确定性的 `ResponseIntegrityCheck` 记录摘要但不产生模型上下文 artifact。
 
 ## 按源搜索
 
@@ -67,7 +67,7 @@ BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 sess
   - **熔断器递增 TTL**：`SearchCircuitBreaker` 对 `mcp_quota_exceeded` 使用指数递增 TTL（1h → 2h → … → 24h 上限，env `CHATCOPILOT_SEARCH_QUOTA_MAX_TTL`），成功后重置。直接搜索和 delegate 路径共享同一 `SearchCircuitBreaker` 实例。
   - **浏览器降级**：`_needs_browser` 识别 HTTP 403/401/429 为浏览器可解决错误，自动尝试 Playwright 渲染。
   - **Router fallback 降级**：Router LLM 异常时 `thorough` 自动降到 `standard`，runner 同步降级 request.depth，避免 fallback plan 浪费步数和 subagent 预算。
- - **同轮搜索硬保护**：Native/LangGraph 会在同一轮首个完整成功的 `search_information`
+ - **同轮搜索硬保护**：LangGraph 会在同一轮首个完整成功的 `search_information`
    后拦截后续重复搜索并回灌已有结果；部分证据不触发该保护，允许补查未完成内容。
   - **搜索 subagent 快速退出**：搜索 subagent prompt 指示在遇到 quota/unavailable 等基础设施错误时立即 `submit_result(ok=false)`，禁止盲猜 URL 或重试。
 

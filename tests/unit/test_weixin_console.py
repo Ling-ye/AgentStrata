@@ -1,5 +1,7 @@
 """Weixin binding control and Console route regressions without external services."""
 
+from tests.application_fixture import write_application
+
 import asyncio
 import json
 from pathlib import Path
@@ -13,6 +15,7 @@ import yaml
 from chatcopilot.channels.weixin_ilink.login import WeixinLoginService
 from chatcopilot.botspec.provisioning import read_local_env_for_provision
 from chatcopilot.contracts.weixin import WeixinError
+from chatcopilot.core.application_configuration import load_application_spec
 from console.backend.routes import bots, weixin
 from console.backend.tasks import TaskManager
 from console.control.weixin import WeixinControl
@@ -48,11 +51,11 @@ def context(tmp_path, monkeypatch):
     repo = tmp_path / "repo"
     folder = repo / "bots/test-weixin"
     folder.mkdir(parents=True)
-    data = yaml.safe_load((ROOT / "bots/lingye-copilot-weixin/bot.yaml").read_text())
+    data = load_application_spec(ROOT / "bots/lingye-copilot-weixin/bot.yaml").resolved_configuration()
     data["id"] = "test-weixin"
     data["deploy"]["instance_id"] = "test-weixin"
     path = folder / "bot.yaml"
-    path.write_text(yaml.safe_dump(data))
+    write_application(path, yaml.safe_dump(data))
     env = folder / "local.env"
     env.write_text(
         f"# keep comment\nUNRELATED_VALUE=preserved\nCHATCOPILOT_GATEWAY_STATE_ROOT={tmp_path / 'state'}\n"

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 from pathlib import Path
 import subprocess
@@ -193,7 +195,7 @@ def test_removed_legacy_feishu_launcher_does_not_execute_external_client(
     _write_executable(deploy / "_stop_cc.sh", "#!/usr/bin/env bash\nexit 0\n")
     bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
     bot_spec.parent.mkdir(parents=True)
-    bot_spec.write_text("id: test-bot\nplatform:\n  type: feishu\n", encoding="utf-8")
+    write_application(bot_spec, "id: test-bot\nplatform:\n  type: feishu\n", encoding="utf-8")
     _write_executable(runtime / ".venv" / "bin" / "python", "#!/usr/bin/env bash\nexit 0\n")
 
     home = tmp_path / "home"
@@ -286,7 +288,7 @@ def test_gateway_start_executes_python_host_without_node_or_cc_connect(
 
     bot_spec = runtime / "bots" / "test-bot" / "bot.yaml"
     bot_spec.parent.mkdir(parents=True)
-    bot_spec.write_text(
+    write_application(bot_spec,
         "id: test-bot\ngateway:\n  protocol_version: 1\nchannels:\n  qq:\n    type: qq_personal\n",
         encoding="utf-8",
     )
@@ -523,7 +525,7 @@ def test_bootstrap_rejects_legacy_qq_before_installing_node(tmp_path: Path) -> N
     )
     bot_spec = runtime / "bots" / "legacy-qq" / "bot.yaml"
     bot_spec.parent.mkdir(parents=True)
-    bot_spec.write_text(
+    write_application(bot_spec,
         "id: legacy-qq\nplatform:\n  type: qq\n",
         encoding="utf-8",
     )

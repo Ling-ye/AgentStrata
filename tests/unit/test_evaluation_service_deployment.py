@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import os
 import subprocess
 import time
@@ -335,7 +337,7 @@ def _prepare_default_deploy_bots(
         deploy = f"  instance_id: {instance_id}\n"
         if wsl_home:
             deploy += f"  wsl_home: {wsl_home}\n"
-        (bot_dir / "bot.yaml").write_text(
+        write_application(bot_dir / "bot.yaml",
             f"id: {directory}\ndeploy:\n{deploy}",
             encoding="utf-8",
         )

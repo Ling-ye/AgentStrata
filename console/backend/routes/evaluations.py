@@ -44,7 +44,7 @@ class ComparisonEvaluationRequest(BaseModel):
     model_profile: str = ""
     profile_id: str = Field(default="agent-comparison-mvp", min_length=1)
     preset: Literal["quick", "standard", "custom"] = "quick"
-    target_ids: list[Literal["codex", "native"]] | None = Field(
+    target_ids: list[Literal["codex", "langgraph"]] | None = Field(
         default=None,
         min_length=1,
     )

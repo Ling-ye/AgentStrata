@@ -182,7 +182,6 @@ _RUNTIME_IMPLEMENTATIONS: dict[str, tuple[str, ...]] = {
     ),
     "direct": ("chatcopilot.core.llm_client", "chatcopilot.core.responses_client", "chatcopilot.core.model_routes", "chatcopilot.core.model_credentials"),
     "langgraph": ("chatcopilot.agent.runtimes.inprocess",),
-    "native": ("chatcopilot.agent.runtimes.inprocess",),
     "none": (),
 }
 
@@ -284,7 +283,7 @@ def runtime_implementation_snapshot(runtime_id: str) -> dict[str, object]:
         raise ValueError(f"runtime implementation is unsupported: {runtime_id!r}") from exc
     common_modules = (
         _COMMON_RUNTIME_IMPLEMENTATIONS
-        if normalized in {"codex", "langgraph", "native"}
+        if normalized in {"codex", "langgraph"}
         else ()
     )
     modules = sorted(set(common_modules).union(runtime_modules))

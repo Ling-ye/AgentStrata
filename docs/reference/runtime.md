@@ -77,7 +77,7 @@ QQ 入站附件预算为每条消息 32 个、单个 64 MiB、合计 256 MiB；A
 OneBot 回执等待由 [channels.qq.action_timeout_seconds](configuration.md#channelsqq) 配置，
 文件发送器的跨线程等待在其基础上增加 15 秒。结果未知不转化为可安全重试。
 
-通用 AgentRuntime 只准备公共输入，Native/LangGraph/Codex adapter 创建各自 session；`RuntimeOpenRequest.options` 只承载类型化目录、隔离、恢复和角色提示参数，不传构造函数。
+通用 AgentRuntime 只准备公共输入，LangGraph/Codex adapter 创建各自 session；`RuntimeOpenRequest.options` 只承载类型化目录、隔离、恢复和角色提示参数，不传构造函数。
 
 Gateway 群共享历史保存完整的用户与助手正文，不再在写入时截成 12,000/24,000 字符。现有 JSONL 格式保留，按最多 500 轮及 256 MiB 总容量轮转；旧记录中已经截断的内容无法恢复。模型上下文投影最多取 48 轮、64,000 个正文字符，超出部分明确标记截断，投影不改写存储正文。
 
@@ -116,6 +116,7 @@ VTuber 客户端，模型和动作白名单保存在客户端持久数据目录�
 插件包修复随现有发行链交付，第三方本体与用户状态留在安装目录。
 
 VTuber 的独立 Owner BotSpec 是该插件模板，不是所有插件的强制形态。
+应用描述引用独立 Agent profile，LangGraph/Codex 两种 runtime 的新安装均保存实例自己的模型配置快照。
 模型凭据通过现有连接引用，工作区与记忆独立；播放状态归客户端。
 接入第二个软件时新增插件包与清单即可，运行协议继续使用已有 Gateway/MCP。
 插件可通过 `observable_agents` 声明零个或多个可观测实例，由管理器校验并登记。

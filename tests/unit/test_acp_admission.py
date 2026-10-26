@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import textwrap
 import unittest
 from dataclasses import FrozenInstanceError
@@ -40,7 +42,7 @@ def _write_bot_with_access(base: Path, access_block: str) -> Path:
         """
     ) + access_block
     bot_yaml = bot_dir / "bot.yaml"
-    bot_yaml.write_text(yaml_text, encoding="utf-8")
+    write_application(bot_yaml, yaml_text, encoding="utf-8")
     return bot_yaml
 
 

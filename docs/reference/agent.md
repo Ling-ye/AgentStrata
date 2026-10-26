@@ -1,13 +1,14 @@
 # Agent 与执行 Runtime
 
-修改模型、Runtime、PromptPlan 或委托执行时阅读。BotSpec 选择能力，Application 完成实例到 Agent 的受控投影。
+修改模型、Runtime、PromptPlan 或委托执行时阅读。应用通过 `agent_profile` 引用独立 Agent 配置，
+既有 BotSpec 装配结果继续交给 Application 投影为 Agent 输入，文件归属见[配置](configuration.md#配置归属与文件引用)。
 
 AgentRuntime 重构的目标、结构化交接与迁移验收见
 [runtime 路由规格](../../specs/agent-runtime-routing/spec.md)。
 
 ## 一条执行契约
 
-Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约。Runtime 私有协议由 adapter 解释，平台身份与交付事实留在外层。能力不足时明确报不可用，不通过文本隐式切换 Runtime。
+LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约。Runtime 私有协议由 adapter 解释，平台身份与交付事实留在外层。能力不足时明确报不可用，不通过文本隐式切换 Runtime。
 
 ## 源码入口
 
@@ -35,19 +36,33 @@ Native、LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约
 
 ## 唯一 PromptPlan 契约
 
-BotSpec `prompts.schema_version` 只接受 `2`，Bot 文件只声明 `identity/response_style/refusal_style/role_styles/mode_styles`，不得声明安全、授权、记忆、人格持久化、搜索触发或工具规则。
+Agent profile 的 `prompts.schema_version` 只接受 `2`，提示词字段只声明 `identity/response_style/refusal_style/role_styles/mode_styles`，不得声明安全、授权、记忆、人格持久化、搜索触发或工具规则。
 
-middleware 只提供可信结构化输入，所有 main Agent、subagent、runtime 和 Evaluation 模型入口都经唯一 `PromptPlanBuilder`；Native/LangGraph/Codex renderer 只渲染不可变 plan，禁止追加第二份规则。
+middleware 只提供可信结构化输入，所有 main Agent、subagent、runtime 和 Evaluation 模型入口都经唯一 `PromptPlanBuilder`；LangGraph/Codex renderer 只渲染不可变 plan，禁止追加第二份规则。
 
-Prompt trust 必须保持 `host policy / runtime facts / bot instructions / untrusted data` 四分区：只有宿主策略和可信运行时事实进入 Native system envelope，Bot identity/style/Skills 使用独立 user-context envelope；Codex 使用 schema v2 的独立字段。
+Prompt trust 必须保持 `host policy / runtime facts / bot instructions / untrusted data` 四分区：只有宿主策略和可信运行时事实进入 模型 system envelope，Bot identity/style/Skills 使用独立 user-context envelope；Codex 使用 schema v2 的独立字段。
 
 Bot 文本只能形成 identity/style，persona、memory、journal、网页和用户正文始终是不可信数据。
 
 禁止恢复旧 prompt assembler、旧导出、旧字段转换、自由文本 capability fragments 或 runtime appendix。
 
+## 双 runtime 与退役配置
+
+LangGraph 负责自有模型与工具循环；Codex app-server 负责原生循环、线程恢复和压缩。
+宿主继续管理身份、权限、工具、上下文接入和交付，能力差异由 RuntimeCapabilities 表达。
+Harness 的开发 worker 独立选择模型，不改变被优化实例的执行选择。
+
+Native 独立循环和注册入口已删除；AgentSession 保留状态与辅助方法，TurnOps 保留预算、取消、
+事件、工具结果和资源语义，LangGraph 通过 StateGraph 调度。自有子 Agent 也使用 LangGraph，
+受原有工具集合、模型轮次、工具次数和超时约束；Codex 内部子 Agent 继续由 Codex 管理。
+
+通用模板默认 LangGraph，原 Codex 实例保留选择。旧 Native 配置与配置历史废弃，不提供兼容别名
+或自动回退；重新配置方法见[配置](configuration.md#agents)。运行时切换新建会话，旧绑定不跨 runtime
+续跑。业务历史、人格、记忆和凭据保留，历史证据中的 Native 标识不重写。
+
 ## LLM 三槽配置
 
-`llm.chat` 是所有 runtime 的主模型；`llm.research` 是辅助模型；`llm.code` 只供独立 worker。`agents.runtime` 只选择谁执行 loop，模型名、API Key 和历史记录不能改变它。Native/LangGraph 的模型传输可选 Chat Completions、Platform Responses 或 ChatGPT Responses；这些传输只做一次推理，不启动 Codex Agent 或执行工具。
+`llm.chat` 是所有 runtime 的主模型；`llm.research` 是辅助模型；`llm.code` 只供独立 worker。`agents.runtime` 只选择谁执行 loop，模型名、API Key 和历史记录不能改变它。LangGraph 的模型传输可选 Chat Completions、Platform Responses 或 ChatGPT Responses；这些传输只做一次推理，不启动 Codex Agent 或执行工具。
 
 认证使用互斥的 `auth: {mode: chatgpt, profile: main}` 或 `auth: {mode: api_key, key_env: ENV_NAME}`。BotSpec、配置快照和 DTO 只保存引用；订阅 token 不会发送到自定义端点，也不会被环境 API Key 覆盖。请求序列化完成后才生成 Responses 模型输入观察，私有 continuation 只用于协议回传。
 
@@ -85,11 +100,11 @@ ACP 的平台与能力来自完整装配的 runtime；测试通过显式 runtime
 
 ## Subagent 是 Agent 层基础能力
 
-BotSpec 只通过 `agents` 声明 preset、workflow 和预算；主 Agent 通过委托工具调用；subagent 禁止 import middleware、platforms、Workspace。
+Agent profile 通过 `agents` 声明 preset、workflow 和预算；主 Agent 通过委托工具调用；subagent 禁止 import middleware、platforms、Workspace。
 
 ## Lingye 固定 Codex runtime
 
-`lingye-copilot-qq` 使用 `agents.runtime: codex`，主模型位于 chat 槽。选择作用于整个实例，不按角色、命令或单回合切换。旧配置和 Gateway schema 2 须在停机、独占 lease 下显式迁移，归档旧 runtime binding，保留 journal、人格、记忆、worker 和历史证据；部署不会自动删除历史。迁移入口见[配置](configuration.md)。Native 仍是一等执行实现。
+`lingye-copilot-qq` 使用 `agents.runtime: codex`，主模型位于 chat 槽。选择作用于整个实例，不按角色、命令或单回合切换。旧配置和 Gateway schema 2 须在停机、独占 lease 下显式迁移，归档旧 runtime binding，保留 journal、人格、记忆、worker 和历史证据；部署不会自动删除历史。迁移入口见[配置](configuration.md)。Native 已退役，旧配置需重新选择 runtime，不恢复旧 Native 执行绑定。
 
 ## 主会话与可选代码任务
 
@@ -111,9 +126,9 @@ caller 摘要、角色、策略或 credential generation 变化必须使旧 resu
 
 ## 主 Agent runtime
 
-`agents.runtime` 默认 `native`，也可设为 `langgraph` 或 `codex`；三个 runtime 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。
+`agents.runtime` 默认 `langgraph`，也可设为 `codex`；两个 runtime 必须共享 `AgentTask` / `AgentEvent` / `AgentResult` 协议和现有工具注册/权限 hook。选择只发生在实例配置，不按回合自动切换。
 
-Native/LangGraph 复用 `agent/turn.py` 的 `TurnOps`；主 Codex 将 App Server 的公开事件投影为相同事件、工具结果、生命周期 intent 和最终 `AgentResult`，不得让 Console 解析 runtime 私有日志。
+LangGraph 复用 `agent/turn.py` 的 `TurnOps`；主 Codex 将 App Server 的公开事件投影为相同事件、工具结果、生命周期 intent 和最终 `AgentResult`，不得让 Console 解析 runtime 私有日志。
 
 ## Subagent
 
@@ -131,7 +146,7 @@ adapter_forge 仍消费一次性源码批准记录，其 selector 是该预设�
 
 code-worker 使用全局 FIFO、独立 transient cgroup、远端干净 clone 和 bwrap；changed paths 必须通过 `context.dev`，一次完整门禁通过后由沙箱外受信交付器生成中文 commit、非强制 push 并创建草稿 PR，`delivery.json` 记录分支、commit 与 PR 证据。
 
-Native/LangGraph 保持不 commit/push 的 `RepositoryTaskService`；Codex PR 不自动 merge、部署或重启。
+LangGraph 保持不 commit/push 的 `RepositoryTaskService`；Codex PR 不自动 merge、部署或重启。
   - **先方案后确认**： Owner 明确要求先分析、设计、评审或给方案并等待后续确认时，当前 turn 只返回方案且不得调用 `start_code_task`；同一 session 后续明确确认时只调用一次，并完整重述已批准范围与可观测验收条件。直接要求立即实现时不增加确认轮，孤立且无明确待确认方案的“确认”必须澄清。提示投影测试须覆盖这三条模型契约；隔离的两轮产品能力 Case 只验证 plan→confirm 主路径，不能证明宿主侧一次性 proposal 门禁或真实 Draft PR E2E。
   - **验证工具链挂载**：bwrap 只把源仓 `.venv` 与经 manifest/父链校验的 `console/web/node_modules` 作为只读工具链映射到每条命令的临时候选树；前端构建仍在 `/workspace/console/web` 执行，任务不得改写宿主依赖。
   - **候选索引验证边界**：full validation 使用 job-private、只读挂载的权威 Git index 表示 `HEAD + exact task delta`，宿主 materialize/verify 只操作 disposable index copy；quick 前真实 index 必须等于 `HEAD`，pytest 等会创建临时仓库的检查不得继承候选 `GIT_INDEX_FILE`。

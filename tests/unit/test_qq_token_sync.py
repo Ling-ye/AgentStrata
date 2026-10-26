@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import io
 import os
 import json
@@ -20,7 +22,7 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
     bot_dir.parent.mkdir(parents=True)
     bot_dir.mkdir()
     bot_path = bot_dir / "bot.yaml"
-    bot_path.write_text(
+    write_application(bot_path,
         textwrap.dedent(
             """\
             id: token-test-qq
@@ -56,7 +58,7 @@ def _write_starter_bot(tmp_path: Path, extra_lines: str = "") -> tuple[Path, Pat
               - chat.file_uploads
               - chat.private_workspace
             agents:
-              runtime: native
+              runtime: langgraph
               presets: []
             workspace:
               root_env: CHATCOPILOT_WORKSPACE_ROOT

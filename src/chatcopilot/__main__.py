@@ -74,6 +74,7 @@ def _print_help() -> None:
         "  agentstrata source\n"
         "  agentstrata botspec validate bots/<bot-id>/bot.yaml\n"
         "  agentstrata botspec show bots/<bot-id>/bot.yaml\n"
+        "  agentstrata botspec migrate-profile bots/<bot-id>/bot.yaml [--apply]\n"
         "  agentstrata bot list\n"
         "  agentstrata bot new <id> --platform feishu\n"
         "  agentstrata bot doctor --bot bots/<bot-id>/bot.yaml\n"

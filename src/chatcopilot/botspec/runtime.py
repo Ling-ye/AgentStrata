@@ -50,7 +50,7 @@ class BotRuntimeContext:
     source_path: Path
     gateway: GatewaySpec | None = None
     channels: ChannelsSpec = field(default_factory=ChannelsSpec)
-    runtime_id: str = "native"
+    runtime_id: str = "langgraph"
     mcp_servers: tuple[McpServerConfig, ...] = ()
     rag_sources: tuple[RagSourceConfig, ...] = ()
     skills: tuple[SkillIndexEntry, ...] = ()

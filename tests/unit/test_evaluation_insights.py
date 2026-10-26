@@ -19,7 +19,7 @@ def fixture_result() -> tuple[dict, dict]:
                "suite_id": "fixture-suite", "repetitions": 1, "seed": 0, "max_wall_seconds": 600,
                "bot_spec_sha256": "config-a", "case_ids": ["a", "b"], "dry_run": False}
     result = {"kind": "suite", "selected_cases": ["fixture-suite:a", "fixture-suite:b"],
-              "targets": [{"target_id": "main", "executor": "agent_configured", "runtime_id": "native",
+              "targets": [{"target_id": "main", "executor": "agent_configured", "runtime_id": "langgraph",
                            "model": "fixture-model", "reasoning_effort": "", "config_fingerprint": "runtime-a"}],
               "summary": {"verdict": "failed"},
               "config_snapshot": {"case_hash": "cases-a", "judge": "suite-or-profile-defined",

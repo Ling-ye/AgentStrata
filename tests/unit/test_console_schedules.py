@@ -1,3 +1,5 @@
+
+from tests.application_fixture import write_application
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -86,7 +88,7 @@ def test_instance_resolution_and_no_store(tmp_path, monkeypatch):
     state = tmp_path / "state"
     state.mkdir(mode=0o700)
     spec = tmp_path / "bot.yaml"
-    spec.write_text("gateway:\n  state_root_env: FIXTURE_STATE\n")
+    write_application(spec, "gateway:\n  state_root_env: FIXTURE_STATE\n")
     env = tmp_path / "local.env"
     env.write_text(f"FIXTURE_STATE={state}\n")
     env.chmod(0o600)

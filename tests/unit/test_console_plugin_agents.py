@@ -18,6 +18,7 @@ from chatcopilot.plugins.repository import InstallRepository
 from chatcopilot.plugins.types import PluginDefinition
 from console.backend.routes import architecture, bots, schedules, weixin
 from console.control import discovery
+from tests.application_fixture import write_application
 
 
 @pytest.fixture
@@ -36,10 +37,12 @@ def plugin_console(tmp_path, monkeypatch):
         env = repo.root / f"config/{name}.env"
         write_private(repo.root / "config/identity.md", "Fixture identity")
         write_private(repo.root / "config/style.md", "Respond clearly")
-        write_private(spec, f"id: {name}\ndisplay_name: {name}\ngateway:\n"
+        write_application(spec, f"id: {name}\ndisplay_name: {name}\ngateway:\n"
             "  clients:\n    - id: fixture-owner\n      token_env: FIXTURE_TOKEN\n      role: owner\n"
             "prompts:\n  schema_version: 2\n  identity: identity.md\n  response_style: style.md\n"
-            "agents:\n  runtime: native\n")
+            "agents:\n  runtime: langgraph\n")
+        spec.chmod(0o600)
+        spec.with_name(spec.stem + ".agent.yaml").chmod(0o600)
         state = GatewayStateStore(repo.root / f"data/{name}")
         generation = state.acquire_writer_generation()
         write_private(env, "CHATCOPILOT_GATEWAY_STATE_ROOT=" + str(state.root) + "\n")

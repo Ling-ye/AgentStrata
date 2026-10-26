@@ -1,7 +1,7 @@
 """Round-trip YAML editor for bot tool configuration.
 
 Uses ruamel.yaml to preserve comments, ordering, and formatting when
-updating bot.yaml and mcp/servers.yaml from the console UI.
+updating the referenced Agent profile and MCP files from the console UI.
 """
 from __future__ import annotations
 
@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any
 
 from ruamel.yaml import YAML
+from chatcopilot.core.application_configuration import load_application_spec
 
 _yaml = YAML(typ="rt")
 _yaml.preserve_quotes = True
@@ -42,7 +43,8 @@ def update_bot_tools(
     features: list[str],
     hide: list[str],
 ) -> None:
-    """Update tools.packs / tools.features / tools.hide in bot.yaml."""
+    """Update tools in the application's Agent profile."""
+    bot_yaml_path = load_application_spec(bot_yaml_path).agent_profile.source_path
     _backup(bot_yaml_path)
     data = _load(bot_yaml_path)
     if data is None:
@@ -140,7 +142,8 @@ def update_subagents(
     include: list[str],
     workflows: list[str],
 ) -> None:
-    """Update agents.presets and agents.workflows in bot.yaml."""
+    """Update subagents in the application's Agent profile."""
+    bot_yaml_path = load_application_spec(bot_yaml_path).agent_profile.source_path
     _backup(bot_yaml_path)
     data = _load(bot_yaml_path)
     if data is None:
@@ -180,9 +183,11 @@ def apply_tool_config(
     files_modified: list[str] = []
     warnings: list[str] = []
 
-    original = _load(bot_yaml_path) or {}
+    application = load_application_spec(bot_yaml_path)
+    profile_path = application.agent_profile.source_path
+    original = application.agent_profile.raw
     servers_reference = ((original.get("tools") or {}).get("mcp") or {}).get("servers") or "mcp/servers.yaml"
-    servers_yaml_path = (bot_yaml_path.parent / servers_reference).resolve()
+    servers_yaml_path = (profile_path.parent / servers_reference).resolve()
     if not servers_yaml_path.is_relative_to(bot_yaml_path.parent.resolve()):
         raise ValueError("MCP 配置文件必须位于当前机器人配置目录内")
 
@@ -192,12 +197,12 @@ def apply_tool_config(
         features=tool_features or [],
         hide=hidden_tools or [],
     )
-    files_modified.append(str(bot_yaml_path))
+    files_modified.append(str(profile_path))
 
     if mcp_servers is not None:
-        should_write_mcp = bool(mcp_servers) or servers_yaml_path.exists() or _has_mcp_section(bot_yaml_path)
+        should_write_mcp = bool(mcp_servers) or servers_yaml_path.exists() or _has_mcp_section(profile_path)
         if should_write_mcp:
-            _ensure_mcp_section(bot_yaml_path)
+            _ensure_mcp_section(profile_path)
             update_mcp_servers(servers_yaml_path, mcp_servers)
             files_modified.append(str(servers_yaml_path))
 

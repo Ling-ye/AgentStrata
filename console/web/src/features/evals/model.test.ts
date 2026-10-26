@@ -44,7 +44,7 @@ describe("evaluation request builders", () => {
   const comparison = {
     botId: "lingye-copilot-qq",
     profileId: "agent-comparison-mvp",
-    targetIds: ["codex", "native"],
+    targetIds: ["codex", "langgraph"],
     caseRefs: ["profile/case-a", "profile/case-b"],
     repetitions: 3,
     maxWallSeconds: 2700,
@@ -72,7 +72,7 @@ describe("evaluation request builders", () => {
       bot_id: "lingye-copilot-qq",
       profile_id: "agent-comparison-mvp",
       preset: "custom",
-      target_ids: ["codex", "native"],
+      target_ids: ["codex", "langgraph"],
       case_refs: ["profile/case-a", "profile/case-b"],
       repetitions: 3,
       max_wall_seconds: 2700,

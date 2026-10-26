@@ -147,7 +147,7 @@ def main(argv: list[str] | None = None) -> int:
         if set(supplied) - set(defaults):
             raise ValueError("VTuber options: port, gateway_port, runtime")
         request["options"] = {**defaults, **supplied}
-        if request["options"]["runtime"] not in {"codex", "native", "langgraph"}:
+        if request["options"]["runtime"] not in {"codex", "langgraph"}:
             raise ValueError("Unsupported Agent runtime")
         if args.operation == "run":
             asyncio.run(serve(request))

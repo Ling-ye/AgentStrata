@@ -183,9 +183,10 @@ class LocalCommitter:
             script = worktree / "scripts" / filename
             if script.is_file():
                 commands.append((label, [sys.executable, str(script)]))
-        for name in paths:
-            if name.endswith("/bot.yaml"):
-                commands.append(("BotSpec 检查", [sys.executable, "-m", "chatcopilot", "botspec", "validate", name]))
+        configurations = {str(Path(name).with_name("bot.yaml")) for name in paths
+                          if name.startswith("bots/") and Path(name).name in {"bot.yaml", "agent.yaml"}}
+        for name in sorted(configurations):
+            commands.append(("应用与 Agent 配置检查", [sys.executable, "-m", "chatcopilot", "botspec", "validate", name]))
         environment = {**env, "AGENTSTRATA_REPO_ROOT": str(worktree), "PYTHONPATH": str(worktree / "src")}
         for label, command in commands:
             check_cancel()

@@ -51,13 +51,13 @@ def test_agent_runtimes_bind_distinct_playbook_indexes(tmp_path: Path) -> None:
     config = ChatConfig(llm=LLMConfig(model="gpt-4o-mini"), )
     first_runtime = build_agent_runtime(
         chat_config=config,
-        route=runtime_route("native", config.llm),
+        route=runtime_route("langgraph", config.llm),
         tool_packs=("playbooks.reader",),
         skill_index=(first,),
     )
     second_runtime = build_agent_runtime(
         chat_config=config,
-        route=runtime_route("native", config.llm),
+        route=runtime_route("langgraph", config.llm),
         tool_packs=("playbooks.reader",),
         skill_index=(second,),
     )

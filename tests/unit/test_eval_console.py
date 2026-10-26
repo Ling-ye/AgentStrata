@@ -1,4 +1,6 @@
 from __future__ import annotations
+
+from tests.application_fixture import write_application
 from chatcopilot.botspec.model import LLMSpec
 
 
@@ -209,7 +211,7 @@ def test_agent_runtime_closes_when_session_creation_fails(tmp_path, message):
     from chatcopilot.evals.plugins import get_evaluation_plugin
     agent = MagicMock()
     agent.open_session.side_effect = RuntimeError(message)
-    runtime = SimpleNamespace(runtime_id="native", prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
+    runtime = SimpleNamespace(runtime_id="langgraph", prompt_profile=BotPromptProfile(identity="test", response_style="concise"),
         capability_policies=(), skills=(), spec=SimpleNamespace(llm=LLMSpec(env_prefix="TEST")))
     with patch("chatcopilot.evals.evaluation_runtime.load_evaluation_runtime", return_value=runtime), \
          patch("chatcopilot.core.config.load_config", return_value=MagicMock()), \
@@ -249,7 +251,7 @@ def test_bot_local_snapshot_marker_cannot_bypass_machine_precedence(
     bot_dir = repository / "bots/example"
     bot_dir.mkdir(parents=True)
     bot_spec = bot_dir / "bot.yaml"
-    bot_spec.write_text("id: example\n", encoding="utf-8")
+    write_application(bot_spec, "id: example\n", encoding="utf-8")
     (bot_dir / "local.env").write_text(
         f"export {marker}=1\nexport {key}=bot-local-value\n",
         encoding="utf-8",

@@ -17,7 +17,7 @@ def _sensitive_context_event() -> tuple[ContextSnapshotPrepared, str]:
     secret = "-".join(("synthetic", "context", "credential", "value"))
     event = ContextSnapshotPrepared(
         snapshot_id="ctx_eval_projection",
-        runtime_id="native",
+        runtime_id="langgraph",
         model="test-model",
         iteration=2,
         session_messages=({"role": "user", "content": secret},),

@@ -170,7 +170,7 @@ def test_codex_relay_filters_before_caching_and_does_not_reexecute():
         executor.close()
 
 
-@pytest.mark.parametrize("runtime_id", ["native", "langgraph"])
+@pytest.mark.parametrize("runtime_id", ["langgraph"])
 def test_inprocess_backends_share_projection_and_clear_on_close(runtime_id):
     from unittest.mock import Mock
 

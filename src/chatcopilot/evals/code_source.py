@@ -34,6 +34,7 @@ _TRUSTED_FILES = frozenset(
                 "source_manifest.py",
                 "inspection.py",
                 "candidate_configuration.py",
+                "application_configuration.py",
             )
         ),
     }
@@ -60,7 +61,7 @@ def prepare_code_source(
             continue
         if not configuration_path(name):
             raise ValueError("candidate changes a protected Bot resource")
-        if name.endswith("/bot.yaml"):
+        if Path(name).name in {"bot.yaml", "agent.yaml"}:
             if name not in candidate or name not in trusted:
                 raise ValueError("candidate cannot add or remove a Bot runtime envelope")
             validate_configuration((repository / name).read_bytes(), (path / name).read_bytes())

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import json
 import os
 import shutil
@@ -40,7 +42,7 @@ def _gateway_test_root(tmpdir: str) -> Path:
 
     bot_dir = root / "bots" / "test-assistant"
     bot_dir.mkdir(parents=True)
-    (bot_dir / "bot.yaml").write_text(
+    write_application(bot_dir / "bot.yaml",
         "id: test-assistant\n"
         "gateway:\n"
         "  protocol_version: 1\n"
@@ -186,7 +188,7 @@ class QQBoundaryValidationTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmpdir:
             root = _gateway_test_root(tmpdir)
             bot_spec = root / "bots" / "test-assistant" / "bot.yaml"
-            bot_spec.write_text(
+            write_application(bot_spec,
                 "id: test-assistant\nplatform:\n  type: qq\n",
                 encoding="utf-8",
             )

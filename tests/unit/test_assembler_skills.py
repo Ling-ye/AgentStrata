@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from tests.application_fixture import write_application
+
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -60,7 +62,7 @@ def _scaffold_bot(root: Path) -> Path:
         encoding="utf-8",
     )
     bot_yaml = bot_dir / "bot.yaml"
-    bot_yaml.write_text(_BOT_YAML, encoding="utf-8")
+    write_application(bot_yaml, _BOT_YAML, encoding="utf-8")
     return bot_yaml
 
 

@@ -9,8 +9,8 @@ created: 2026-09-21
 
 ## Summary
 
-主 Agent 按实例选择 Native、LangGraph 或 Codex。模型、认证与执行循环分别声明；
-Native 直接调用模型，Codex 使用原生 App Server。宿主继续拥有身份、权限、业务工具和交付。
+主 Agent 按实例选择 LangGraph 或 Codex。模型、认证与执行循环分别声明；
+LangGraph 调用模型，Codex 使用原生 App Server。宿主继续拥有身份、权限、业务工具和交付。
 
 ## Design
 
@@ -22,17 +22,16 @@ Gateway 持有取消和交付事实。所有 Agent 固定非交互执行；Conso
 权威路由链固定为：
 
 ```text
-BotSpec agents.runtime
+AgentProfile agents.runtime → BotSpec 类型化装配
   -> BotRuntimeContext.runtime_id
   -> Application ResolvedRuntimeRoute
   -> AgentRuntime.route
   -> RuntimeAdapterRegistry
-  -> NativeRuntimeAdapter | LangGraphRuntimeAdapter | CodexRuntimeAdapter
+  -> LangGraphRuntimeAdapter | CodexRuntimeAdapter
 ```
 
 `build_agent_runtime()` 只接受冻结的 `ResolvedRuntimeRoute`，Agent 层不再读取 BotSpec、环境或
-第二个 runtime 参数。`RuntimeOpenRequest` 复用同一个 route 并由 adapter 校验。Native 与
-LangGraph 使用 `main_model_client` 执行自有 loop；Codex 的该字段必须为空，主 turn 只通过
+第二个 runtime 参数。`RuntimeOpenRequest` 复用同一个 route 并由 adapter 校验。LangGraph 使用 `main_model_client` 执行自有 loop；Codex 的该字段必须为空，主 turn 只通过
 App Server，宿主辅助能力改用显式的 research/search/subagent model client。
 
 `agents.runtime` 是唯一实例执行选择。`llm.chat` 声明主模型与认证引用；研究模型独立解析；
@@ -40,7 +39,7 @@ App Server，宿主辅助能力改用显式的 research/search/subagent model cl
 主会话模型选择不修改共享客户端或 worker。请求冻结模型、trace 和 actor 绑定，任意 metadata
 不得决定授权、路由或恢复。配置来源、展示文本与 token 值不进入行为指纹。
 
-Native/LangGraph 保留自身循环，通过单请求模型端口使用 Chat Completions、Platform Responses
+LangGraph 保留自身循环，通过单请求模型端口使用 Chat Completions、Platform Responses
 或 ChatGPT Responses。模型端口不执行工具。Responses 私有 continuation 不进入可观测正文。
 Codex 动态工具调用经同一个 ToolRegistry/ToolExecutor；原生工具与宿主工具显式确定执行归属。
 人格、记忆和交付不能用普通文件修改替代。主 Agent 专属工具不授予原生子代理。
@@ -50,11 +49,18 @@ refresh lineage 保留。actor 连接可复用，conversation lane 仍串行。�
 认证身份代际、权限和能力摘要。群会话仍只在 live actor 内恢复，未知执行不自动重放。
 
 Codex 固定使用 `approvalPolicy=never`，宿主策略内操作直接执行；权限扩张、越界访问、用户输入
-请求和 MCP elicitation 立即拒绝。Native、LangGraph、Codex、Evaluation 与后台 Agent 都不创建
+请求和 MCP elicitation 立即拒绝。LangGraph、Codex、Evaluation 与后台 Agent 都不创建
 等待中的审批或澄清。信息不足时采用安全默认值，无法可靠完成时直接说明限制，不向用户提问。
 
 迁移先固定辅助模型的有效配置，归档旧 runtime binding，保留业务历史、人格、记忆与 worker
 记录。数据库迁移要求停机及独占 lease，并通过 SQLite backup API 保留备份；启动不隐式迁移。
+
+Native 独立执行路径退役，自有子 Agent 使用 LangGraph，公共会话状态与 TurnOps 继续复用。
+有效 runtime 只有 langgraph/codex，通用默认值与模板选择 LangGraph，明确选择 Codex 的配置保持。
+旧 Native 配置与配置历史废弃，不提供自动转换、兼容别名或专门迁移器；旧运行时恢复绑定不续跑。
+`runtime_options.langgraph.env_prefix` 接替进程内参数声明，旧 native 块明确报错。
+历史观测和评测保留原 runtime 标识，已归档/失效绑定可以只读审计；活跃 Native 绑定不接受。
+业务历史、人格、记忆和凭据保持完整，切换 runtime 建立新运行时会话。
 
 结构化版本固定为 PromptPlan 2、Observation 3、Evaluation result 3、Gateway 4 和
 RuntimeSessionBinding 4。AgentEvent、Console wire、Evaluation Target/Trial、transcript
@@ -67,8 +73,8 @@ session ref 与活动数据库只使用 `runtime_id`。独立 code-worker 的冻
 
 ## Acceptance
 
-- Native/Codex 与订阅/API Key 四种组合显式选路，兼容模型与 LangGraph 不退化。
-- Codex 主会话不创建无用 API 客户端，不运行 Native loop；Native 不启动 Codex agent。
+- LangGraph/Codex 与订阅/API Key 的兼容组合显式选路，模型配置不隐式改变 runtime。
+- Codex 主会话只执行 app-server 回合；LangGraph 通过宿主模型端口执行 StateGraph 回合。
 - 宿主工具、能力投影、PromptPlan 和执行授权一致，秘密不进入 DTO、日志或浏览器响应。
 - 独立 conversation 可并行刷新与执行，同群 journal 顺序保留。
 - QQ/Console 不展示或处理 Runtime 待办请求，所有 turn 在既有策略边界内自行完成或直接说明限制。

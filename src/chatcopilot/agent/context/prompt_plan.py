@@ -218,7 +218,7 @@ class PromptPlanBuilder:
         )
 
 
-def render_native_prefix(plan: PromptPlan) -> list[dict[str, str]]:
+def render_model_prefix(plan: PromptPlan) -> list[dict[str, str]]:
     partitions = _partition_layers(plan)
     system_envelope = {
         "schema_version": 2,
@@ -354,6 +354,6 @@ __all__ = [
     "PromptBuildInput",
     "PromptPlanBuilder",
     "render_codex_prompt",
-    "render_native_prefix",
+    "render_model_prefix",
     "render_receipt",
 ]

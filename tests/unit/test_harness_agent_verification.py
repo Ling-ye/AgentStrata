@@ -232,7 +232,7 @@ def test_scoring_uses_actual_tools_and_final_state():
 
 def test_candidate_configuration_preserves_authority_and_model():
     before = {"prompts": {"schema_version": 2, "identity": "prompts/identity.md"},
-              "llm": {"chat": {"env_prefix": "EXAMPLE"}}, "agents": {"runtime": "native"},
+              "llm": {"chat": {"env_prefix": "EXAMPLE"}}, "agents": {"runtime": "langgraph"},
               "workspace": {"root_env": "EXAMPLE_WORKSPACE"}, "tools": {"packs": ["workspace.read_write"]}}
     candidate = copy.deepcopy(before)
     candidate["prompts"]["identity"] = "prompts/new.md"
@@ -249,7 +249,7 @@ def test_candidate_configuration_preserves_authority_and_model():
 
 def test_comparison_allows_product_fingerprint_only_with_fixed_invariants():
     original = {"cases": {"x": "hash"}, "grading": {}, "environment": "env",
-                "configuration_invariants": "same", "targets": {"t": {"model": "m", "runtime_id": "native", "config_fingerprint": "old"}}}
+                "configuration_invariants": "same", "targets": {"t": {"model": "m", "runtime_id": "langgraph", "config_fingerprint": "old"}}}
     candidate = copy.deepcopy(original)
     candidate["targets"]["t"]["config_fingerprint"] = "new"
     verify_conditions(original, candidate)
@@ -355,7 +355,7 @@ def test_agent_input_never_receives_grading_oracle(tmp_path, monkeypatch):
     seen = {}
     runtime = SimpleNamespace(spec=SimpleNamespace(llm=LLMSpec(env_prefix="EXAMPLE")),
         tool_packs=(), subagents=object(), prompt_profile=BotPromptProfile(identity="candidate identity", response_style="concise"),
-        runtime_id="native", capability_policies=(), skills=())
+        runtime_id="langgraph", capability_policies=(), skills=())
     class Agent:
         def open_session(self, **kwargs):
             seen["prompt"] = kwargs["prompt_input"]

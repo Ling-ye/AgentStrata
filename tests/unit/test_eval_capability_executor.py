@@ -670,7 +670,7 @@ def fake_agent(monkeypatch: pytest.MonkeyPatch, deepeval_judge, request, model_s
     data["profiles"]["fake-model"] = {"connection": "fake", "model": "fake-model"}
     data["bindings"]["fake-model"] = "fake-model"
     write_models(model_settings, data)
-    selected_backend = getattr(request, "param", "native")
+    selected_backend = getattr(request, "param", "langgraph")
     runtime = SimpleNamespace(
         spec=SimpleNamespace(
             context=ContextSpec(), llm=LLMSpec(env_prefix="CHATCOPILOT_TEST", chat=ModelSpec(binding="fake-model"))
@@ -1443,7 +1443,7 @@ def test_multiple_turns_reuse_one_agent_session(
     assert observation.final_text == '{"name":"fixture","value":7}'
 
 
-@pytest.mark.parametrize("fake_agent", ["native", "langgraph", "codex"], indirect=True)
+@pytest.mark.parametrize("fake_agent", ["langgraph", "codex"], indirect=True)
 def test_selected_backend_input_output_reaches_deepeval(fake_agent, tmp_path):
     result = run_case(_case("dialogue-strict-json"), suite_id=SUITE_ID,
         bot="selected-bot", workspace_root=tmp_path, options={}, confirm_external_write=False)

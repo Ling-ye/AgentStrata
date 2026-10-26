@@ -198,7 +198,7 @@ assert main(["--help"]) == 0
 from chatcopilot.agent.context.prompt_plan import (
     PromptBuildInput,
     PromptPlanBuilder,
-    render_native_prefix,
+    render_model_prefix,
 )
 from chatcopilot.contracts.prompt import BotPromptProfile
 
@@ -208,14 +208,14 @@ plan = PromptPlanBuilder().build(
             identity="Release probe assistant",
             response_style="Respond concisely.",
         ),
-        runtime_id="native",
+        runtime_id="langgraph",
         model=None,
         role="owner",
         channel_kind="private",
         session_policy="Exercise the installed PromptPlan runtime.",
     )
 )
-prompt_prefix = render_native_prefix(plan)
+prompt_prefix = render_model_prefix(plan)
 assert prompt_prefix[0]["role"] == "system"
 assert any("Release probe assistant" in message["content"] for message in prompt_prefix)
 

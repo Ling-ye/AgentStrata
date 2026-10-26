@@ -59,7 +59,7 @@ bash deploy/wsl/quickstart.sh
 
 1. 只读检查发行版、架构、磁盘、网络、systemd、用户 bus 和 Docker。
 2. 展示待下载的运行时、系统包、Docker 仓库与目标路径；任何特权变更都先确认。
-3. 创建不含搜索、MCP、人格、Codex 和代码任务的通用 QQ/Native starter。
+3. 创建不含搜索、MCP、人格、Codex 和代码任务的通用 QQ/LangGraph starter。
 4. 在终端采集 LLM、机器人 QQ、Owner 和可选群号；API Key 使用隐藏输入，Gateway token
    与 OneBot token 分别由本机生成，二者不能复用，秘密不会出现在命令行参数、JSON 或部署摘要中。
 5. 启动 NapCat bootstrap，并只在当前交互式终端显示一次本地 WebUI 登录链接。
@@ -91,7 +91,7 @@ bash deploy/wsl/quickstart.sh --resume
 ```
 
 向导不维护第二份流程状态文件。`--resume` 会检查 BotSpec、私有 env、Docker、NapCat 和
-systemd 的当前状态；空的秘密输入表示保留现有值。它只接受由引导流程管理的 QQ/Native
+systemd 的当前状态；空的秘密输入表示保留现有值。它只接受由引导流程管理的 QQ/LangGraph
 starter，遇到 Codex、`dev.code_tasks` 或其他高级配置会拒绝覆盖。
 
 如果 Docker 已由操作者或 Docker Desktop WSL 集成提供，但当前不可用，可禁止自动安装：
