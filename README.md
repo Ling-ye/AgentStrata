@@ -2,224 +2,224 @@
 
 # AgentStrata
 
-### 自研 Agent、外部项目桥接与评测驱动的持续改进
+### 连接外部应用，用 Harness 与 Eval 持续改进 Agent
 
-**让 Agent 驱动外部项目，并用可核验的证据持续改进。**
-
-目标流程：Agent 连接外部能力 → 运行与反馈 → Harness 开发 → Eval 验收 → 授权内启用
+**自研 Agent 宿主 · LangGraph / Codex 双 Runtime · 外部项目桥接 · 评测驱动改进**
 
 [![AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
 [![Linux / WSL2](https://img.shields.io/badge/Runtime-Linux%20%2F%20WSL2-informational.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)
 
-[实施状态](#实施状态与开发计划) · [框架总览](#框架总览) · [自我优化](#如何实现自我优化) · [Harness](#harness基于-langgraph-的修复与验收) · [Eval](#eval评测与证据体系) · [快速开始](#快速开始) · [产品界面](#产品界面) · [文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)
+[项目特色](#项目特色) · [应用场景](#应用场景) · [框架总览](#框架总览) · [改进闭环](#改进闭环) · [产品界面](#产品界面) · [快速开始](#快速开始) · [文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)
 
 </div>
 
-AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 Harness 与 Eval 的持续改进机制。Agent 通过 LangGraph 或 Codex 执行，连接 Live2D、QQ / NapCat 等可由 Agent 驱动的项目。用户通过需求与反馈发起改进，目标是由 Harness 完成调查、开发、对照评测和独立验收，再在授权范围内启用。
+AgentStrata 是一个面向真实应用的开源 Agent 框架。它提供自研 Agent 系统、外部项目桥接能力，以及围绕 **Harness 与 Eval** 构建的持续改进流程。
 
-当前已有应用与 Agent 配置分离、双 runtime、QQ 和 Live2D 接入、独立 Eval、需求候选与已验收版本的启用撤回，以及故障修复和代码治理。Harness 编排直接使用 LangGraph，项目定义身份权限、候选、评测证据和独立验收。改进工作台与真实闭环仍按阶段开发；fork、构建和部署在具体接入需要时使用。
+你可以把 Agent 连接到 Live2D、QQ / NapCat，或其他提供 API、工具接口和消息渠道的项目；为应用配置独立的模型、人格、工具与记忆；再通过需求或运行反馈，发起调查、开发、对照评测和独立验收，把通过验证的改动启用到指定实例。
 
-## 实施状态与开发计划
+**项目的重点，是把“连接应用”和“持续改进 Agent”放进同一套可追踪的工程流程：每次改动有目标，效果有对照，运行版本有来源。**
 
-| 状态 | 内容 | 使用或开发入口 |
-| --- | --- | --- |
-| 已有基础 | LangGraph、Codex 执行路由，独立 Eval，Harness 修复、治理与受控源码交付 | [架构总览](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md)、[Harness 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md) |
-| 已有基础 | QQ 渠道和 Live2D 独立客户端、插件安装与任务观测 | [QQ](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/qq.md)、[Live2D](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md) |
-| 已实现 M1 | 应用文件引用独立 Agent profile；新建应用拥有独立模型用途；提供显式配置迁移，复用既有 runtime 与实例状态管理 | [配置归属](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/configuration.md#配置归属与文件引用)、[迁移步骤](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#迁移内联-agent-配置) |
-| 已实现 M1.1 | 双 runtime 收敛、自有子 Agent 使用 LangGraph、Native 配置退役 | [执行契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md#一条执行契约) |
-| 已实现 M2 | Live2D 与 QQ/NapCat 桥接的连接、能力、权限、取消和回执基线；两个 runtime 的受控生产装配验证 | [桥接基线](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/runtime.md#外部桥接基线) |
-| 已实现 M3 | Agent 与桥接 Suite、源码版本绑定和独立事实评分；支持同条件基线候选对照，平台对端为受控环境 | [评测边界](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/evaluation.md#agent-与外部桥接评测)、[运行指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md#live2d-与-qq-桥接基线) |
-| 已实现 M4 | 从接入或改进需求生成本地候选，复用 Harness 图、独立验收与 M3 应用回归；固定上游源码只读调查 | [需求任务](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md#提交接入或改进需求) |
-| 已实现 M5 | 准备独立版本、显式启用已验收候选、实际运行身份核验、失败撤回与中断对账；当前提供 CLI 和控制接口 | [启用与撤回](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#启用与撤回已验收版本) |
-| 后续实现 | M6—M7：改进工作台及真实闭环 | [分阶段开发](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发) |
+## 项目特色
 
-主计划的 `accepted` 表示设计可进入实施，不代表整套能力已经完成。当前命令与操作条件以快速开始和指南为准；阶段验收通过后，再更新对应能力状态。
+| 特色 | 解决的问题 |
+| --- | --- |
+| **Agent、应用与配置分离** | 同一套 Agent 能力可以服务不同应用；每个实例独立选择 runtime、模型、人格、工具、记忆和工作区。 |
+| **接入现有项目** | 沿 Channel、Gateway 客户端、工具接口与 MCP 连接外部能力；优先复用现有协议，必要时编写薄适配器或维护受管源码。 |
+| **需求驱动的 Harness** | 从新增能力、运行问题或代码治理目标出发，组织调查、计划、编码、测试、审核与返工。 |
+| **独立的 Eval** | 冻结输入、评分和可比条件，核对 Agent 行为、工具结果、桥接回执与真实产物，保护已有能力。 |
+| **候选与运行版本对应** | 接受回执绑定精确候选；启用后核对实际加载的代码和配置，失败撤回，执行中断先对账。 |
+| **过程可以检查和接管** | Console 与 CLI 提供统一控制入口，保留任务轨迹、角色产物、模型与工具记录、评测结果和版本状态。 |
 
-代表性使用场景：
+## 应用场景
 
-- **运行已有应用。** 使用 QQ 机器人或 Live2D 客户端，配置模型、工具与运行环境，查看执行与评测证据。
-- **连接外部能力。** 通过 CLI 提交接入目标、批准的固定仓库来源及可写范围，沿现有协议生成桥接候选；需要改动上游时另行明确源码维护范围。
-- **按需求改进。** CLI 的 `improve` 生成候选并执行独立验收；Console 改进工作台与授权内版本启用仍按后续阶段实施。
+**让 Live2D 成为 Agent 的交互界面。** 通过独立客户端完成文字、语音和角色呈现，Agent 负责理解任务、组织上下文与调用工具；表情和动作通过工具接口执行，并记录浏览器回执。角色生成器、角色库与 Windows 桌面壳作为可选组件配合使用。
+
+**让 QQ / NapCat 成为 Agent 的消息渠道。** 沿 OneBot 接入消息收发，在宿主中统一处理身份、准入、会话与工具权限。Agent 的能力改进可以同时验证对 QQ 行为的影响，避免只改善一个入口，却破坏另一个入口。
+
+**把自己的项目接入 Agent。** 提供接口说明或固定仓库版本、接入目标与可修改范围，由 Harness 调查已有能力，设计工具、插件或适配器。源码维护、构建和部署按具体需求展开，应用仍可以独立运行。
+
+例如，你可以提出这样的需求：
+
+> 让 Live2D 角色在任务完成后给出正确的动作反馈；任务失败时如实说明，避免误播完成动作。同时保留 QQ 原有的回复和权限行为。
+
+围绕这个目标，框架组织候选修改和验收：核对 Agent 是否选用了合适的工具、动作是否真正执行、失败路径是否正确，以及 QQ 是否出现回归。评测、审核与启用结果分别保留，便于判断是否接受、继续返工或撤回版本。
 
 ## 框架总览
 
-实线展示已有运行关系与修复验证，虚线展示后续扩展。完整设计见[主计划](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#职责与数据流)。
-
-配置、实例、会话、候选、评测与验收之间的关系见主计划的 [ERD 与实现映射](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#实体关系与实现映射)；图中区分已有对象与后续阶段目标。
+AgentStrata 将日常运行与持续改进分开组织。应用使用配置选定的 Agent；Harness 和 Eval 在运行链之外工作，生成并验证下一版代码或配置。
 
 ```mermaid
 flowchart TB
-    P["Live2D、QQ / NapCat 等外部项目"] <--> B["桥接：Channel、Gateway 客户端、工具接口"]
-    B <--> A["AgentStrata 宿主：身份、权限、上下文、工具、会话与交付"]
-    PROFILE["独立 Agent profile：runtime、模型、提示词与工具"] --> A
-    A <--> L["LangGraph：自研执行循环"]
-    A <--> C["Codex：app-server"]
-    UI["Console / CLI"] --> H["Harness：已有修复与治理"]
-    H <--> E["Eval：基线、候选与独立验收"]
-    H --> D["受控源码交付"]
-    UI -. "新增接入与功能反馈" .-> H
-    E -. "授权内启用，失败撤回" .-> A
+    QQ["QQ / NapCat"] <--> CH["Channel · 平台事件与投递"]
+    LIVE["Live2D / 自定义客户端"] <--> GW["Gateway · 身份、准入与协调"]
+    CH <--> GW
+    GW <--> APP["Application · 会话、资源与运行策略"]
+    APP <--> AG["Agent · 上下文、模型与工具"]
+    PROFILE["独立 Agent Profile"] --> APP
+    AG --> LG["LangGraph Runtime"]
+    AG --> CX["Codex Runtime · app-server"]
+    AG <--> TOOLS["ToolRegistry / MCP / 外部工具"]
+    TOOLS <--> EXT["外部项目与服务"]
+
+    UI["Console / CLI"] --> H["Harness · 调查、开发、返工与审核"]
+    AG -. "运行证据与反馈" .-> H
+    H <--> E["Eval · 基线、候选与回归对照"]
+    H --> ACCEPT["独立接受 · 绑定精确候选"]
+    E -- "评测结果" --> ACCEPT
+    ACCEPT -- "在授权范围内" --> V["版本管理 · 启用、核验与撤回"]
+    V -. "更新代码与配置" .-> APP
+    V -. "更新桥接与工具" .-> TOOLS
+
+    classDef runtime fill:#eff6ff,stroke:#3b82f6,color:#172554;
+    classDef improve fill:#ecfdf5,stroke:#10b981,color:#064e3b;
+    class CH,GW,APP,AG,PROFILE,LG,CX,TOOLS runtime;
+    class H,E,ACCEPT,V improve;
 ```
 
-实际消息处理遵循 Channel → Gateway → Application → Agent 四层职责，Harness 与 Eval 在链外协作。实例通过 Agent profile 选择一个 runtime，记忆和工作区仍由各实例管理。LangGraph 路径可优化自有执行循环；Codex 路径可优化宿主提供的提示词、工具、上下文与桥接，其原生线程和压缩由 Codex 管理。
+日常消息遵循 **Channel → Gateway → Application → Agent** 四层职责。Live2D 等独立客户端直接使用 Gateway；外部功能也可以作为工具被 Agent 调用。身份与权限由宿主确定，执行结果、服务方确认和用户可见交付分别记录。
 
-## 如何实现自我优化
+### 一个 Agent 宿主，两种执行方式
 
-当前自我优化发生在代码、获准提示词、工具实现、执行流程及受限的 Skill 经验层面。每次改进先形成候选，再由冻结的验证条件与独立审核判断是否接受。需求候选可通过独立的启用操作进入指定实例；源码交付、候选接受与实际运行状态分别记录。
+项目统一定义身份、权限、上下文、工具、会话和结果契约。一个正常回合由配置选定的 runtime 执行，模型连接与认证独立管理。
 
-```mermaid
-flowchart TB
-    R[Agent 运行与任务证据] --> P[失败 Case 或治理发现]
-    P --> H[Harness 调查与候选修改]
-    H --> E[Eval 对照评测与回归检查]
-    E --> A[独立验收与审核]
-    A -- 定向返工 --> H
-    A -- 证据不足 --> G[保留候选与缺口]
-    A -- 通过 --> D[受控交付]
-    D -- 新版本用于后续任务 --> R
-```
-
-| 改进方式 | 如何开始 | 如何判断有效 |
+| Runtime | 执行方式 | 主要改进范围 |
 | --- | --- | --- |
-| 故障自修复 | 选择符合条件的失败 Case 或机器人任务 | 确认失败基线，验证原目标改善，并保护已有通过项 |
-| 自身代码治理 | 按现行设计与黄金原则调查代码熵，可包含 Harness 自身 | 证明实际改善与行为保持，通过仓库检查及独立审核 |
-| 经验沉淀 | Harness 相关治理项合入后，判断是否存在可复用方法 | 受限 Skill 学习任务经审核交付，由后续任务读取新版本 |
+| **LangGraph** | 在图执行基础上组织项目自有的 Agent 循环 | 推理与工具循环、上下文组织、预算分配和停止策略 |
+| **Codex** | 通过 app-server 使用原生执行循环、线程与压缩能力 | 宿主提供的提示词、工具、上下文、权限映射、桥接与配置 |
 
-操作者选择任务来源与预算，也可显式启用定时代码熵治理。当前任务始终使用冻结宿主、规则与评分；候选不能改变本次验收标准。新版本在后续任务生效，机器人实例更新仍按部署流程进行。这里的优化不涉及模型权重训练，执行状态、环境或证据无法确认时保留缺口。
+应用描述引用独立的 Agent Profile，实例状态由各应用持有。开发 worker 的模型与被优化应用的模型分别绑定；应用的日常运行不依赖 Harness 任务正在执行。
 
-## Harness：基于 LangGraph 的修复与验收
+模块职责和源码入口见[架构总览](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md)、[运行链](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/runtime.md)和 [Agent 执行契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)。
 
-Harness 使用 LangGraph 的图、子图、检查点和中断恢复组织调查、计划、编码、测试、返工与验收。项目实现来源冻结、角色权限、候选工作区、失败分类、预算、外部操作回执与接受条件。新架构将在这一基础上增加应用接入和需求驱动的改进入口，共用开发与验收流程。
+## 改进闭环
 
-- **有依据地改。** 从失败运行、人工线索或治理发现形成明确目标，在隔离工作区生成候选。
-- **编码与验收分权。** Coding 只写获准产品文件，Test 只写验证草案，Review 独立审查；既有测试、评分与当前宿主保持冻结。
-- **按具体失败返工。** 产品、测试、评分、环境和材料问题分别记录，明确错误返回相关角色，预算和无进展规则约束循环。
-- **精确绑定结果。** 只有目标、保护集、仓库回归和所需独立确认满足要求，才签发绑定候选与证据的验收回执。
-- **可恢复、可追查。** 图检查点与外部操作回执分别核对，已有确认结果可复用，执行终态未知时先对账；角色产物和命令日志按需查看。
+自我优化的对象包括 Agent 执行逻辑、提示词、上下文、工具、Skill 和桥接。它以明确目标和可验证的候选为单位推进。
 
-修复验收、PR 交付和部署分别记录。完整机制见 [Harness 契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/harness.md)，操作见 [Harness 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)。
+| 步骤 | 框架做什么 | 留下什么依据 |
+| --- | --- | --- |
+| **定义目标** | 选择应用，提交接入需求、改进要求、失败运行或治理目标 | 冻结的目标、来源、修改范围与执行条件 |
+| **调查与开发** | 追踪调用链，优先复用接口，在隔离工作区生成候选 | 计划、源码索引、角色产物与补丁 |
+| **对照评测** | 在可比条件下运行基线和候选，检查目标与保护集 | 逐项结果、工具轨迹、产物及回执 |
+| **独立验收** | 核对目标、回归、证据缺口和审核结果 | 绑定候选摘要的接受回执，或具体返工理由 |
+| **启用与观察** | 准备版本、等待可切换状态、启用并核对实际进程 | 运行版本身份、切换记录与恢复依据 |
 
-## Eval：评测与证据体系
+### Harness：把需求变成可审查候选
 
-Eval 为改动提供独立的判断依据。项目自行组织 Case、Target、Trial、隔离执行、服务生命周期、结果持久化与可比条件；具体评分遵循各基准的原生规则和题目声明的指标。
+Harness 编排直接复用 **LangGraph 的 StateGraph、子图、检查点和中断恢复**。AgentStrata 实现应用来源与授权、角色权限、隔离工作区、操作回执、预算和接受规则。
 
-| 能力 | 对开发者的价值 |
-| --- | --- |
-| 冻结题目、执行对象、评分与环境条件 | 对照基线和候选，区分改善、已有失败和新增回归 |
-| 保存回答、工具轨迹、真实产物与逐项评分 | 判断失败发生在哪一步，为修复和瓶颈分析提供依据 |
-| 独立保存原生评分与附加语义评分 | 保留原目标，避免附评分数覆盖基准成绩 |
-| 核对题集、模型、评分与环境的可比性 | 避免把执行条件变化直接解释为能力进步 |
+- **按职责协作。** Plan 调查和设计，Coding 修改获准代码，Test 提供独立验证，Review 审核精确候选；必要时重新规划或定向返工。
+- **当前任务的规则保持冻结。** 候选可以改进后续使用的实现，不能靠更改本轮评分、验收条件或宿主控制程序获得通过。
+- **不同目标使用不同证据。** 故障修复核对原问题，新功能验证新目标，代码熵治理要求实际改善与行为保持；可复用经验可以进入受限 Skill 学习。
+- **恢复以事实为依据。** 图检查点保存执行位置，操作回执记录外部动作。结果未知时先查询原执行，不重复创建任务或盲目重放副作用。
 
-项目实现 **IFEval、BFCL、GAIA 等公开 benchmark 的适配、执行与评分流程**，同时维护自建 Agent 任务与红队用例。环境或数据未准备时显示阻断原因。符合来源条件的失败实例可以进入 Harness，原题与评分继续由 Eval 管理。
+机制见 [Harness 契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/harness.md)，使用见[需求与修复指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)。
 
-详见 [Evaluation 机制](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/evaluation.md)、[评测指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md)与[用例指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation-cases.md)。
+### Eval：回答“改动有没有用”
 
-## 项目模块与执行路由
+Eval 管理 Case、Target、Trial、隔离执行、评分、结果与证据。项目实现 **IFEval、BFCL、GAIA 等公开 benchmark 的适配、执行与评分流程**，并维护 Agent 任务、桥接、权限与红队用例。
 
-消息运行遵循项目定义的 **Channel → Gateway → Application → Agent** 四层架构。身份、准入、资源、会话、模型、工具与用户交付各有职责；Harness、Eval 和 Console 位于消息运行链之外。
+评测分别检查三个层面：**Agent 是否完成任务，桥接是否遵守接口与权限，外部项目是否实际执行或交付。** 原生评分、确定性事实和必要的语义评分分别保存，环境失败与证据缺失单独记录。基线、模型、题目或环境变化会影响可比性，关键行为退步不能由总分增长抵消。
 
-| 项目模块 | 负责什么 |
-| --- | --- |
-| Agent 运行框架 | 四层职责、身份权限、会话、实例配置、执行结果与交付事实 |
-| 模型与执行路由 | 按配置选择执行方式与模型，共享项目定义的任务、工具、权限和结果契约 |
-| 工具、上下文与记忆 | 在获准范围内提供能力、准备材料并保存上下文 |
-| Harness | 基于 LangGraph 的修复与治理编排，项目定义角色权限、候选隔离、操作回执和独立验收 |
-| Eval | 评测对象、任务执行、条件绑定、评分组织、证据、比较与服务生命周期 |
-| Console / CLI | 任务控制、观测、候选与证据查看，以及交付状态查询 |
+机制见 [Evaluation](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/evaluation.md)，运行步骤见[评测指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md)。
 
-框架的执行方式与模型通过路由配置选择，各入口的支持范围以对应契约为准。具体路由见 [Agent 与执行 Runtime](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)，设计参考、当前实现依赖和源码入口见[架构总览](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md)。
+### 版本管理：让接受结果对应到实际运行
+
+通过验收的代码和配置以独立版本保存。启用时核对目标实例、运行条件和候选身份，等待已有执行收尾，再切换并检查实际进程的代码、配置和监听归属。失败尝试恢复上一版本，恢复结果未知时保留诊断。
+
+**候选通过、源码提交、版本启用和真实交付是不同事实。** 凭据、会话、记忆与工作区留在原实例；依赖升级和持久数据迁移需要各自的验证与恢复依据。机制与操作见[版本交付](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/delivery.md#已验收版本启用与撤回)和[实例运维](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#启用与撤回已验收版本)。
+
+## 产品界面
+
+Console 将实例、运行任务、改进过程和评测证据集中呈现。以下为使用**示例数据**渲染的界面截图；图中任务状态与数字用于展示信息组织，实际效果以对应运行记录为准。点击图片可查看原图。
+
+**Harness：沿目标、候选和独立验收追踪一次改进。**
+
+[![AgentStrata Harness 界面示例：来源、候选生成、验证与审核过程](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/harness.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/harness.png)
+
+**Eval：选择评测对象与题目，查看评分方式和执行条件。**
+
+[![AgentStrata 评测中心界面示例：Agent 任务、公开基准与评分计划](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/evaluation.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/evaluation.png)
+
+<details>
+<summary>查看实例管理与代码治理界面</summary>
+
+**实例管理：查看 Gateway、渠道连接与进程状态。**
+
+[![AgentStrata 实例管理界面示例：QQ 机器人、Gateway 与渠道观测](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/bots.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/bots.png)
+
+**代码治理：保留调查依据、问题范围与候选审核结论。**
+
+[![AgentStrata 代码治理界面示例：问题发现、调查依据与独立审阅](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/code-health.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/code-health.png)
+
+</details>
 
 ## 快速开始
 
-### 给人类：选择你的使用路径
+### 准备源码环境
 
-在 Linux 或 WSL2 准备源码开发环境：
+核心运行环境为 Linux / WSL2，Python 支持 3.12–3.13。安装 Git 与 uv 后：
 
 ```bash
 git clone https://github.com/Ling-ye/AgentStrata.git
 cd AgentStrata
-uv sync --frozen --extra agent --extra acp --extra dev --extra weixin
+uv sync --locked --extra agent --extra acp --extra dev --extra evaluation --extra weixin
 uv run agentstrata --help
 ```
 
-| 想做什么 | 从哪里开始 |
+以上准备开发环境。模型连接、凭据、平台账号和运行组件按使用路径配置；秘密放在环境变量或私有环境文件中，不写入仓库。
+
+### 选择一条路径
+
+| 你的目标 | 入口 |
 | --- | --- |
-| 测量 Agent 表现、比较改动 | 按 [Evaluation 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md)准备模型、数据与评测环境 |
-| 修复失败或改进框架自身 | 按 [Harness 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)配置专用 worker、评测服务和交付，再选择失败来源或代码熵任务 |
-| 运行 QQ 机器人应用 | 按[首次部署](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)使用 `bash deploy/wsl/quickstart.sh`，可先加 `--dry-run` 预览 |
-| 使用已有 Live2D 客户端或角色生成器 | 按 [Live2D 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md)准备模型连接并安装对应插件 |
-| 修改代码与扩展能力 | 从[开发指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/development.md)进入对应领域和检查范围 |
+| **先运行一个 QQ 助手** | 执行 `bash deploy/wsl/quickstart.sh`；可用 `--dry-run` 预览。详见[首次部署](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)。 |
+| **连接 Live2D 或制作角色** | 按 [Live2D 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md)配置模型连接和插件；角色制作见[角色预设指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/character-presets.md)。 |
+| **使用 Console 管理应用与任务** | 按[实例与 Console 运维](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md)准备服务；控制台默认地址为 `http://localhost:8910`。 |
+| **衡量 Agent 或模型能力** | 按[评测指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md)选择对象、题目、数据与评分配置。 |
+| **发起接入或改进需求** | 按 [Harness 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md#提交接入或改进需求)配置开发 worker 和 Eval，选择目标及修改范围。 |
+| **启用通过验收的候选** | 按[版本启用指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#启用与撤回已验收版本)核对实例、回执和运行条件。 |
 
-正式 Harness 入口冻结远端 main，通过验收后由宿主创建正式 PR 并启用 squash 自动合并；开始前须配置相应交付权限。模型、平台账号与第三方服务由使用者配置。上述命令准备源码环境，各运行组件的配置按对应指南完成。
+Console 是管理入口，应用运行与评测服务各自拥有生命周期。选配 Live2D 客户端使用独立 Python 环境；Windows 桌面壳通过 WSL 后端工作。各组件的安装条件、模型调用费用与第三方服务要求以对应指南为准。
 
-### 给 AI：按任务逐层读取
+## 从源码理解项目
 
-可以将以下说明交给仓库中的 AI 协作者：
+| 目录 | 主要职责 |
+| --- | --- |
+| `src/chatcopilot/agent` | Agent 会话、LangGraph/Codex 适配、上下文、工具与子 Agent |
+| `src/chatcopilot/gateway`、`application`、`channels` | 身份与准入、会话、消息运行、渠道及交付协调 |
+| `src/chatcopilot/harness` | 调查与开发编排、候选、独立验收、受控交付 |
+| `src/chatcopilot/evals` | 题目、执行对象、评测生命周期、评分、证据与比较 |
+| `src/chatcopilot/plugins`、`integrations` | 软件安装、版本管理、外部客户端与桥接 |
+| `bots`、`console`、`docs` | 应用与 Agent 配置、工作台、操作和领域文档 |
 
-> 先读取根目录 AGENTS.md，确认 AgentStrata 的定位、协作边界与任务路由。根据我的当前目标读取相关领域章节，沿源码入口核对实现与测试；开发新接入框架时先确认主计划中的本阶段范围，涉及架构、公共契约、部署或迁移时再展开对应规格。说明依据、改动与实际验证。
+Python 包命名空间保留为 `chatcopilot`，对外命令为 `agentstrata`。领域内部遵循 **Types → Config → Repo → Service → Runtime → UI** 的依赖约束；它描述源码依赖，与消息运行的四层架构是两个视角。
 
-[AGENTS.md](https://github.com/Ling-ye/AgentStrata/blob/main/AGENTS.md)是 AI 协作入口，[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)面向使用与开发任务。两条路径共用领域正文，完整规则只维护一处。
+## 开源基础与设计参考
 
-## 产品界面
+AgentStrata 优先复用成熟基础设施，把项目实现集中在 Agent 宿主、应用接入、权限、评测证据和独立验收上。
 
-以下截图由当前 Console 前端配合**示例数据**渲染，展示界面布局与信息组织，不代表真实部署、模型成绩或线上修复结果；点击图片可查看原图。
+| 项目 | 在 AgentStrata 中的作用 |
+| --- | --- |
+| [LangGraph](https://github.com/langchain-ai/langgraph) | Harness 的图执行、子图、持久化和中断恢复，以及 LangGraph runtime 的执行基础 |
+| [Codex](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md#双-runtime-与退役配置) | 经 app-server 接入执行能力，也可作为 Harness 开发 worker |
+| [DeepEval](https://github.com/confident-ai/deepeval) 与基准原生评分器 | 在项目 Eval 生命周期中执行具体指标与必要语义评分 |
+| [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber) | 独立 Live2D 客户端的上游基础，通过 Gateway 与 MCP 对接 Agent |
 
-**Harness：冻结来源、修复步骤与验收依据**
-
-[![示例数据中的 Harness 修复详情，展示冻结来源、任务概览和分层流程记录](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/harness.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/harness.png)
-
-**Evaluation：题目、执行对象与评分计划**
-
-[![示例数据中的测评中心，展示 Agent 任务题库、GAIA 目录和评分运行计划](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/evaluation.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/evaluation.png)
-
-<details>
-<summary>查看任务轨迹、代码熵治理与机器人实例</summary>
-
-**任务运行：四层轨迹、模型输入与工具结果**
-
-[![示例数据中的 QQ 任务运行页，展示四层运行轨迹、Agent 模型与工具调用列表，以及按需读取的模型消息和响应](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/task-runtime.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/task-runtime.png)
-
-**代码熵治理：问题调查与待判断证据**
-
-[![示例数据中的代码熵回收详情，展示批次、问题主题和调查依据](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/code-health.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/code-health.png)
-
-**QQ 机器人实例：Gateway 运行状态**
-
-[![示例数据中的 QQ 机器人实例页，展示 Gateway 运行状态与 Channel 连接观测](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/bots.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/bots.png)
-
-</details>
-
-## 开源价值与相关项目
-
-项目开放运行、Harness、Eval、修复规则与验收源码，开发者可以自行运行、审查和修改这套改进过程。基础能力优先复用成熟项目，应用接入与独立验收保留必要实现；模型、计算资源与第三方服务仍需自行配置。
-
-| 项目 | 参考或复用内容 | 当前采用方式 |
-| --- | --- | --- |
-| [LangGraph](https://github.com/langchain-ai/langgraph) | 图执行、子图、持久化、中断与恢复 | 已是 Harness 及 LangGraph runtime 的实际依赖，后续继续直接复用公共 API |
-| [DeepEval](https://github.com/confident-ai/deepeval) 与官方评分器 | 具体指标和基准评分 | 已在 Eval 生命周期内使用，评测对象、条件与证据由项目管理 |
-| [OpenClaw](https://github.com/openclaw/openclaw/tree/672c4357a65aa960e1fcf2be3fecf47d56c25f37) | 宿主与执行循环分工、Codex app-server 工具桥接 | 设计参考；继续复用本项目 RuntimeAdapter，不引入上游运行体系 |
-| [Deep Agents / better-harness](https://github.com/langchain-ai/deepagents/tree/f26eb54c9b9f66d2ea7edbb9748413d58744534d/examples/better-harness) | Agent 执行能力组织、基线与候选改进流程 | 设计参考，未作为新框架接入；独立验收和隔离边界仍由项目保持 |
-| [GEPA](https://gepa-ai.github.io/gepa/api/optimize_anything/optimize_anything/) / [Harbor](https://docs.harborframework.com/agents/custom-agents) | 候选搜索、外部 Agent 与评测环境适配 | 后续候选方案，首版不增加强依赖 |
-
-具体源码入口、固定 revision、版本差异和采用理由见[主计划的复用清单](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#开源复用与版本依据)。设计参考不代表已经集成，也不代表性能或修复成功率排名。
-
-各执行入口的前置条件与支持范围见 [Agent 路由说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)和 [Harness 操作指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md)。已验收版本可通过 CLI 显式启用，通用仓库自动接入与改进工作台继续按主计划推进；模型权重训练不在本计划中。产品回放可使用冻结外部夹具，模拟回执不证明真实 QQ 送达。
+[OpenClaw](https://github.com/openclaw/openclaw) 与 [Deep Agents / better-harness](https://github.com/langchain-ai/deepagents)提供宿主、执行循环和评测驱动改进的设计参考。实际依赖、固定源码版本及采用边界见[架构说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md)与[源码复用依据](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#开源复用与版本依据)。
 
 ## 参与开发
 
-按阶段建设新框架时，从[主计划开发阶段（含 M1.1）](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发)确认前置条件、交付物和验收标准，再进入[贡献指南](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md)与[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)。也欢迎继续改进已有 Harness、Eval、运行、工具和 Console。Python namespace 仍为 `chatcopilot`，依赖与支持范围以 [pyproject.toml](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml) 为准。
+欢迎贡献应用桥接、Agent 能力、评测用例、Harness 改进和工作台体验。一个清楚的需求、一条有代表性的失败路径，或一组可复现的基线与候选证据，都可以成为贡献的起点。
 
-[安全](https://github.com/Ling-ye/AgentStrata/blob/main/SECURITY.md) · [支持](https://github.com/Ling-ye/AgentStrata/blob/main/SUPPORT.md) · [行为准则](https://github.com/Ling-ye/AgentStrata/blob/main/CODE_OF_CONDUCT.md) · [变更记录](https://github.com/Ling-ye/AgentStrata/blob/main/CHANGELOG.md) · [AGPL-3.0-only 许可](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
+从[贡献指南](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md)开始，按[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)进入相关领域。架构与公共契约的改动遵循 [SDD](https://github.com/Ling-ye/AgentStrata/blob/main/docs/maintenance.md#sdd-生命周期)。AI 协作者先读 [AGENTS.md](https://github.com/Ling-ye/AgentStrata/blob/main/AGENTS.md)，再沿当前任务的源码和测试核对事实。
+
+[问题与建议](https://github.com/Ling-ye/AgentStrata/issues) · [使用支持](https://github.com/Ling-ye/AgentStrata/blob/main/SUPPORT.md) · [安全报告](https://github.com/Ling-ye/AgentStrata/blob/main/SECURITY.md) · [行为准则](https://github.com/Ling-ye/AgentStrata/blob/main/CODE_OF_CONDUCT.md) · [变更记录](https://github.com/Ling-ye/AgentStrata/blob/main/CHANGELOG.md)
 
 ## 版权、许可与源码
 
-Copyright (C) 2026 Lingye · 联系：616202172@qq.com。项目自有代码和文档采用
-[AGPL-3.0-only](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)，完整适用范围见 [COPYRIGHT](https://github.com/Ling-ye/AgentStrata/blob/main/COPYRIGHT)。允许依许可商业使用、
-修改和再分发；本程序不提供担保。第三方材料按[第三方声明](https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md)保留原许可。
-历史版本已授予的 MIT 权利不受本次迁移影响。
+Copyright (C) 2026 Lingye · 联系：616202172@qq.com。
 
-[项目源码](https://github.com/Ling-ye/AgentStrata)可公开获取；Console「许可与源码」、
-`agentstrata source` 和机器人 `/source` 提供同一入口。部署修改版时，运营者须将
-`CHATCOPILOT_SOURCE_URL` 设置为实际运行版本的完整源码获取地址，不能只指向上游最新分支。
-源码交付要求与选配集成边界见[公开与发布契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/publication.md#许可与对应源码)。
+项目自有代码和文档采用 [AGPL-3.0-only](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)，完整适用范围见 [COPYRIGHT](https://github.com/Ling-ye/AgentStrata/blob/main/COPYRIGHT)。第三方项目、模型、SDK 和改编材料保留各自许可，见[第三方声明](https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md)。Open-LLM-VTuber 前端补丁适用其上游条款。历史版本已授予的 MIT 权利不受许可迁移影响。
+
+[项目源码](https://github.com/Ling-ye/AgentStrata)可公开获取。部署修改版时，将 `CHATCOPILOT_SOURCE_URL` 指向实际运行版本的完整源码获取地址；Console 的许可与源码入口、`agentstrata source` 和机器人 `/source` 使用同一来源。具体要求见[公开与发布契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/publication.md#许可与对应源码)。

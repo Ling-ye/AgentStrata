@@ -5,7 +5,7 @@ AgentStrata 提供自研 Agent、外部桥接，以及基于 Harness 与 Eval �
 Harness 与 Eval 支撑故障修复、代码熵治理和受限 Skill 学习。
 本页维护当前实现与目标架构的关系，具体运行规则由对应领域正文维护。
 
-模块关系见首页的[框架总览图](../../README.md#框架总览)，其中区分已有模块与计划扩展。
+模块关系见首页的[框架总览图](../../README.md#框架总览)，具体实现与职责由本页及领域正文维护。
 [Agent、外部桥接与持续改进主计划](../../specs/application-harness-framework/spec.md)维护目标设计与阶段，
 四层基线与各领域规格继续维护现行契约。
 

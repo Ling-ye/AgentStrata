@@ -5,23 +5,25 @@
 
 ## 项目定位
 
-AgentStrata 提供自研 Agent 系统、外部项目桥接，以及基于 Harness 与 Eval 的持续改进机制。
-LangGraph 与 Codex 按实例配置选择，Live2D、QQ/NapCat 等通过现有渠道、客户端或工具接口接入。
-[主计划](specs/application-harness-framework/spec.md)定义 M0、M1、M1.1 与 M2—M7；按指定阶段实施，
-以 Agent 及其使用外部能力的效果为主要改进对象，fork 与部署按实际接入需要展开。
+AgentStrata 让自研 Agent 连接外部应用，并以 Harness 与 Eval 驱动持续改进。
+Live2D、QQ/NapCat 等通过 Channel、Gateway 客户端、工具接口或 MCP 接入；应用日常运行与改进任务各自拥有生命周期。
 
-当前已有配置分离、双 runtime、Eval、故障修复、代码治理与 QQ／Live2D 接入。
-Harness 编排直接使用 LangGraph，项目定义角色权限、候选、证据与独立验收。
-需求改进沿现有 Harness 图生成本地候选；M5 通过显式 CLI/控制操作启用已验收版本并核对运行身份。
-改进工作台和真实闭环仍属后续阶段，不把目标能力写成已完成。
-Native 独立执行路径退役，旧配置需重新配置；业务历史、人格、记忆与凭据保留。
+统一宿主管理身份、权限、上下文、工具、会话与交付。LangGraph 与 Codex 按实例配置选择，
+一次正常回合由一个 runtime 执行。Harness 的开发 worker 与被优化应用分别绑定模型。
+Harness 编排直接复用 LangGraph；项目定义来源冻结、角色权限、候选、证据、独立验收及版本启用规则。
+Eval 负责评测条件、执行与评分，候选接受、源码交付和运行版本分别记录。
+
+改进对象包括 Agent 执行逻辑、提示词、上下文、工具、Skill 与桥接。
+接入优先复用协议和成熟组件，受管源码、fork 与构建按实际需求展开。
+项目定义与长期设计见[主计划](specs/application-harness-framework/spec.md)，本次范围以用户任务为准，事实沿源码与领域正文核对。
 
 应用 `bot.yaml` 引用独立 Agent profile，运行层复用原类型化装配结果；旧内联配置须显式迁移，
 不在加载时回退或改写文件。字段归属与原有共享引用的含义见[配置](docs/reference/configuration.md#配置归属与文件引用)。
 
 执行方式与模型按配置路由，框架能力由公共契约定义；某个执行入口的默认适配不代表框架唯一执行方式。
 项目定位、执行路由、设计参考与实际依赖分别说明，具体事实以[架构总览](docs/reference/architecture.md)及领域正文为准。
-当前自我优化通过故障修复、代码熵治理和受限 Skill 学习实现，当前任务使用冻结规则，有效改动由后续任务加载。
+需求改进、故障修复、代码熵治理和受限 Skill 学习共用候选与证据边界；当前任务使用冻结规则，有效改动由后续任务加载。
+Native 独立执行路径已退役，旧配置按运行时正文处理；业务历史、人格、记忆与凭据保留。
 
 ## 协作与授权
 
