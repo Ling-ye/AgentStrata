@@ -68,6 +68,11 @@ class HarnessController:
         return self.start_case_instance(request.case_instance_id, request.options,
             request_id=request.request_id, feedback=request.feedback, launch=launch)
 
+    def start_improvement(self, request, options: RepairOptions, *, request_id=None, launch=True):
+        from chatcopilot.harness.improvement_runtime import source
+        return self._start(lambda: source(self.repository, request, self.evaluator),
+            {"kind": "application", **asdict(request)}, options, request_id=request_id, launch=launch)
+
     def _governance_runs(self):
         from chatcopilot.harness.governance_runtime import governance_runs
         return governance_runs(self)
@@ -231,7 +236,11 @@ class HarnessController:
         if feedback_payload:
             source = {**source, "feedback": feedback_payload}
         from chatcopilot.harness.delivery import remote_baseline
-        delivery = remote_baseline(self.repository, self.settings)
+        if source.get("kind") == "application":
+            from chatcopilot.harness.improvement_repository import baseline
+            delivery = baseline(self.repository)
+        else:
+            delivery = remote_baseline(self.repository, self.settings)
         commit = delivery["base_sha"]
         context = context_key(source)
         signature = source["failure_signature"] or [identity]
@@ -786,6 +795,7 @@ class HarnessController:
                 "artifact_fields",
                 "operations",
                 "verification_binding",
+                "upstream_source",
                 # Historical records remain readable, but their private receipts do not.
                 "role_executions",
                 "delivery_acceptance_receipts",
@@ -822,6 +832,8 @@ class HarnessController:
                 "regression_id",
                 "case_snapshot_id",
                 "governance_target",
+                "task_type", "goal", "allowed_paths", "goal_case_ids", "runtime_id",
+                "source_envelope", "source_envelope_digest",
             )
             if key in source
         }

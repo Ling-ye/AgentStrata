@@ -1,7 +1,8 @@
-# 运行 Harness 修复与代码熵治理
+# 运行 Harness 需求任务、修复与代码熵治理
 
-先配置执行环境与交付，再选择问题来源。正式任务冻结远端 main，在独立 worktree 修复；
+先配置执行环境，再选择问题来源。故障修复与代码熵任务冻结远端 main，在独立 worktree 修复；
 完整验收后由宿主提交、推送、创建正式 PR 并启用 squash 自动合并。未提交修改不进入基线，
+应用需求通过 `integrate`/`improve` 冻结当前源码并生成本地候选，不依赖 GitHub 交付。
 任务不会自动部署机器人。机制与限制见[修复契约](../reference/harness.md)。
 
 ## 前置条件
@@ -12,7 +13,7 @@
 | 编程执行器 | 原生 Linux Codex 二进制、已有专用凭据根及已登录的 worker lane |
 | Evaluation | 同 UID 的 Evaluation 服务可用，按[测评指南](evaluation.md)检查健康状态 |
 | 模型方案 | 在 Console「模型配置」保存 worker Codex 方案，绑定 `harness` 和 `code_health` 用途 |
-| GitHub 交付 | 完成下文[交付配置](#harness-pr-交付配置与恢复)，具备目标仓库授权 |
+| GitHub 交付 | 故障修复与代码熵任务需完成下文[交付配置](#harness-pr-交付配置与恢复)；本地需求候选不需要 |
 
 Harness 按需创建 systemd transient worker，没有常驻 Harness 服务。关闭 Console 不取消任务；
 CLI 可直接操作同一用户的 Harness。前端写操作只接受同源、本机连接，远程维护使用 SSH 隧道。
@@ -46,6 +47,30 @@ worker 按冻结依赖创建专用环境；uv 不在 PATH 且存在多个安装�
 ```bash
 python -m chatcopilot.harness --help
 ```
+
+### 提交接入或改进需求
+
+选择 Evaluation 服务已登记的仓库应用（`bots/<id>/bot.yaml`）；其 Agent profile 决定被测 runtime 和模型。
+已安装插件实例的直接选择与配置编辑留待 M6 工作台对接。以下示例使用既有桥接 Case
+作为目标，`--allow-path` 是允许修改的目录或现有文件，可重复传入。应按需求缩小范围：
+
+```bash
+.venv/bin/python -m chatcopilot.harness improve \
+  --bot lingye-copilot-qq \
+  --goal '改进 Live2D 多轮回复传递，保持 QQ 的现有行为' \
+  --allow-path integrations/open_llm_vtuber/agentstrata_vtuber \
+  --goal-case live2d-dialogue
+```
+
+首次接入使用 `integrate`。没有现成目标 Case 时省略 `--goal-case`，由独立 Test 角色建立新需求检查；
+应用 Suite 仍作为回归保护。仓库线索可通过 `--source-envelope <json-file>` 提供，字段为
+`resource_name`、`source_url`、`approved_ref`、`license_evidence`、`integration_intent`，
+沿用 adapter_forge 的来源批准约束。它不会自动 fork、发布或扩大可写范围。
+
+`--profile` 选择开发 worker 方案，`--request-id` 支持同请求重试，预算沿用 `--max-attempts` 与
+`--timeout-seconds`。预检和源码冻结失败时保留明确诊断；再次提交应使用新请求 ID，不能改写原任务。
+成功时通过任务详情读取候选、对照、独立审核与接受回执。`get/cancel/resume` 继续操作同一任务，
+未知执行须先按原 ID 对账。完整验收不等于实例已更新，启用另行处理。
 
 ### 修复测评失败 Case
 

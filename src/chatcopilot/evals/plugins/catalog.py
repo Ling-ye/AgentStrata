@@ -28,6 +28,8 @@ class PluginBinding:
 
 
 _BINDINGS: tuple[PluginBinding, ...] = (
+    PluginBinding("application-bridge", f"{_TRUSTED_PREFIX}application_bridge", PLUGIN_API_VERSION,
+                  frozenset({"agent_configured", "dry_run"})),
     PluginBinding("frozen-agent", f"{_TRUSTED_PREFIX}frozen_agent", PLUGIN_API_VERSION,
                   frozenset({"agent_configured", "dry_run"})),
     PluginBinding("agent-tasks", f"{_TRUSTED_PREFIX}agent_tasks", PLUGIN_API_VERSION,
@@ -120,7 +122,7 @@ def load_plugin_binding(binding: PluginBinding) -> EvaluationPlugin:
         raise ValueError(f"evaluation plugin driver allowlist mismatch for {binding.plugin_id}")
     if not callable(plugin.load_cases):
         raise TypeError(f"evaluation plugin load_cases hook is not callable: {binding.plugin_id}")
-    for hook_name in ("preflight", "prepare", "build_task", "execute_model", "open_case", "judge", "cleanup"):
+    for hook_name in ("preflight", "prepare", "build_task", "execute_model", "open_case", "judge", "cleanup", "product_identity", "validate_definition"):
         hook = getattr(plugin, hook_name)
         if hook is not None and not callable(hook):
             raise TypeError(

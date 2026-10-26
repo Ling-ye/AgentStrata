@@ -37,12 +37,16 @@ def digest(value: Any) -> str:
     ).hexdigest()
 
 
+def uses_project_checker(manifest: SuiteManifest) -> bool:
+    return manifest.track == "qq_message_flow" or manifest.plugin_id == "application-bridge"
+
+
 def supported_modes(manifest: SuiteManifest) -> list[str]:
     if manifest.plugin_id == "agent-tasks":
         return ["native_geval"]
     if manifest.purpose == "business_task":
         return ["geval"]
-    if manifest.track == "qq_message_flow":
+    if uses_project_checker(manifest):
         return ["native"]
     return ["native", "native_geval"]
 
@@ -94,15 +98,17 @@ def scoring_plan(
         "scorer": scorer_descriptor(manifest),
         "primary": "native",
         "framework": "AgentStrata 链路检查器"
-        if manifest.track == "qq_message_flow"
+        if uses_project_checker(manifest)
         else "DeepEval",
-        "framework_version": "" if manifest.track == "qq_message_flow" else ENGINE_VERSION,
+        "framework_version": "" if uses_project_checker(manifest) else ENGINE_VERSION,
         "mode": mode,
         "native": mode != "geval",
         "native_method": manifest.native_method,
         "quality": quality,
         "method": "LLM-as-a-Judge / G-Eval" if quality else "deterministic",
-        "implementation": "GEval / ConversationalGEval"
+        "implementation": manifest.scorer_version
+        if uses_project_checker(manifest)
+        else "GEval / ConversationalGEval"
         if suite_id == "agentstrata-capabilities-v1" and quality
         else "GEval"
         if quality
@@ -131,12 +137,12 @@ def benchmark_descriptor(manifest: SuiteManifest, cases: Sequence[EvalCase]) -> 
     )
     from chatcopilot.evals.business_policy import business_scoring_plan
 
-    is_qq = manifest.track == "qq_message_flow"
+    project_checker = uses_project_checker(manifest)
     return {
         "name": name,
         **organization_descriptor(manifest),
-        "framework": "AgentStrata 链路检查器" if is_qq else "DeepEval",
-        "framework_version": "" if is_qq else ENGINE_VERSION,
+        "framework": "AgentStrata 链路检查器" if project_checker else "DeepEval",
+        "framework_version": "" if project_checker else ENGINE_VERSION,
         "adapter_version": manifest.version,
         "coverage": coverage,
         "native_method": native,
@@ -146,7 +152,7 @@ def benchmark_descriptor(manifest: SuiteManifest, cases: Sequence[EvalCase]) -> 
         "rubrics": [{"id": key, "threshold": 0.7, **value} for key, value in RUBRICS.items()]
         if manifest.source_type == "public_benchmark"
         else [],
-        "judge": None if is_qq else scoring_snapshot()["judge"],
+        "judge": None if project_checker else scoring_snapshot()["judge"],
         "default_scoring": business_scoring_plan() if manifest.purpose == "business_task" else None,
         "case_set_hash": digest(
             [

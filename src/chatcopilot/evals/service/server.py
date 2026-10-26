@@ -118,6 +118,11 @@ class EvaluationServiceRuntime:
                 **({"code_source": payload["code_source"]} if "code_source" in payload else {}),
                 **({"expected_conditions": payload["expected_conditions"]} if "expected_conditions" in payload else {}),
             )
+        if operation == "evaluations.preview":
+            request = payload.get("request")
+            if not isinstance(request, Mapping):
+                raise ValueError("request must be a JSON object")
+            return self.application.preview(bot_id=_required_text(payload, "bot_id"), request=request)
         if operation == "evaluations.list":
             return self.application.list(
                 kind=_optional_text(payload, "kind"),

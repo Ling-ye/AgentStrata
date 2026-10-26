@@ -19,7 +19,8 @@ def evaluation_conditions(
         **({"configuration_invariants": snapshot["configuration_invariants"]} if snapshot.get("configuration_invariants") else {}),
         "grading": {
             key: definition.get(key)
-            for key in ("manifest", "protocols", "scoring", "quality_rubrics", "scoring_version")
+            for key in ("manifest", "plugin", "case_plugin_bindings", "execution_implementations",
+                        "protocols", "scoring", "quality_rubrics", "scoring_version")
         },
         "targets": {
             str(target["target_id"]): {

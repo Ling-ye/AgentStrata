@@ -15,7 +15,7 @@ Agent 可通过 LangGraph 或 Codex 执行，连接 Live2D、NapCat 等可由 Ag
 并在授权范围内启用通过验收的改进。
 
 本规格是唯一主计划。`accepted` 表示设计可实施，不表示所有目标已完成。
-当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛及 M2 外部桥接基线；M3—M7 待依次开发。
+当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛、M2 外部桥接基线、M3 Agent 与桥接评测及 M4 Harness 改进闭环；M5—M7 待依次开发。
 实现完成与运行实例部署分别验收。当前事实由[架构总览](../../docs/reference/architecture.md)及领域正文维护，
 计划接口在实现前不进入快速开始。
 
@@ -38,7 +38,7 @@ Live2D 与 QQ 从桥接基线阶段共同参与验证，每个应用默认拥有
 | 应用与配置 | M1 已分离 [ApplicationSpec、AgentProfile](../../src/chatcopilot/contracts/application.py)，复用 BotSpec 装配与实例状态 | 保持连接配置与 Agent 配置分离，按需扩展接入信息 |
 | 外部桥接 | [QQ OneBot](../../src/chatcopilot/channels/qq_onebot/driver.py)、[VTuber](../../integrations/open_llm_vtuber/README.md)、ToolRegistry 与 MCP | 整理能力、权限、取消、回执与接入验证 |
 | Harness | [修复图](../../src/chatcopilot/harness/engine/repair_graph.py)、[验收图](../../src/chatcopilot/harness/engine/acceptance_graph.py)、[adapter_forge](../../src/chatcopilot/component_catalog/subagents.py) | 复用调查、开发、验证、返工与验收图，支持新增接入和需求改进 |
-| Eval | [评测模型](../../src/chatcopilot/evals/models.py)管理 Case、Target、Trial、条件与证据 | 为两个 runtime 和两类接入建立能力、桥接及实际交付基线 |
+| Eval | [评测模型](../../src/chatcopilot/evals/models.py)管理 Case、Target、Trial、条件与证据；M3 桥接 Suite 与版本对照复用其生命周期 | 扩展具体改进场景，取得真实模型、外部交付与改进归因证据 |
 | 实例与交付 | [插件管理器](../../src/chatcopilot/plugins/service.py)、[源码交付](../../docs/reference/delivery.md) | 精确绑定验收候选、启用产物和实际运行版本，支持失败撤回 |
 
 现有外部软件的固定上游加补丁、安装管理仍由[插件规格](../external-software-plugins/spec.md)维护。
@@ -139,8 +139,8 @@ M2 沿这些接口工作，没有新增统一 Bridge 注册中心。
 
 #### 改进、验证与版本启用关系
 
-下图同时包含已有 Harness/Eval 对象和后续扩展。完整版本清单、外部桥接评测绑定及
-`ACTIVATION` 属于 M3—M5 目标，不因画入 ERD 而成为当前已实现接口。
+下图同时包含已有 Harness/Eval 对象和后续扩展。M3 将源码、runtime、Target 与桥接组件身份绑定到
+现有 Evaluation 快照；完整版本清单与 `ACTIVATION` 仍属 M4—M5 目标，不因画入 ERD 而成为当前已实现接口。
 
 ```mermaid
 erDiagram
@@ -239,7 +239,7 @@ Target 的局部 ID（例如 `codex`）不能充当全局主键，需连同 Eval
 | 运行时绑定 | [RuntimeSessionRef](../../src/chatcopilot/contracts/runtime_adapter.py)、[RuntimeSessionBinding](../../src/chatcopilot/contracts/execution.py) | M1.1 已有契约；恢复能力由 adapter 决定 |
 | 桥接配置与回执 | [M2 桥接基线](../../docs/reference/runtime.md#外部桥接基线)、[出站与投递契约](../../src/chatcopilot/contracts/gateway.py) | 概念投影现有 Channel、Gateway 客户端和工具配置，不引入万能驱动或客户端任务数据库 |
 | 版本与验证 | [CandidateRef、VerificationPlan、VerificationResult](../../src/chatcopilot/harness/models.py) | 复用已有快照和验证身份；完整组件清单按 M3—M5 扩展 |
-| Evaluation、Target、Case、Trial | [现有评测契约](../../src/chatcopilot/evals/models.py) | 已有生命周期与定义快照；Agent/桥接覆盖按 M3 扩展 |
+| Evaluation、Target、Case、Trial | [现有评测契约](../../src/chatcopilot/evals/models.py)、[版本快照](../../src/chatcopilot/evals/version_snapshot.py) | M3 复用生命周期与定义快照，加入桥接 Suite；版本身份存于 `config_snapshot.version_snapshot`，不新增表 |
 | 候选接受 | [AcceptedCandidate](../../src/chatcopilot/harness/agent_types.py) | 沿用独立验收签发，按目标版本清单补齐绑定 |
 | 版本启用 | [插件安装记录](../../src/chatcopilot/plugins/repository.py)、[实例运维](../../docs/guides/instances.md) | M5 扩展启用、运行身份核对与撤回，尚非现有完整事务 |
 
@@ -415,17 +415,29 @@ M5 沿现有实例与插件管理准备独立候选，等待可切换状态，�
 
 #### M3 Agent 与桥接评测
 
-- 前置：M2；状态：待开发。
+- 前置：M2；状态：已完成工程实现与受控验证；真实模型、浏览器/语音及 QQ 交付按 M7 验收。
 - 交付：复用 M2 的桥接与运行链用例，在既有 Eval 生命周期中建立两个 runtime、两类接入的评测基线、评分和候选对照。
 - 验收：区分 Agent 错误、桥接错误、环境失败、交付证据缺失；候选无法改写接受规则。
 - 文档：更新 Evaluation、服务协议、用例约束与相应指南。
+- 实施：新增仓库受管适配源码的桥接 Suite，复用 Case/Target/Trial、进程监督和结果契约；
+  runtime 由现有 Agent profile 选择，平台仅使用隔离本地对端，不发送真实 QQ。
+  版本改进评测沿用服务的 code_source 冻结与受信评分覆盖；结果附带版本绑定，
+  对照检查评分、模型和环境条件，分别报告改善、退步、环境失败及证据缺失，不签发接受回执。
+  六个场景覆盖两类对话、动作、会话隔离、准入与未知交付；两个 runtime 复用同一冻结题目。
+  评分与环境条件漂移、旧 Trial 移用、候选评分替换和已知行为退步均有回归保护；
+  管理服务到受监督 Trial 的源码基线/候选验证使用本地模型替身，不能外推为真实模型能力成绩。
+  已实现事实与操作只在 [Evaluation](../../docs/reference/evaluation.md#agent-与外部桥接评测)及[指南](../../docs/guides/evaluation.md#live2d-与-qq-桥接基线)维护。
 
 #### M4 Harness 改进闭环
 
-- 前置：M3；状态：待开发。
+- 前置：M3；状态：已完成工程实现与受控验证；真实模型与外部执行的改进证据仍由 M7 验收。
 - 交付：接入与改进任务复用调查、开发、验证、返工、验收图及 adapter_forge，提供 CLI。
 - 验收：明确需求形成可审查候选与独立接受结论，取消、恢复与未知执行不盲目重放。
 - 文档：更新 Harness 规格、编译图、领域正文和指南。
+- 实施切口：`integrate`/`improve` 作为已有任务的应用需求来源，冻结当前源码、目标、实例和显式可写范围；
+  复用原 LangGraph 角色与验收子图、操作回执和取消机制，沿 adapter_forge 的来源包络绑定调查材料。
+  既有 Suite 目标或独立新需求测试构成目标检查，应用 Suite 保留回归保护；没有可测量差异不签发改善回执。
+  本地候选保存独立补丁和接受回执，不自动创建提交、PR 或修改当前实例；实例启用由 M5 单独处理。
 
 #### M5 已验收版本启用与撤回
 

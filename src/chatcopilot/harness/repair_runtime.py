@@ -9,7 +9,7 @@ from chatcopilot.harness.repair_repository import RepairArtifacts
 from chatcopilot.harness.workflow import run_task as execute
 from chatcopilot.harness.engine.context import HarnessContext
 from chatcopilot.harness.integrations.roles import RoleWorkflow
-from chatcopilot.harness.integrations.scenarios import RepairScenario, GovernanceScenario
+from chatcopilot.harness.integrations.scenarios import RepairScenario, GovernanceScenario, ImprovementScenario
 from chatcopilot.harness.artifact_repository import ArtifactRepository
 
 
@@ -24,7 +24,8 @@ def run_task(store, task_id, verifier, coder, *, committer=None, prepare=None, d
     status = "failed"
     try:
         with capture_scope(capture):
-            scenario = GovernanceScenario() if store.get(task_id)["source"].get("kind") == "code_health" else RepairScenario()
+            kind = store.get(task_id)["source"].get("kind")
+            scenario = GovernanceScenario() if kind == "code_health" else ImprovementScenario() if kind == "application" else RepairScenario()
             context = HarnessContext(store, task_id, verifier, scenario,
                 workspace_factory=lambda task: RepairArtifacts(store.root, task),
                 roles_factory=lambda workspace: RoleWorkflow(store, task_id, coder,

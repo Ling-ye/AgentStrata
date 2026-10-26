@@ -26,6 +26,12 @@ def preflight(*, cases):
             raise ValueError("scenario definition mismatch")
 
 
+def validate_definition(definition):
+    validate(definition)
+    if definition.driver_id != "agent_configured":
+        raise ValueError("Agent tasks require agent_configured")
+
+
 @contextmanager
 def open_case(case, *, bot: str, workspace_root: Path, options):
     from chatcopilot.evals.agent_tasks.runtime import run
@@ -51,4 +57,5 @@ PLUGIN = EvaluationPlugin(
     load_cases=load_declarative_cases,
     preflight=preflight,
     open_case=open_case,
+    validate_definition=validate_definition,
 )

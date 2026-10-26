@@ -156,6 +156,23 @@ def validate_evaluation(
     return _validation_payload(ready, checks, parsed, targets)
 
 
+def preview_evaluation(request: Mapping[str, Any]) -> dict[str, Any]:
+    """Read-only target and frozen conditions for a prospective managed run."""
+    from chatcopilot.core.model_settings import frozen_settings, read_settings
+    from chatcopilot.evals.conditions import evaluation_conditions
+    with _preserved_environment():
+        if request.get("bot"):
+            load_evaluation_runtime(request["bot"])
+        with frozen_settings(read_settings()):
+            validation = validate_evaluation(request)
+            if not validation["ready"]:
+                return validation
+            parsed = parse_evaluation_request(request)
+            targets = tuple(_target_from_dict(row) for row in validation["targets"])
+            snapshot = _config_snapshot(parsed, targets, _execution_cases(parsed))
+            return {**validation, "conditions": evaluation_conditions(snapshot, validation["targets"])}
+
+
 def _case_execution_timeout(case: ProfileCase | EvalCase) -> float:
     """Return the trusted per-Case hard deadline, with a finite fallback."""
 
@@ -307,6 +324,15 @@ def run_evaluation(
             managed=managed,
         )
         checkpoint = _ResumeCheckpoint()
+    source_receipt, bound_model_config = None, None
+    if managed:
+        from chatcopilot.evals.version_snapshot import managed_source, capture as capture_version
+        source_receipt = managed_source(output)
+        if source_receipt is not None:
+            with _preserved_environment():
+                bound_model_config = _load_runtime_config(load_evaluation_runtime(parsed.bot)).llm if parsed.bot else None
+            snapshot["version_snapshot"] = capture_version(source_receipt, targets,
+                model_config=bound_model_config, product_components=snapshot.get("product_components"))
     _ensure_private_dir(output)
     if not resume and not managed:
         _persist_request(parsed, targets, output)
@@ -438,6 +464,12 @@ def run_evaluation(
                         total_trials=total_trials,
                     )
                     try:
+                        if source_receipt is not None:
+                            from chatcopilot.evals.version_snapshot import verify as verify_version
+                            try:
+                                verify_version(source_receipt, snapshot["version_snapshot"], targets, bound_model_config)
+                            except (OSError, ValueError) as exc:
+                                raise _EvaluationDefinitionDrift(str(exc)) from exc
                         trial = _execute_trial_with_artifact_guard(
                             execution_request,
                             budget=budget,
@@ -446,6 +478,11 @@ def run_evaluation(
                             supervise=supervise_trials,
                             authority_claim_path=authority_claim_path,
                         )
+                        if source_receipt is not None:
+                            try:
+                                verify_version(source_receipt, snapshot["version_snapshot"], targets, bound_model_config)
+                            except (OSError, ValueError) as exc:
+                                raise _EvaluationDefinitionDrift(str(exc)) from exc
                     except _TrialExecutionCancelled:
                         status = "cancelled"
                         stop = True
@@ -678,7 +715,7 @@ def _current_suite_target(request: TrialExecutionRequest) -> EvaluationTarget:
         with _preserved_environment():
             runtime = load_evaluation_runtime(request.bot)
             config = _load_runtime_config(runtime)
-            current_config_fingerprint = _runtime_behavior_fingerprint(
+            current_config_fingerprint = _suite_runtime_fingerprint(request.suite_id,
                 runtime,
                 config,
                 runtime_id=request.target.runtime_id,
@@ -1281,7 +1318,8 @@ def _validate_suite(
         if case.case_id in capability_definitions
         and capability_definitions[case.case_id].driver_id in {"agent_isolated", "agent_configured"}
     ]
-    if agent_definitions and not request.dry_run:
+    from chatcopilot.evals.workbench import uses_project_checker
+    if agent_definitions and not request.dry_run and not uses_project_checker(manifest):
         from chatcopilot.evals.deepeval_engine import preflight
 
         try:
@@ -1339,7 +1377,7 @@ def _validate_suite(
                 selected_drivers.intersection({"agent_configured", "agent_isolated"})
             )
             fingerprint_runtime_id = "direct" if selected_drivers == {"direct_llm"} else runtime_id
-            config_fingerprint = _runtime_behavior_fingerprint(
+            config_fingerprint = _suite_runtime_fingerprint(request.suite,
                 runtime,
                 config,
                 runtime_id=fingerprint_runtime_id,
@@ -2732,6 +2770,12 @@ def _resolved_chat_config_snapshot(config: ChatConfig) -> dict[str, Any]:
     }
 
 
+def _suite_runtime_fingerprint(suite_id, runtime, config, *, runtime_id):
+    value = _runtime_behavior_fingerprint(runtime, config, runtime_id=runtime_id)
+    plugin = get_evaluation_plugin(get_manifest(suite_id).plugin_id)
+    return _hash_json({"runtime": value, "components": plugin.product_identity()}) if plugin.product_identity else value
+
+
 def _runtime_behavior_fingerprint(
     runtime: Any,
     config: ChatConfig,
@@ -2894,6 +2938,7 @@ def _config_snapshot(
     ]
     from chatcopilot.core.candidate_configuration import configuration_invariants
     invariants = None
+    config = None
     if request.bot:
         with _preserved_environment():
             runtime = load_evaluation_runtime(request.bot)
@@ -2980,6 +3025,10 @@ def _config_snapshot(
                 "execution_implementations": implementations,
             }
         )
+    components = None
+    if isinstance(request, SuiteEvaluationRequest) and plugin.product_identity:
+        components = plugin.product_identity()
+        snapshot["product_components"] = components
     return snapshot
 
 

@@ -29,15 +29,17 @@ AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 
 | 已实现 M1 | 应用文件引用独立 Agent profile；新建应用拥有独立模型用途；提供显式配置迁移，复用既有 runtime 与实例状态管理 | [配置归属](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/configuration.md#配置归属与文件引用)、[迁移步骤](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#迁移内联-agent-配置) |
 | 已实现 M1.1 | 双 runtime 收敛、自有子 Agent 使用 LangGraph、Native 配置退役 | [执行契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md#一条执行契约) |
 | 已实现 M2 | Live2D 与 QQ/NapCat 桥接的连接、能力、权限、取消和回执基线；两个 runtime 的受控生产装配验证 | [桥接基线](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/runtime.md#外部桥接基线) |
-| 后续实现 | M3—M7：Agent 与桥接评测、需求改进、版本启用撤回、工作台及真实闭环 | [分阶段开发](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发) |
+| 已实现 M3 | Agent 与桥接 Suite、源码版本绑定和独立事实评分；支持同条件基线候选对照，平台对端为受控环境 | [评测边界](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/evaluation.md#agent-与外部桥接评测)、[运行指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md#live2d-与-qq-桥接基线) |
+| 已实现 M4 | 从接入或改进需求生成本地候选，复用 Harness 图、独立验收与 M3 应用回归；固定上游源码只读调查 | [需求任务](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md#提交接入或改进需求) |
+| 后续实现 | M5—M7：版本启用撤回、工作台及真实闭环 | [分阶段开发](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#分阶段开发) |
 
 主计划的 `accepted` 表示设计可进入实施，不代表整套能力已经完成。当前命令与操作条件以快速开始和指南为准；阶段验收通过后，再更新对应能力状态。
 
 代表性使用场景：
 
 - **运行已有应用。** 使用 QQ 机器人或 Live2D 客户端，配置模型、工具与运行环境，查看执行与评测证据。
-- **连接外部能力（规划）。** 提供接口或仓库线索、接入目标和 Agent 配置，优先沿现有协议开发桥接；需要改动上游时才管理源码与构建。
-- **按反馈改进（规划）。** 在 Console 或 CLI 提交新增功能或问题反馈，改进自有 Agent、提示词、上下文、工具、Skill 或桥接；验收通过后在预授权范围内启用新版本。
+- **连接外部能力。** 通过 CLI 提交接入目标、批准的固定仓库来源及可写范围，沿现有协议生成桥接候选；需要改动上游时另行明确源码维护范围。
+- **按需求改进。** CLI 的 `improve` 生成候选并执行独立验收；Console 改进工作台与授权内版本启用仍按后续阶段实施。
 
 ## 框架总览
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, Callable, Mapping
 
-from chatcopilot.evals.models import EvalCase, SuiteManifest
+from chatcopilot.evals.models import EvalCase, EvalCaseDefinition, SuiteManifest
 
 PLUGIN_API_VERSION = "2"
 STATIC_PLUGIN_BINDING_VERSION = "agentstrata-plugin-binding/v2"
@@ -46,6 +46,8 @@ class EvaluationPlugin:
     open_case: PluginHook | None = None
     judge: PluginHook | None = None
     cleanup: PluginHook | None = None
+    product_identity: Callable[[], dict[str, Any]] | None = None
+    validate_definition: Callable[[EvalCaseDefinition], None] | None = None
 
 
 __all__ = [

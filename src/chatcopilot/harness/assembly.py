@@ -37,6 +37,9 @@ def execution_dependencies(store, task_id, evaluator=None, coder=None, local=Non
     if task["source"].get("kind") == "code_health":
         from chatcopilot.harness.governance_verification import GovernanceVerification
         verifier = GovernanceVerification(evaluator, local, store)
+    elif task["source"].get("kind") == "application":
+        from chatcopilot.harness.improvement_verification import ImprovementVerification
+        verifier = ImprovementVerification(evaluator, local, store)
     else:
         from chatcopilot.harness.verification import CaseVerification
         verifier = CaseVerification(evaluator, local, store)
@@ -57,6 +60,9 @@ def run_task(store, task_id, evaluator=None, coder=None, *, local_verifier=None,
         from dataclasses import asdict
         budget.check()
         initialize(store, task_id)
+        if store.get(task_id)["source"].get("kind") == "application":
+            from chatcopilot.harness.improvement_repository import prepare_upstream
+            prepare_upstream(store, task_id, budget.check)
         artifacts = ArtifactRepository(store.root / "jobs" / task_id)
         frozen = artifacts.directory / "source"
         if not store.get(task_id).get("principles"):

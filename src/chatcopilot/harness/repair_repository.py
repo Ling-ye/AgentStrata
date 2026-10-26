@@ -56,11 +56,18 @@ class RepairArtifacts:
         self.require_git_identity()
         governance = self.task["source"].get("kind") == "code_health"
         learning = bool(self.task["source"].get("skill_learning"))
+        application = self.task["source"].get("kind") == "application"
         changed = workspace.delta(self.worktree, baseline, self.task["source"].get("bot_id"),
-                                  governance=governance, learning=learning)
+                                  governance=governance, learning=learning, application=application,
+                                  scope=tuple(self.task["source"].get("allowed_paths", ())),
+                                  frozen=self.directory / "source" if application else None)
         output = private_directory(self.directory / f"attempt-{number}")
-        digest = workspace.save_patch(self.worktree, baseline, output / "candidate.patch",
-                                      governance=governance, learning=learning)
+        if application:
+            from chatcopilot.harness.patches import save_patch
+            digest = save_patch(self.worktree, self.directory / "source", changed, output / "candidate.patch")
+        else:
+            digest = workspace.save_patch(self.worktree, baseline, output / "candidate.patch",
+                                          governance=governance, learning=learning)
         candidate = self.snapshot(f"candidate-{number}")
         return {"changed_files": changed, "candidate_digest": candidate.digest, "patch_sha256": digest,
                 "snapshot_path": str(candidate.path), "patch_path": f"attempt-{number}/candidate.patch",

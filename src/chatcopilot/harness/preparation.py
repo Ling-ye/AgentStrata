@@ -9,6 +9,13 @@ from chatcopilot.harness.models import HarnessError
 
 
 def acceptance(source: dict[str, Any]) -> dict[str, Any]:
+    if source.get("kind") == "application":
+        from chatcopilot.core.private_sqlite import json_text
+        goal = {key: source[key] for key in ("task_type", "bot_id", "goal", "allowed_paths", "goal_case_ids", "suite_id")}
+        goal["source_envelope_digest"] = source.get("source_envelope_digest")
+        return {"original": source["goal"], "sha256": hashlib.sha256(json_text(goal).encode()).hexdigest(),
+                "purpose": "improvement", "requires_image": False,
+                "items": [{"id": "expected_behavior", "text": source["goal"], "required": True, "verification": "behavior"}]}
     if source.get("kind") == "code_health":
         from chatcopilot.core.private_sqlite import json_text
         target = source.get("governance_target")
@@ -39,6 +46,8 @@ def acceptance(source: dict[str, Any]) -> dict[str, Any]:
 
 
 def verification_purpose(source: dict[str, Any]) -> str:
+    if source.get("kind") == "application":
+        return "improvement"
     return "governance" if source.get("kind") == "code_health" else "repair"
 
 

@@ -698,7 +698,7 @@ def suite_definition_snapshot(
         for case in cases
     ]
     from chatcopilot.evals.deepeval_engine import scoring_snapshot
-    from chatcopilot.evals.workbench import RUBRICS, SCORING_VERSION
+    from chatcopilot.evals.workbench import RUBRICS, SCORING_VERSION, uses_project_checker
 
     return {
         "schema": 2,
@@ -709,7 +709,8 @@ def suite_definition_snapshot(
             "scorer": plugin_protocol.SCORER_PROTOCOL_VERSION,
         },
         "case_plugin_bindings": case_plugin_bindings,
-        **({"scoring": scoring_snapshot()}
+        **({"scoring": ({"framework": "AgentStrata", "mode": "native", "scorer_version": manifest.scorer_version}
+                       if uses_project_checker(manifest) else scoring_snapshot())}
            if manifest.track == "agent" or manifest.source_type == "public_benchmark" else {}),
         **({"quality_rubrics": RUBRICS, "scoring_version": SCORING_VERSION}
            if manifest.source_type == "public_benchmark" else {}),

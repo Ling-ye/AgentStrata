@@ -138,7 +138,8 @@ QQ 的发送、等待回执和取消各自保留边界。发送过程中取消�
 模型响应、Codex app-server 事件及 OneBot 对端使用受控替身；Live2D 头像凭据、Origin、动作名称与回执由
 [适配契约测试](../../tests/unit/test_vtuber_integration.py)及安装后的 HTTP/WebSocket/MCP 检查覆盖。
 这些是受控运行证据，真实模型、QQ 交付、浏览器动作体验和语音设备分别验收；
-M3 的评测评分与 M7 的实际改进证据仍按[主计划](../../specs/application-harness-framework/spec.md)推进。
+M3 的 [Agent 与桥接 Suite](evaluation.md#agent-与外部桥接评测)将这些链路接入现有 Eval，
+提供独立事实评分、源码绑定和候选对照；真实模型与外部交付的改进证据仍按[主计划](../../specs/application-harness-framework/spec.md) M7 验收。
 
 ## 外部软件插件管理
 

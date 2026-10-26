@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
+from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.evals.service import (
     EvaluationServiceClient,
     RESULT_SCHEMA_VERSION,
@@ -22,6 +23,21 @@ class ServiceEvaluator:
         self, client: EvaluationServiceClient | None = None, *, socket_path: Path | None = None
     ) -> None:
         self.client = client or EvaluationServiceClient(socket_path)
+
+    def application_source(self, bot_id: str, suite_id: str) -> dict[str, Any]:
+        request = {"kind": "suite", "suite_id": suite_id, "preset": "full", "repetitions": 3,
+                   "seed": 0, "max_wall_seconds": 0}
+        preview = self.client.preview(bot_id=bot_id, request=request)
+        targets = preview.get("targets", [])
+        if not preview.get("ready") or len(targets) != 1 or targets[0].get("executor") != "agent_configured":
+            raise HarnessError("verification_missing", "需要已就绪的应用 Agent Suite：" + json_text(preview.get("checks", [])))
+        target = targets[0]
+        if target["runtime_id"] not in {"langgraph", "codex"}:
+            raise HarnessError("verification_missing", "应用必须选择 LangGraph 或 Codex")
+        return {"request": request, "case_ids": list(preview["conditions"]["cases"]),
+                "conditions": preview["conditions"], "runtime_id": target["runtime_id"], "target_id": target["target_id"],
+                "evidence": {"run": {key: target[key] for key in
+                    ("model", "runtime_id", "provider", "model_api", "auth_mode") if key in target}}}
 
     @staticmethod
     def _read_once_more(operation, check_cancel=lambda: None):
@@ -290,6 +306,11 @@ class ServiceEvaluator:
         if record.get("code_source", {}).get("sha256") != descriptor["sha256"]:
             raise HarnessError("source_changed", "测评结果与当前候选代码不一致")
         result = record.get("result") or {}
+        if source.get("kind") == "application":
+            version = result.get("config_snapshot", {}).get("version_snapshot") or {}
+            if version.get("source_sha256") != descriptor["sha256"] or version.get("targets") != {
+                    target["target_id"]: target["fingerprint"] for target in result.get("targets", [])}:
+                raise HarnessError("verification_evidence", "需求验证缺少当前源码和 Target 的版本绑定")
         # The complete identity matrix, rather than an aggregate score, is the gate.
         target = source["target_id"] or result["targets"][0]["target_id"]
         observed = (source.get("evidence", {}).get("run") or {})

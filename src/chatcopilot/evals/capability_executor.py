@@ -279,13 +279,16 @@ def _workspace_for_case(workspace_root: Path, case_id: str) -> Path:
 def validate_capability_definition(definition: EvalCaseDefinition) -> None:
     """Validate the static executor/verifier binding without runtime side effects."""
 
-    if definition.plugin_id == "agent-tasks":
-        from chatcopilot.evals.agent_tasks.scenes import validate
+    from chatcopilot.evals.plugins import get_evaluation_plugin
+    plugin = get_evaluation_plugin(definition.plugin_id)
+    if plugin.validate_definition is not None:
         from chatcopilot.evals.deepeval_engine import quality_policy
-        validate(definition)
+        if definition.driver_id not in plugin.allowed_drivers:
+            raise ValueError("Case driver is not allowed by its registered plugin")
+        plugin.validate_definition(definition)
         quality_policy(definition)
-        if definition.driver_id != "agent_configured":
-            raise ValueError("Agent tasks require agent_configured")
+        if definition.policy.side_effect == "external_write":
+            raise ValueError("Agent Evaluation cases cannot perform external writes")
         for assertion in definition.assertions:
             get_trusted_capability_verifier(assertion.assertion_id)
         return

@@ -1,7 +1,7 @@
 # Harness 修复与验收
 
 Harness 是项目自研的修复与验收体系，在消息链之外组织调查、修复、验证与返工，
-接受测评 Case 实例、机器人任务和代码熵治理来源。来源冻结、角色权限、失败分类、预算、
+接受测评 Case 实例、机器人任务、代码熵治理及应用需求来源。来源冻结、角色权限、失败分类、预算、
 候选绑定与最终接受由项目定义，LangGraph 管理图执行与恢复。
 [操作指南](../guides/harness.md)说明如何运行；本页维护当前行为与修改边界，
 [LangGraph 规格](../../specs/harness-langgraph/spec.md)维护编排架构。
@@ -26,7 +26,8 @@ checkpoint 与历史导出属于 Repo，具体执行及装配属于 Runtime。�
 
 ## 问题冻结与来源
 
-正式任务冻结远端 main、来源、目标、规则及执行条件，未提交修改不进入基线。
+故障修复与代码熵任务冻结远端 main、来源、目标、规则及执行条件，未提交修改不进入这些任务的基线。
+应用需求冻结操作者提交时的当前源码（包含公开的未提交改动），在独立 worktree 生成本地候选。
 原始观测、人工线索与预期分别保存；缺失、截断和过期证据保留缺口，不能缩小原目标或制造标准答案。
 [黄金原则](harness-principles.md)及其引用随任务冻结，不受候选修改影响。
 
@@ -35,6 +36,29 @@ checkpoint 与历史导出属于 Repo，具体执行及装配属于 Runtime。�
 | 测评 Case 实例 | 绑定原测评、Case、Target 和重复执行；允许修复提示，不允许替换原答案 | 保留原题与评分，要求有效失败对照 |
 | 机器人任务 | 读取 Gateway `run_id` 对应观测；修复提示与预期可空，不能从业务库补造观测 | 沿原请求和产品契约调查，要求有效失败对照 |
 | 代码熵治理 | 冻结全仓源码索引与现行 SDD，由 Plan 选择有证据的问题 | 允许全绿基线，要求实际改善及行为保持 |
+| 应用需求 | `integrate`/`improve`、实例、明确目标、可写路径及可选固定上游来源 | 冻结目标 Case 或独立新需求测试，证明变化并保护原通过行为 |
+
+### 应用接入与改进
+
+`HarnessController.start_improvement` 接受 `ImprovementRequest`，CLI 的 `integrate` 与 `improve`
+使用同一控制入口。实例 runtime 与模型由 Evaluation 服务的只读预检解析并冻结，编程 worker 使用自己的
+`harness` 模型方案。平台对接仍由 Channel、Gateway 客户端和工具承担，图核心不分派平台。
+当前实例解析沿用 Evaluation 的仓库 Bot 注册范围；插件安装目录不自动成为可写配置来源。
+
+源码写入限用户显式选择的产品路径；权限、凭据、评分与已有测试仍保持受保护。
+`source_envelope` 复用 adapter_forge 的仓库、固定 ref、许可与接入目标契约，作为调查材料绑定到任务和回执。
+宿主按批准 commit 读取公共 Git 源码，核对实际 commit，使用现有安全归档提取器生成只读材料，
+保存归档和文件摘要；模型不自行选择远端版本。源码读取失败或材料变化时阻断，不能声称已完成调查。
+来源声明不授予执行任意上游代码或修改外部仓库的权限；需要 fork 的工程工作另行明确范围。
+
+两个需求类型共享原任务图与验收子图。已有目标 Case 可以选择 `existing`；新增功能由 Test 角色提交
+独立 pytest 草案。宿主在相同冻结定义上运行基线、候选及独立确认，并执行应用 Suite 和仓库回归。
+不要求已有历史故障记录；新需求检查可以揭示旧版本缺少的能力。原目标已满足且没有可测量差异时，
+不签发改善回执。错误、缺证据与原通过行为退步不能由角色说明放行。
+
+需求任务的 `delivery.mode=local`：保存精确候选、补丁和 `AcceptedCandidate`，不启动 GitHub 发布。
+冻结源码与当前工作区分离，修改操作者文件或暂存区不是完成任务的一部分。
+恢复继续使用现有 LangGraph checkpoint 和操作回执，按原 Evaluation ID 对账；未确认的外部执行不重放。
 
 Case 修复只接受定义快照完整、实际执行 AgentStrata 的隔离 Suite；通过、跳过的实例、
 Profile comparison、dry-run 和 direct-LLM 不进入修复。缺少旧定义时重新执行测评。
@@ -239,6 +263,7 @@ Console 初始化失败只影响 Harness 入口；systemd 调度失败不降级�
 ## 源码入口
 
 - [任务图](../../src/chatcopilot/harness/engine/repair_graph.py)、[任务节点](../../src/chatcopilot/harness/engine/repair.py)
+- [应用需求契约](../../src/chatcopilot/harness/improvement_types.py)、[需求验证](../../src/chatcopilot/harness/improvement_verification.py)
 - [验收图](../../src/chatcopilot/harness/engine/acceptance_graph.py)、[交付图](../../src/chatcopilot/harness/delivery_graph.py)、[批次图](../../src/chatcopilot/harness/batch_graph.py)
 - [图恢复](../../src/chatcopilot/harness/graph_service.py)、[检查点](../../src/chatcopilot/harness/graph_repository.py)、[历史导出](../../src/chatcopilot/harness/history_repository.py)
 - [角色调度](../../src/chatcopilot/harness/integrations/roles.py)

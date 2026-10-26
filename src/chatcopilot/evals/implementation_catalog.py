@@ -31,11 +31,19 @@ _COMMON_SUITE_MODULES = (
     "chatcopilot.evals.trial_runner",
     "chatcopilot.evals.case_drivers",
     "chatcopilot.evals.trial_supervisor",
+    "chatcopilot.evals.conditions",
+    "chatcopilot.evals.version_snapshot",
     "chatcopilot.evals.workbench",
     "chatcopilot.evals.benchmark_scoring",
     "chatcopilot.evals.deepeval_engine",
 )
 _CASE_IMPLEMENTATIONS: dict[tuple[str, str], tuple[str, ...]] = {
+    ("application-bridge", "agent_configured"): (
+        "chatcopilot.evals.bridge_cases", "chatcopilot.evals.bridge_runtime", "chatcopilot.evals.bridge_scoring",
+        "chatcopilot.evals.gateway_replay", "chatcopilot.evals.image_delivery_fixture",
+        "chatcopilot.evals.frozen_agent_runtime", "chatcopilot.evals.isolated_executor",
+        "chatcopilot.evals.trial_capture",
+    ),
     ("frozen-agent", "agent_configured"): (
         "chatcopilot.evals.agent_case", "chatcopilot.evals.frozen_agent_runtime",
         "chatcopilot.evals.frozen_agent_scoring", "chatcopilot.evals.isolated_executor",

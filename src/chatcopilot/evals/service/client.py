@@ -126,6 +126,9 @@ class EvaluationServiceClient:
     def list_suites(self, *, bot_id: str | None = None) -> list[dict[str, Any]]:
         return self._mapping_list(self._call("suites.list", {"bot_id": bot_id}))
 
+    def preview(self, *, bot_id: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        return self._mapping(self._call("evaluations.preview", {"bot_id": bot_id, "request": dict(request)}))
+
     def prepare_suite(
         self,
         suite_id: str,

@@ -164,25 +164,7 @@ async def _execute(case, declaration, runtime, root, workspaces, env):
         run = host.state_store.latest_run_for_session(sessions[0].session_id)
         if run is None or run.state not in {"completed", "failed", "aborted"}:
             raise ValueError("Gateway run did not reach a recorded terminal state")
-        recorder = host.state_store.observation_recorder
-        if recorder is None:
-            raise ValueError("Gateway observation capture unavailable")
-        captured, stages, cursor = [], [], 0
-        while True:
-            page = observation_events(recorder.store, run.run_id, after=cursor, limit=500)
-            for row in page["observations"]:
-                detail = recorder.store.body(run.run_id, row["body_ref"]) if row.get("body_ref") else None
-                payload = (detail or {}).get("payload") or {}
-                event = {"type": row["kind"], **row["data"], **payload}
-                if row["kind"] == "RuntimeStageFinished":
-                    stages.append({"operation": row["data"]["operation"], "layer": row["layer"],
-                                   "status": row["status"], "span_id": row["data"].get("span_id")})
-                elif row["kind"] == "ToolCatalogObserved":
-                    event["phase"] = event.get("catalog_phase")
-                captured.append(event)
-            if not page["has_more"]:
-                break
-            cursor = page["next_cursor"]
+        captured, stages = read_run_observations(host.state_store, run.run_id)
         layers = [layer for layer in ("gateway", "application", "agent") if any(s["layer"] == layer for s in stages)]
         outbox = host.state_store.find_outbound_deliveries(session_id=run.session_id, run_id=run.run_id)
         receipts = [{**asdict(receipt), "segments": [item["kind"] for item in outbound.envelope["segments"]],
@@ -210,3 +192,27 @@ async def _execute(case, declaration, runtime, root, workspaces, env):
                                                                   "receipts": receipts}))
     finally:
         await host.stop()
+
+
+def read_run_observations(state_store, run_id):
+    """Read the authoritative Gateway observation stream shared by replay drivers."""
+    recorder = state_store.observation_recorder
+    if recorder is None:
+        raise ValueError("Gateway observation capture unavailable")
+    captured, stages, cursor = [], [], 0
+    while True:
+        page = observation_events(recorder.store, run_id, after=cursor, limit=500)
+        for row in page["observations"]:
+            detail = recorder.store.body(run_id, row["body_ref"]) if row.get("body_ref") else None
+            payload = (detail or {}).get("payload") or {}
+            event = {"type": row["kind"], **row["data"], **payload}
+            if row["kind"] == "RuntimeStageFinished":
+                stages.append({"operation": row["data"]["operation"], "layer": row["layer"],
+                               "status": row["status"], "span_id": row["data"].get("span_id")})
+            elif row["kind"] == "ToolCatalogObserved":
+                event["phase"] = event.get("catalog_phase")
+            captured.append(event)
+        if not page["has_more"]:
+            break
+        cursor = page["next_cursor"]
+    return captured, stages

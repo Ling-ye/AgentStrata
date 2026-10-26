@@ -73,7 +73,7 @@ class HarnessLifecycle:
         task, claimed = self.store.claim_resume(task_id)
         if claimed and task.get("delivery"):
             task = self.store.update(task_id, delivery_cancel_requested=False,
-                delivery={**task["delivery"], "state": "pending", "error_code": None})
+                delivery={**task["delivery"], "state": "local" if task["delivery"].get("mode") == "local" else "pending", "error_code": None})
         return task, claimed
 
     def launch_locked(self, task_id: str) -> None:
@@ -167,6 +167,10 @@ class HarnessLifecycle:
         self.require_current(task)
         if not task.get("delivery"):
             raise HarnessError("source_archived", "旧任务只读保留")
+        if task["delivery"].get("mode") == "local":
+            if action == "cancel":
+                return
+            raise HarnessError("not_applicable", "本地需求候选不执行 PR 交付；启用与撤回使用实例操作")
         if task["status"] in {*ACTIVE, "waiting_input"}:
             raise HarnessError("conflict", "修复尚未结束")
         self.store.update(task_id, delivery_request=action)

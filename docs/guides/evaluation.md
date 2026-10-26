@@ -4,7 +4,7 @@
 
 ## Evaluation
 
-Agent 轨道使用 DeepEval 4.2.2。Console 安装／更新流程对账 `evaluation` 可选依赖。评分模型通过统一模型配置的 `evaluation.judge` 用途选择方案，凭据引用现有私有环境文件。仅支持接口明确返回的推理选项，参数随任务冻结；参见[统一模型配置](../reference/configuration.md#llm)。
+直接 Agent 任务轨道使用 DeepEval 4.2.2；桥接 Suite 使用项目确定性检查器，不需要 Judge。Console 安装／更新流程对账 `evaluation` 可选依赖。评分模型通过统一模型配置的 `evaluation.judge` 用途选择方案，凭据引用现有私有环境文件。仅支持接口明确返回的推理选项，参数随任务冻结；参见[统一模型配置](../reference/configuration.md#llm)。
 
 Evaluation systemd unit 读取该文件；配置更新按既有维护流程在服务 idle 时应用，不需要修改或重启机器人。命令行独立执行时显式提供同名环境变量。选择 GEval 且题目需要质量判分时，预检缺少评分配置会阻止创建评测；不会借用被测模型。每次判分也受 Case 和 Evaluation 剩余时间约束。DeepEval 只使用本地 SDK，结果留在现有 Evaluation 根；正常模型 Provider 调用费用与 Agent 测试调用分开记录。
 
@@ -55,6 +55,60 @@ python -m chatcopilot evals run \
   --output reports/evals/manual/bfcl-smoke
 ```
 
+### Live2D 与 QQ 桥接基线
+
+`agentstrata-application-bridges-v1` 通过真实宿主与桥接代码运行，使用本地浏览器/OneBot 对端。
+所选 Bot 的 Agent profile 选择 runtime 和模型。分别选择 LangGraph 与 Codex 实例运行；
+不通过修改线上实例的 runtime 来复用已有会话。题单与证据限制见[桥接 Suite](../../src/chatcopilot/evals/suites/agentstrata-application-bridges-v1/README.md)。
+
+先在包含 `integrations/open_llm_vtuber` 的仓库源码环境检查目录与预检：
+
+```bash
+.venv/bin/python -m chatcopilot evals describe --suite agentstrata-application-bridges-v1
+.venv/bin/python -m chatcopilot evals run \
+  --suite agentstrata-application-bridges-v1 --preset quick \
+  --bot bots/lingye-copilot-qq/bot.yaml --validate-only
+```
+
+确认模型配置后，显式移除 `--validate-only` 并指定新输出目录即可运行，`--preset full` 覆盖全部场景。
+正式运行会调用所选模型；预检不证明模型或平台已完成任务。输出默认是未绑定源码版本的 standalone 记录，
+适合日常基线，不能据此接受代码候选。缺少受管适配源码时更换为完整源码环境，不从其他安装目录补齐模块。
+
+### 代码基线与候选对照
+
+代码改进使用现有本地 Evaluation service client 的 `code_source`，服务自身也应运行在上述源码环境。
+基线和候选必须属于服务仓库，Bot ID 是服务目录中的实例 ID。以下代码示意一次显式提交，
+将 `source` 换为基线或候选工作区；同一 Bot 的上一轮退出后再提交下一轮：
+
+```python
+from pathlib import Path
+from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
+from chatcopilot.evals.service.client import EvaluationServiceClient
+
+source = Path("/absolute/path/to/AgentStrata-worktree").resolve()
+client = EvaluationServiceClient()
+record = client.start(
+    bot_id="lingye-copilot-qq",
+    request={"kind": "suite", "suite_id": "agentstrata-application-bridges-v1",
+             "preset": "full", "repetitions": 1},
+    code_source={"path": str(source), "sha256": manifest_digest(source_manifest(source))},
+)
+```
+
+使用返回的 Evaluation ID 查询 `client.get(evaluation_id)`，等记录结束再用
+`client.report(evaluation_id, "json").content` 导出 JSON；不要直接修改受管结果目录。
+候选提交还可传 `expected_conditions=evaluation_conditions(base["config_snapshot"], base["targets"])`，
+其中 `base` 为已导出的基线 JSON，函数来自 `chatcopilot.evals.conditions`，以便启动时就拒绝条件漂移。
+双方都应完成且包含同一题单。把两份导出保存为 `base.json`、`candidate.json` 后运行：
+
+```bash
+.venv/bin/python -m chatcopilot evals compare --base base.json --new candidate.json
+```
+
+比较会核对版本、评分与执行条件。退步返回 `1`，证据不足返回 `2`，改善或不变返回 `0`；
+错误恢复不算能力改善，任何用例退步都不能被总分增长抵消。结果只是评测结论，后续仍需 Harness 独立验收。
+完整语义见[版本绑定与基线候选对照](../reference/evaluation.md#版本绑定与基线候选对照)。
+
 ### 基准工作台与手动测评
 
 Console 的「开始测试」按LLM测评、Agent测评、系统测试组织，目录由 Suite metadata 提供。
@@ -86,7 +140,7 @@ SWE-bench Verified、BFCL、GAIA、AgentBench FC 和 IFEval，QQ 保留合成链
 推荐运行路径。两者只可手动启动；默认
 `repetitions=1`，只说明本次执行结果，不能作为重复可靠性结论。
 
-两条产品轨道均不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。
+产品测评均不接 Git hook、CI、文件监听、部署回调或 Bot 重启回调。CI 中的受控响应合同测试不启动真实模型测评。
 
 官方数据通过 Console“准备官方数据”或以下命令显式下载；CLI 读取调用进程环境，
 Console 会从所选 Bot 的私有 `local.env` 读取配置。数据默认保存在

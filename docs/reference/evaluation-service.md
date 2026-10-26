@@ -21,6 +21,16 @@
   旧记录只归档导出，不迁移、补判、恢复或作为 Harness 来源；新来源排除测评系统故障。
   部署更新同时保护 Harness 创建/恢复和 Evaluation 维护窗口。规格见 `docs/reference/evaluation-service.md`。
 
+插件只提供执行观测和自己的附加 metadata。Core 最后写入 `expectation`、`judge_evidence`、
+工具轨迹、任务/后置状态、usage 与 Case 来源，同名插件字段不能覆盖这些权威内容。
+插件的执行报错与独立评分结论分别保存；任何自报的通过说明都不能替代实际 `assessment`。
+
+源码评测沿用服务 `start(code_source={path, sha256})`、冻结请求及受管 worker。Core 在校验输出目录后，
+从服务请求和 `.sources` 回执取得版本，绑定实际执行树、Target、runtime 与桥接组件，并在 Trial 前后核验。
+提交源码与覆盖受信验证器后的执行源码分别记录；候选对评分代码的改动不进入本次运行的评分实现。
+版本记录保存在现有 `config_snapshot.version_snapshot`，不增加数据库或第二套生命周期。
+完整对照规则见 [版本绑定与基线候选对照](evaluation.md#版本绑定与基线候选对照)。
+
 ## Evaluation 独立生命周期
 
 Agent Profile 对比和 BFCL / GAIA / IFEval Suite 只使用 `Evaluation`，以 `kind: comparison | suite` 区分；`chatcopilot.evals.application` 与本机 `chatcopilot.evals.service` 是活动 claim、受管 worker、lifecycle state 和更新 maintenance lease 的唯一 owner。
@@ -31,6 +41,10 @@ Agent Profile 对比和 BFCL / GAIA / IFEval Suite 只使用 `Evaluation`，以 
 发布失败会关闭管道，不能先运行 Core 再补写身份。
 
 Console 只是通过同 UID Unix socket 调用服务的 UI/BFF，禁止在 `console.*` 中恢复 Evaluation manager、worker supervision、进程内 fallback 或旧 import facade。
+
+`EvaluationServiceClient.preview(bot_id=..., request=...)` 是只读预检，返回实际 Target 与冻结条件，
+不创建 Evaluation、worker、报告或副作用。Harness 的需求入口用它绑定被测实例，随后 `start`
+仍按相同条件重新核验；查询不能启动测评或推进任务。
 
 Console 启停和重启不得发送 worker 信号或改写 Evaluation 终态；运行代码更新必须在与创建相同的跨进程锁内原子证明 idle 并持久化 maintenance marker，整个构建、Evaluation 重启、UDS health 和 Console 重启窗口都拒绝新 Evaluation，结束后才释放；服务不可达、状态不明或已安装 unit 未运行时 fail closed。
 

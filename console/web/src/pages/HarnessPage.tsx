@@ -70,7 +70,7 @@ export default function HarnessPage() {
     finally { if (current === generation.current) setLoading(false); }
   }
   function restart(task: RepairTask) {
-    if (task.source.kind === "code_health") return;
+    if (task.source.kind === "code_health" || task.source.kind === "application") return;
     const sourceKind = task.source.kind ?? "evaluation";
     const id = sourceKind === "robot_task" ? task.source.run_id! : task.source.case_instance_id!;
     setKind(sourceKind); setSourceId(id); setBotId(task.source.bot_id ?? "");

@@ -511,6 +511,7 @@ class HarnessStore:
                 updated_at=time.time(),
                 message="AI 审核与验证通过，已创建本地提交"
                 if task.get("local_commit")
+                else "需求验收通过，本地候选已保存；实例尚未启用" if (task.get("delivery") or {}).get("mode") == "local"
                 else "修复验收通过，等待 PR 交付" if task.get("delivery") else "worktree 验收通过；改动尚未提交或合入",
             )
             connection.execute(

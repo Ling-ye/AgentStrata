@@ -179,9 +179,17 @@ def compare_reports(base: Path, new: Path) -> dict[str, Any]:
     new_cases = _comparison_trials(new_payload)
     regressions: list[dict[str, Any]] = []
     improvements: list[dict[str, Any]] = []
+    inconclusive: list[dict[str, Any]] = []
     for case_key, new_case in new_cases.items():
         base_case = base_cases.get(case_key)
         if not base_case:
+            continue
+        if (base_case["errors"] or new_case["errors"]
+                or base_case["outcome"] not in {"passed", "failed"} or new_case["outcome"] not in {"passed", "failed"}):
+            inconclusive.append({"case_ref": new_case["case_ref"], "case_id": new_case["case_id"],
+                "target_id": new_case["target_id"], "base_outcome": base_case["outcome"],
+                "new_outcome": new_case["outcome"], "base_errors": base_case["errors"],
+                "new_errors": new_case["errors"]})
             continue
         delta = float(new_case["score_ratio"]) - float(base_case["score_ratio"])
         item = {
@@ -191,6 +199,7 @@ def compare_reports(base: Path, new: Path) -> dict[str, Any]:
             "base_outcome": base_case["outcome"],
             "new_outcome": new_case["outcome"],
             "score_delta": delta,
+            "failure_kinds": new_case["failure_kinds"],
         }
         if delta < -0.05 or (
             base_case["outcome"] == "passed"
@@ -211,13 +220,19 @@ def compare_reports(base: Path, new: Path) -> dict[str, Any]:
         "new_score_ratio": new_ratio,
         "score_delta": (
             new_ratio - base_ratio
-            if new_ratio is not None and base_ratio is not None
+            if new_ratio is not None and base_ratio is not None and not inconclusive
             else None
         ),
         "base_verdict": (base_payload.get("summary") or {}).get("verdict"),
         "new_verdict": (new_payload.get("summary") or {}).get("verdict"),
         "regressions": regressions,
         "improvements": improvements,
+        "inconclusive": inconclusive,
+        "comparison_status": "regressed" if regressions else "inconclusive" if inconclusive else "improved" if improvements else "unchanged",
+        "version_binding": {
+            "base": base_payload["config_snapshot"].get("version_snapshot", {}).get("snapshot_ref"),
+            "new": new_payload["config_snapshot"].get("version_snapshot", {}).get("snapshot_ref"),
+        },
     }
 
 
@@ -253,14 +268,37 @@ def _require_comparable_evaluations(
     new_snapshot = new.get("config_snapshot")
     if not isinstance(base_snapshot, dict) or not isinstance(new_snapshot, dict):
         raise ValueError("Evaluation config_snapshot is required for comparison")
-    for field_name in ("case_hash", "judge", "target_fingerprints"):
+    base_version, new_version = (s.get("version_snapshot") for s in (base_snapshot, new_snapshot))
+    bound = base_version is not None or new_version is not None
+    if bound:
+        from chatcopilot.evals.version_snapshot import validate as validate_version
+        validate_version(base_version, base["targets"])
+        validate_version(new_version, new["targets"])
+        for result in (base, new):
+            targets = {target["target_id"]: target for target in result["targets"]}
+            for trial in result["trials"]:
+                target = targets.get(trial.get("target_id"))
+                if target is None or trial.get("target_fingerprint") != target["fingerprint"] or any(
+                    trial.get(key) != target.get(key) for key in ("executor", "runtime_id", "model", "reasoning_effort")
+                ):
+                    raise ValueError("Trial does not belong to its version-bound Target")
+        if (base_version["verification_sha256"] != new_version["verification_sha256"]
+                or base_version["runtime"] != new_version["runtime"]):
+            raise ValueError("Evaluation verifier or runtime version changed")
+    source_comparison = bound and base_kind == "suite"
+    fields = ("case_hash", "judge") if source_comparison else ("case_hash", "judge", "target_fingerprints")
+    for field_name in fields:
         if (
             not base_snapshot.get(field_name)
             or base_snapshot.get(field_name) != new_snapshot.get(field_name)
         ):
             raise ValueError(f"Evaluation {field_name} is not comparable")
     if base_kind == "suite":
-        for field_name in ("definition_fingerprint", "private_runtime_configuration"):
+        if source_comparison:
+            from chatcopilot.evals.conditions import evaluation_conditions, verify_conditions
+            verify_conditions(evaluation_conditions(base_snapshot, base["targets"]),
+                              evaluation_conditions(new_snapshot, new["targets"]))
+        for field_name in (("private_runtime_configuration",) if source_comparison else ("definition_fingerprint", "private_runtime_configuration")):
             if (
                 field_name not in base_snapshot
                 or field_name not in new_snapshot
@@ -332,6 +370,9 @@ def render_compare_markdown(payload: dict[str, Any]) -> str:
         "",
         f"- base_suite: `{payload.get('base_suite')}`",
         f"- new_suite: `{payload.get('new_suite')}`",
+        f"- comparison_status: `{payload.get('comparison_status', 'unavailable')}`",
+        f"- base_version: `{payload.get('version_binding', {}).get('base') or 'unbound'}`",
+        f"- new_version: `{payload.get('version_binding', {}).get('new') or 'unbound'}`",
         (
             f"- base_score_ratio: `{float(base_ratio):.3f}`"
             if isinstance(base_ratio, (int, float))
@@ -367,6 +408,10 @@ def render_compare_markdown(payload: dict[str, Any]) -> str:
     else:
         for item in improvements:
             lines.append(f"- `{item['case_ref']}`: delta={item['score_delta']:+.3f}")
+    if payload.get("inconclusive"):
+        lines.extend(["", "## Unscored or incomplete evidence", ""])
+        for item in payload["inconclusive"]:
+            lines.append(f"- `{item['case_ref']}`: {item['base_outcome']} -> {item['new_outcome']}; no improvement or regression inferred")
     return "\n".join(lines) + "\n"
 
 
@@ -459,6 +504,9 @@ def _comparison_trials(
             "target_id": key[1],
             "outcome": outcome,
             "score_ratio": score / maximum if maximum else 0.0,
+            "errors": [t.get("evidence", {}).get("error_code") or t.get("outcome") for t in trials if t.get("outcome") in {"error", "skipped"}],
+            "failure_kinds": sorted({str(t.get("evidence", {}).get("judge_evidence", {}).get("failure_kind"))
+                                     for t in trials if t.get("evidence", {}).get("judge_evidence", {}).get("failure_kind")}),
         }
     return result
 

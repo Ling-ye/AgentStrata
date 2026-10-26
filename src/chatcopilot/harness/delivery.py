@@ -35,6 +35,9 @@ def initialize(store: Any, task_id: str, client: GitHubDelivery | None = None) -
         raise HarnessError("source_archived", "旧任务只读保留，请创建新任务")
     if task.get("baseline_manifest"):
         return
+    if task["delivery"].get("mode") == "local":
+        from chatcopilot.harness.improvement_repository import initialize as initialize_local
+        return initialize_local(store, task_id)
     client = client or GitHubDelivery(DeliveryConfig.load())
     state = task["delivery"]
     client.verify_target(state)
@@ -105,6 +108,8 @@ def reconcile(store: Any, task_id: str, *, client: GitHubDelivery | None = None,
         return store.get(task_id)
     state = task["delivery"]
     cancelling = task.get("delivery_cancel_requested") or task["status"] == "cancelled"
+    if state.get("mode") == "local":
+        return task
     if state["state"] not in PENDING and not retry and not cancelling:
         return task
     try:

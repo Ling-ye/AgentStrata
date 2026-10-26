@@ -560,7 +560,9 @@ def _cmd_compare(args: argparse.Namespace) -> int:
         print(json.dumps(payload, ensure_ascii=False, indent=2))
     else:
         print(render_compare_markdown(payload))
-    return 0 if not payload.get("regressions") else 1
+    if payload.get("regressions"):
+        return 1
+    return 2 if payload.get("comparison_status") == "inconclusive" else 0
 
 
 def _cmd_prepare(args: argparse.Namespace) -> int:

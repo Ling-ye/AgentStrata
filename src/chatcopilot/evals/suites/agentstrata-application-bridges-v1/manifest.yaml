@@ -1,0 +1,69 @@
+schema: 1
+suite_id: agentstrata-application-bridges-v1
+version: '1'
+name: Agent 与应用桥接
+subject_type: agent
+capability_tags:
+- 桥接
+- 多轮对话
+- MCP 动作
+- 身份隔离
+- 投递回执
+kind: product
+status: implemented
+value: 在隔离生产宿主中验证所选 Agent 经 Live2D 与 QQ 桥接的行为及回执。
+recommendation: 按实例的 LangGraph/Codex 配置分别建立基线；平台对端为受控夹具，不代表真实 QQ 或语音交付。
+cadence: manual only
+track: agent
+plugin_id: application-bridge
+driver_id: agent_configured
+requires_bot: true
+source_type: project
+purpose: engineering_regression
+data_version: '1'
+split: 6 个固定工程与 Agent 桥接场景
+coverage: 实际 Application/Gateway/Channel/适配器与所选模型，模拟浏览器及 OneBot 对端
+target_scope: 所选 Agent profile 与受管桥接源码
+execution_scope: isolated_application_bridge
+native_method: 冻结执行事实与对端回执
+scorer_origin: project_adapter
+scorer_version: application-bridge/v1
+files:
+- path: cases.yaml
+  role: cases
+  media_type: application/yaml
+  sha256: 74eabdd33077b68aec3997fbc23acf39e337c7f080c57b3686b7774c4989aed0
+presets:
+  quick:
+    description: quick
+    case_ids:
+    - live2d-dialogue
+    - qq-dialogue
+  full:
+    description: full
+    case_ids:
+    - live2d-dialogue
+    - qq-dialogue
+    - live2d-motion
+    - live2d-session-isolation
+    - qq-admission
+    - qq-delivery-unknown
+  security:
+    description: security
+    case_ids:
+    - live2d-session-isolation
+    - qq-admission
+  reliability:
+    description: reliability
+    case_ids:
+    - live2d-motion
+    - qq-delivery-unknown
+default_preset: quick
+setup_hint: 使用服务仓库中的受管适配源码和有效 Agent 模型配置；平台对端为本地夹具，真实平台与音频另行验收。
+options:
+- name: scoring_mode
+  type: enum
+  label: 评分方案
+  choices:
+  - native
+  default: native

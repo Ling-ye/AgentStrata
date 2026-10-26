@@ -17,8 +17,9 @@ export interface Review {
   decision?: "approved" | "rejected" | "inconclusive"; problem?: string; reason?: string; evidence_refs?: string[];
 }
 export interface Delivery {
+  mode?: "local";
   checks?: Array<{ name: string; status: string; conclusion?: string; url?: string }>;
-  state: string; repository: string; base_branch: string; base_sha: string;
+  state: string; repository?: string; base_branch?: string; base_sha: string;
   commit_sha?: string; merge_sha?: string; branch?: string; pr_url?: string; pr_number?: number;
   auto_merge?: boolean; message?: string; error_code?: string;
 }
@@ -46,7 +47,7 @@ export interface RepairTask {
   planned_agent_trials?: number;
   commit_checks?: Array<{ label: string; exit_code: number; output: string }>;
   task_id: string; status: string; stage: string; base_commit: string; created_at: number; updated_at: number;
-  source: { kind?: SourceKind | "code_health"; evaluation_id?: string; run_id?: string; bot_id?: string;
+  source: { kind?: SourceKind | "code_health" | "application"; task_type?: "integrate" | "improve"; goal?: string; evaluation_id?: string; run_id?: string; bot_id?: string;
     case_id?: string; case_ref?: string; target_id?: string; case_ids?: string[]; case_instance_id?: string; trial_id?: string; attempt?: number;
     blockers?: string[]; test_sha256?: string; test_relative_path?: string; regression_id?: string; feedback?: RepairFeedback;
     warnings?: SourceWarning[];
@@ -78,7 +79,7 @@ export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "el
   "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive" |
   "pipeline_version" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint" | "graph" | "delivery_graph"> & {
   options: { model_profile?: string; model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number | null };
-  source?: { kind?: SourceKind | "code_health" };
+  source?: { kind?: SourceKind | "code_health" | "application" };
   governance_summary?: RepairTask["governance_summary"];
 };
 export const ACTIVE = ["queued", "running", "cancel_requested"];
@@ -110,6 +111,7 @@ export function stageLabel(stage: string): string {
     review: "AI 审核", commit: "本地提交", reproduce: "确认当前问题", baseline: "建立回归基线", repository_baseline: "仓库回归基线", coding: "生成候选", done: "完成" } as Record<string, string>)[stage] ?? stage;
 }
 export function sourceLabel(task: RepairTask): string {
+  if (task.source.kind === "application") return `需求任务 ${task.source.bot_id ?? ""}`;
   if (task.source.kind === "code_health") return `代码熵回收${task.governance_summary?.topic ? " · " + task.governance_summary.topic : ""}`;
   return task.source.kind === "robot_task" ? `机器人任务 ${task.source.run_id}` : `测评 ${task.source.evaluation_id} · ${task.source.case_id}`;
 }
@@ -136,6 +138,8 @@ export const harnessApi = {
 };
 
 export function repairStatusLabel(task: ProgressTask): string {
+  if (task.source?.kind === "application" && task.status === "fixed") return "需求验收通过";
+  if (task.source?.kind === "application" && task.status === "not_reproduced") return "未产生目标差异";
   if (task.source?.kind === "code_health" && task.status === "fixed") return "熵回收验收通过";
   if (task.source?.kind === "code_health" && task.status === "needs_review") return "熵回收待判断";
   if (task.next_action === "technical_failure") return "技术失败";
@@ -146,7 +150,7 @@ export function repairStatusLabel(task: ProgressTask): string {
 }
 
 export function deliveryLabel(state: string): string {
-  return ({ pending: "等待交付", committed: "已提交任务分支", pushed: "已推送", pr_open: "PR 已创建",
+  return ({ local: "本地候选", pending: "等待交付", committed: "已提交任务分支", pushed: "已推送", pr_open: "PR 已创建",
     waiting_checks: "等待 CI 与自动合并", checks_failed: "CI 未通过", updating: "同步主干并复验", retryable: "交付等待重试",
     blocked: "交付受阻", merged: "已合并到远端 main", closed: "PR 已关闭", cancelled: "交付已取消",
     cancel_pending: "正在停止交付", paused: "自动合并已暂停", no_changes: "无可交付成果" } as Record<string, string>)[state] ?? state;

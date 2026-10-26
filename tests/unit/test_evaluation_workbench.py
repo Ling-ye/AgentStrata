@@ -131,12 +131,22 @@ def test_qq_synthetic_snapshot_reports_actual_checker():
     assert plan["framework_version"] == ""
 
 
+def test_bridge_plan_uses_project_facts_without_an_llm_judge():
+    plan = scoring_plan(get_manifest("agentstrata-application-bridges-v1"), {})
+    assert plan["framework"] == "AgentStrata 链路检查器"
+    assert plan["implementation"] == "application-bridge/v1"
+    assert plan["judge"] is None and plan["quality"] is False
+    with pytest.raises(ValueError, match="unsupported scoring mode"):
+        scoring_plan(get_manifest("agentstrata-application-bridges-v1"), {"scoring_mode": "native_geval"})
+
+
 def test_catalog_subjects_and_snapshots_preserve_execution_boundaries():
     from chatcopilot.evals.catalog import list_suite_manifests
 
     expected = {
         "bfcl": "model", "project-business-v1": "agent", "agentstrata-capabilities-v1": "agent",
         "agentstrata-regression-v1": "agent", "agentstrata-agent-tasks-v1": "agent", "gaia": "agent", "ifeval": "model", "agentbench-fc": "agent", "swe-bench-verified": "agent",
+        "agentstrata-application-bridges-v1": "agent",
         "webarena": "agent", "agentstrata-qq-message-flow-v1": "system", "agentstrata-canary-self-update-v1": "system",
     }
     manifests = {item.suite_id: item for item in list_suite_manifests()}

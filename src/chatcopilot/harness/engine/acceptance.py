@@ -170,11 +170,12 @@ def confirmation(state: RepairState, runtime: Runtime[HarnessContext]):
     if not ctx.governance and set(plan.primary_checks).issubset(
         attempt["reproduction"]["passed_cases"]
     ):
+        improvement = ctx.scenario.purpose == "improvement"
         attempt["gaps"].append(
             {
-                "requirement": "baseline_failure",
+                "requirement": "expected_behavior" if improvement else "baseline_failure",
                 "code": "unverified",
-                "message": "原始基线未复现目标失败",
+                "message": "冻结目标在旧版本也通过，尚未证明需求带来的能力差异" if improvement else "原始基线未复现目标失败",
             }
         )
         ctx.save(state, attempt)

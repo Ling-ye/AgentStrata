@@ -259,8 +259,10 @@ def _validate_request(
     repository_root: Path,
     *,
     env_values: Mapping[str, str] | None = None,
+    snapshot: bool = False,
 ) -> ValidationResult:
-    from chatcopilot.evals.evaluations import validate_evaluation
+    from chatcopilot.evals.evaluations import validate_evaluation, preview_evaluation
+    validate = preview_evaluation if snapshot else validate_evaluation
 
     values = env_values if env_values is not None else bot_env(bot, repository_root)
     with temporary_eval_env(values):
@@ -274,8 +276,8 @@ def _validate_request(
             resolve_profile(profile, document=document)
             document["bindings"][load_botspec(bot.bot_spec).llm.chat.binding] = profile
             with frozen_settings(document):
-                return validate_evaluation(_core_request(bot, request, repository_root))
-        return validate_evaluation(_core_request(bot, request, repository_root))
+                return validate(_core_request(bot, request, repository_root))
+        return validate(_core_request(bot, request, repository_root))
 
 
 def _bot_spec_sha256(bot: EvaluationBotRef, repository_root: Path) -> str:
@@ -513,6 +515,9 @@ class EvaluationApplication:
 
     def frozen_case(self, snapshot_id: str) -> dict[str, Any]:
         return self.result_store.frozen_case(snapshot_id)
+
+    def preview(self, *, bot_id: str, request: Mapping[str, Any]) -> dict[str, Any]:
+        return _validate_request(self._resolve_bot(bot_id), request, self.repository_root, snapshot=True)
 
     def start(
         self,

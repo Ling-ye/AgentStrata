@@ -1,7 +1,7 @@
 # Evaluation 与评分
 
 Eval 是项目自研的评测执行与证据体系，组织 Case、Target、Trial、隔离执行、条件绑定、
-服务生命周期与结果比较。具体指标使用 DeepEval 或相应基准的评分实现，评测生命周期与原始证据由项目管理。
+服务生命周期与结果比较。具体指标使用 DeepEval、相应基准的评分实现或项目确定性检查器，评测生命周期与原始证据由项目管理。
 
 修改题目、执行环境、评分或结果展示时阅读。运行步骤见 [测评指南](../guides/evaluation.md)，服务协议见 [测评生命周期](evaluation-service.md)。
 
@@ -17,6 +17,8 @@ Eval 是项目自研的评测执行与证据体系，组织 Case、Target、Tria
 - [src/chatcopilot/evals/deepeval_engine.py](../../src/chatcopilot/evals/deepeval_engine.py)
 - [src/chatcopilot/evals/suites](../../src/chatcopilot/evals/suites)
 - [src/chatcopilot/evals/models.py](../../src/chatcopilot/evals/models.py)
+- [桥接执行与独立事实评分](../../src/chatcopilot/evals/bridge_runtime.py) / [评分器](../../src/chatcopilot/evals/bridge_scoring.py)
+- [版本快照](../../src/chatcopilot/evals/version_snapshot.py) / [结果对照](../../src/chatcopilot/evals/report.py)
 
 ## Evaluation 对象与执行边界
 
@@ -28,7 +30,55 @@ Console 按LLM测评、Agent测评、系统测试组织，Agent 任务题库见�
 
 ## Agent 任务题库与目录
 
-`agentstrata-agent-tasks-v1` 为唯一当前项目 Agent 套件：64 题，quick/full/security/live/skills/red-team=12/60/11/2/2/12。`agentstrata-capabilities-v1` 与 `project-business-v1` 已退役，原资源仅用于工程合同测试，正式创建和重跑拒绝，历史快照不改写。Case 通过静态 scenario_id 和参数提供隔离环境，不按新 Case ID 分派；输入不携带参考答案或操作脚本。事实验证结构、数值、依赖、真实产物与保护集，必要语义采用 strict GEval，不允许用 native 关闭。多主体评分必须保留全部回合与会话绑定，评分输入只供判分和复核；自然数量允许单位，拒绝操作不要求固定内部术语。版本 6 的模糊题显式允许合理澄清；结果导向题接受可核验的原生读源和宿主文件读回，协议与交付要求保持。逐题审查见 `docs/reference/evaluation-cases.md`。未记录证据、执行或评分异常不能算通过。IFEval 模型直测复用固定官方检查器，约束不丢弃、未知或参数异常失败关闭，旧 Agent 运行不自动转换。源码、许可、数据和修改说明一并打包。红队通过 Case metadata 的 test_category/red_team_surface 分类，不能用普通异常处理题冒充对抗覆盖；新增题必须同时检查攻击效果与正常功能。GAIA/SWE-bench 使用固定官方版本与私有缓存，缺附件或镜像不得标可运行；准备数据不自动下载全部镜像或调用模型。下载凭据使用私有 CHATCOPILOT_HF_TOKEN 或本机登录，不进入题目和产物。规格见 `docs/reference/evaluation.md` 与 `docs/reference/evaluation.md`。
+`agentstrata-agent-tasks-v1` 是直接 Agent 任务套件；应用链路另由下述桥接 Suite 验证。本套件含 64 题，quick/full/security/live/skills/red-team=12/60/11/2/2/12。`agentstrata-capabilities-v1` 与 `project-business-v1` 已退役，原资源仅用于工程合同测试，正式创建和重跑拒绝，历史快照不改写。Case 通过静态 scenario_id 和参数提供隔离环境，不按新 Case ID 分派；输入不携带参考答案或操作脚本。事实验证结构、数值、依赖、真实产物与保护集，必要语义采用 strict GEval，不允许用 native 关闭。多主体评分必须保留全部回合与会话绑定，评分输入只供判分和复核；自然数量允许单位，拒绝操作不要求固定内部术语。版本 6 的模糊题显式允许合理澄清；结果导向题接受可核验的原生读源和宿主文件读回，协议与交付要求保持。逐题审查见 `docs/reference/evaluation-cases.md`。未记录证据、执行或评分异常不能算通过。IFEval 模型直测复用固定官方检查器，约束不丢弃、未知或参数异常失败关闭，旧 Agent 运行不自动转换。源码、许可、数据和修改说明一并打包。红队通过 Case metadata 的 test_category/red_team_surface 分类，不能用普通异常处理题冒充对抗覆盖；新增题必须同时检查攻击效果与正常功能。GAIA/SWE-bench 使用固定官方版本与私有缓存，缺附件或镜像不得标可运行；准备数据不自动下载全部镜像或调用模型。下载凭据使用私有 CHATCOPILOT_HF_TOKEN 或本机登录，不进入题目和产物。规格见 `docs/reference/evaluation.md` 与 `docs/reference/evaluation.md`。
+
+## Agent 与外部桥接评测
+
+`agentstrata-application-bridges-v1` 复用现有 Suite、Case、Target、Trial、进程监督与结果存储。
+所选 Bot 的 Agent profile 决定 LangGraph 或 Codex 与模型，每个 runtime 分别建立基线。
+平台细节由静态注册的 `application-bridge` 插件组织，不进入 Harness 核心，也不新增桥接注册中心。
+
+执行链使用生产 Gateway 装配、实际 OneBot Channel、仓库薄 Live2D 客户端和 MCP 动作工具。
+浏览器动作接收方与 OneBot 连接是隔离本地对端；对话默认调用所选真实模型。
+测试可以替换模型响应，此时只能证明对应工程契约。Suite 只读取当前执行源码树内的受管适配模块，
+缺少源码时预检阻断；不能转而加载操作者机器上另一套已安装插件。纯 wheel 安装尚不提供这套源码环境。
+
+每题临时装配自己的工作区、会话和凭据，限制工具为题目所需能力，不使用生产 QQ 连接、记忆或语音设备。
+直接 Agent 任务题库负责一般任务能力，桥接题库负责对话结果传递、动作使用及边界；
+具体题目和预设由[套件资源](../../src/chatcopilot/evals/suites/agentstrata-application-bridges-v1/README.md)维护。
+
+评分是独立的确定性事实检查，不调用 LLM Judge，也不宣称验证开放式回答质量：
+
+| 判断层 | 实际依据 | 未满足时的语义 |
+| --- | --- | --- |
+| Agent 完成任务 | 冻结的目标文字、模型调用观测、动作工具名与参数 | 有充分执行证据的错误回答或动作选择记为 `agent_error` |
+| 桥接遵守契约 | Gateway 回合/会话、客户端原文、权限拒绝、实际动作与回执绑定 | 输出损坏、越权或协议违背记为 `bridge_error` |
+| 对端执行或交付 | OneBot 请求及 provider ack、浏览器动作请求及匹配回执 | 缺失或未知的必要执行证据为 `evidence_missing`，不判通过 |
+| 环境与执行可用 | 启动、连接、模型协议与结构化异常 | 已识别环境故障为 `environment_error`；模型执行异常单列，不猜测产品是否改善 |
+
+QQ 未知交付题专门验证“如实保留未知且不盲目重发”，该题通过不代表消息已交付。
+模型回答、Gateway 完成、provider acknowledgement 与用户可见结果仍是不同证据。
+真实浏览器渲染、语音和 QQ 接收方交付按主计划 M7 另行验收。
+
+## 版本绑定与基线候选对照
+
+服务以既有 `code_source` 接收同仓库工作区及其源码摘要，复制隔离源码，覆盖宿主受信评分实现。
+Core 从服务拥有的请求和源码回执生成 `config_snapshot.version_snapshot`；环境变量或插件 metadata
+不能授权版本身份。快照包含提交源码与实际执行源码摘要、验证实现摘要、Target fingerprint、
+runtime 依赖版本和参与的桥接组件哈希。配置与权限沿既有 Target/conditions 绑定；Codex 执行还绑定原生二进制内容。
+检查执行期间的源码和 runtime 漂移，发生漂移即停止，不能继续形成完整可比结果。
+模型服务端未公开的精确版本仍为未知，保留既有 `model_version_note`，不由模型名称推定。
+
+普通 standalone 结果保留原有严格对比。产品源码变化导致 Target fingerprint 变化时，只有两份有效版本快照、
+相同 runtime 身份、模型、权限、环境、题目、评分条件和完整 Trial 样本才能做代码候选对照。
+Trial 必须绑定自身结果中的 Target，不能将旧 Trial 搬入新版本；题目或评分变化需重建双方基线。
+改变 runtime 或模型的实验单独记录，不能宣称是同条件代码优化。
+
+对照输出 `improved`、`unchanged`、`regressed` 或 `inconclusive`。任何已观察到的用例退步都使整体为
+`regressed`，不能由其他题增分抵消。错误、跳过或缺证据的样本记入 `inconclusive`，其恢复不计为改善；
+存在此类样本时不提供整体 `score_delta`。CLI 对应退出码为退步 `1`、仅证据不足 `2`、改善或不变 `0`。
+版本快照是内容绑定记录；对照结果不是 `AcceptedCandidate`，退出码 `0` 不授权启用。
+Harness 独立验收和版本启用仍分别由 M4、M5 推进。
 
 ## LLM 官方数据与输出
 

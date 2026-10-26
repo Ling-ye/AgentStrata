@@ -172,6 +172,7 @@ def test_catalog_queries_are_generic_and_hide_answers(
     assert set(by_id) == {
         "agentstrata-canary-self-update-v1",
         "agentstrata-agent-tasks-v1",
+        "agentstrata-application-bridges-v1",
                 "agentstrata-regression-v1",
         "agentstrata-qq-message-flow-v1",
         "gaia",

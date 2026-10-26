@@ -1,7 +1,22 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import { DeliveryPanel } from "./DeliveryPanel";
 import { harnessApi, sourceLabel, stageLabel, repairStatusLabel, type RepairTask } from "./api";
 
 afterEach(() => vi.unstubAllGlobals());
+
+it("does not expose PR operations or invent evaluation identifiers for a local goal", () => {
+  const task = { task_id: "goal", status: "fixed", source: { kind: "application", bot_id: "sample" },
+    delivery: { mode: "local", state: "local", base_sha: "base" } } as RepairTask;
+  expect(sourceLabel(task)).toBe("需求任务 sample");
+  expect(repairStatusLabel(task)).toBe("需求验收通过");
+  const view = renderToStaticMarkup(createElement(DeliveryPanel, { task, refresh: () => {} }));
+  expect(view).toContain("本地候选");
+  expect(view).not.toContain("PR 交付");
+  expect(view).not.toContain("重试交付");
+  expect(renderToStaticMarkup(createElement(DeliveryPanel, { task, refresh: () => {}, actionsOnly: true }))).toBe("");
+});
 
 describe("independent Harness source selection", () => {
   it("loads robot evidence through the Harness BFF", async () => {

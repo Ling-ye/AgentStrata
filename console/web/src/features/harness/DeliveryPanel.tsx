@@ -9,6 +9,8 @@ export function DeliveryPanel({ task, refresh, actionsOnly = false, readOnly = f
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   if (!task.delivery) return null;
+  if (task.delivery.mode === "local") return actionsOnly ? null :
+    <section aria-label="本地候选"><Tag>本地候选</Tag><Typography.Text>本任务生成候选与验收记录，实例状态需单独核对。</Typography.Text></section>;
   const delivery = task.delivery;
   async function action(name: "retry-delivery" | "retry-cleanup" | "cancel") {
     setBusy(true); setError("");

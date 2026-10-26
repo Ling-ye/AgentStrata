@@ -41,7 +41,9 @@ _FIXED_AUTHORITY = ("src/chatcopilot/authorization/policy.py", "src/chatcopilot/
 
 
 def writable_paths(root: Path, bot_id: str = "", *, governance: bool = False,
-                   learning: bool = False) -> tuple[Path, ...]:
+                   learning: bool = False, application: bool = False, scope: tuple[str, ...] = ()) -> tuple[Path, ...]:
+    if application:
+        return tuple(root / name for name in scope)
     if learning:
         path = root / LESSONS_PATH
         if path.is_symlink() or not path.is_file():
@@ -79,10 +81,13 @@ def protected_paths(root: Path, bot_id: str = "", *, governance: bool = False,
 
 
 def permitted_change(name: str, bot_id: str | None = None, *, governance: bool = False,
-                     learning: bool = False) -> bool:
+                     learning: bool = False, application: bool = False) -> bool:
     if learning:
         return name == LESSONS_PATH
     parts = Path(name).parts
+    if application and len(parts) > 2 and parts[0] == "integrations":
+        from chatcopilot.core.source_manifest import is_deployable_source_path
+        return ".." not in parts and not Path(name).is_absolute() and is_deployable_source_path(name)
     if governance:
         from chatcopilot.harness.verification_policy import governance_policy_path
         from chatcopilot.core.source_manifest import is_deployable_source_path
@@ -113,19 +118,21 @@ def prepare(repository: Path, root: Path, task_id: str, commit: str) -> Path:
 
 
 def delta(worktree: Path, baseline: dict[str, Any], bot_id: str | None = None, *,
-          governance: bool = False, learning: bool = False) -> list[str]:
+          governance: bool = False, learning: bool = False, application: bool = False,
+          scope: tuple[str, ...] = (), frozen: Path | None = None) -> list[str]:
     current = source_manifest(worktree)
     changed = sorted(
         name for name in baseline.keys() | current.keys() if baseline.get(name) != current.get(name)
     )
-    if any(not permitted_change(name, bot_id, governance=governance, learning=learning) for name in changed):
+    if any(not permitted_change(name, bot_id, governance=governance, learning=learning, application=application)
+           or (application and not any(name == prefix or name.startswith(prefix + "/") for prefix in scope)) for name in changed):
         raise HarnessError("protected_change", "候选修改了测试、评分或运行控制文件")
     for name in changed:
         if configuration_path(name) and Path(name).name in {"bot.yaml", "agent.yaml"}:
             if name not in baseline or name not in current:
                 raise HarnessError("protected_change", "不能创建或删除机器人运行包络")
-            original = subprocess.run(["git", "-C", str(worktree), "show", "HEAD:" + name],
-                                      capture_output=True, check=True).stdout
+            original = (frozen / name).read_bytes() if frozen else subprocess.run(
+                ["git", "-C", str(worktree), "show", "HEAD:" + name], capture_output=True, check=True).stdout
             try:
                 validate_configuration(original, (worktree / name).read_bytes())
             except ValueError as exc:
@@ -193,6 +200,9 @@ def restore(worktree: Path, baseline: dict[str, Any], expected_digest: str) -> N
 
 
 def context_key(source: dict[str, Any]) -> str:
+    if source.get("kind") == "application":
+        return hashlib.sha256(json_text({key: source[key] for key in
+            ("kind", "bot_id", "task_type", "goal", "allowed_paths")}).encode()).hexdigest()
     if source.get("kind") == "code_health":
         return hashlib.sha256(json_text({"kind": "code_health", "repository": source["repository"]}).encode()).hexdigest()
     if source.get("kind") == "robot_task":

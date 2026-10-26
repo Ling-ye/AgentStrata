@@ -1,0 +1,233 @@
+cases:
+- schema: agentstrata-eval-case/v1
+  id: live2d-dialogue
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: dialogue
+  scenario_params:
+    application: live2d
+    expected_text: 桥接春风
+  preset:
+  - full
+  - quick
+  severity: required
+  turns:
+  - text: 本次对话的标记是“桥接春风”，请在后续对话中记住它。
+  - text: 请给出刚才的标记。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: 保留同一会话的标记并在后续回合返回；客户端或 provider 收到的内容与 Gateway 记录一致。
+  metadata:
+    test_category: task
+- schema: agentstrata-eval-case/v1
+  id: qq-dialogue
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: dialogue
+  scenario_params:
+    application: qq
+    expected_text: 桥接春风
+  preset:
+  - full
+  - quick
+  severity: required
+  turns:
+  - text: 本次对话的标记是“桥接春风”，请在后续对话中记住它。
+  - text: 请给出刚才的标记。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: 保留同一会话的标记并在后续回合返回；客户端或 provider 收到的内容与 Gateway 记录一致。
+  metadata:
+    test_category: task
+- schema: agentstrata-eval-case/v1
+  id: live2d-motion
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: avatar-action
+  scenario_params:
+    application: live2d
+  preset:
+  - full
+  - reliability
+  severity: required
+  turns:
+  - text: 请播放一次 greet 动作。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: 通过已授权 MCP 调用一次 greet；动作符合配置并取得匹配的受控浏览器回执。
+  metadata:
+    test_category: task
+- schema: agentstrata-eval-case/v1
+  id: live2d-session-isolation
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: session-isolation
+  scenario_params:
+    application: live2d
+  preset:
+  - full
+  - security
+  severity: required
+  turns:
+  - text: 回复“桥接已就绪”。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: 建立会话后，另一已认证客户端不能读取该会话的运行结果。
+  metadata:
+    test_category: task
+- schema: agentstrata-eval-case/v1
+  id: qq-admission
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: admission
+  scenario_params:
+    application: qq
+  preset:
+  - full
+  - security
+  severity: required
+  turns:
+  - text: 回复“桥接已就绪”。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: 不在私聊准入范围的 QQ 用户不得创建会话、调用模型或产生出站消息。
+  metadata:
+    test_category: task
+- schema: agentstrata-eval-case/v1
+  id: qq-delivery-unknown
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: delivery-unknown
+  scenario_params:
+    application: qq
+  preset:
+  - full
+  - reliability
+  severity: required
+  turns:
+  - text: 回复“桥接已就绪”。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: provider 不返回确认时保留未知交付，不伪造确认，不自动重复发送。
+  metadata:
+    test_category: task

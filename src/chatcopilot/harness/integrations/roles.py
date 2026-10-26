@@ -176,12 +176,15 @@ class RoleWorkflow:
                                        rules=rules, attempt=number, failure=failure)
             index_ref = self.artifacts.put("source_index", number, index)
             self.store.update(self.task_id, source_index_ref=asdict(index_ref))
-        evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "original_input", "trace_archive", "trace", "skill_learning") if key in original},
+        evidence = {"source": {key: original[key] for key in ("kind", "bot_id", "original_input", "trace_archive", "trace", "skill_learning",
+                    "task_type", "goal", "allowed_paths", "goal_case_ids", "suite_id", "source_envelope", "source_envelope_digest", "upstream_source") if key in original},
                     "feedback": original.get("feedback", {}),
                     "acceptance": task["acceptance"], "baseline_root": str(baseline),
                     "verification_capabilities": capabilities}
         if runtime_entrypoint:
             evidence["source"]["runtime_entrypoint"] = runtime_entrypoint
+        if task.get("upstream_source"):
+            evidence["source"]["upstream_source"] = {key: value for key, value in task["upstream_source"].items() if key != "manifest"}
         if governance:
             evidence["source"]["previous_run_findings"] = task["source"].get("previous_run_findings", [])
         if task.get("prior_material"):
@@ -218,7 +221,9 @@ class RoleWorkflow:
         failure = evidence.get("failure_brief")
         rediagnosis = context["rediagnosis"]
         plan = self.call(Role.PLAN, root, number,
-            "自主调查仓库并选择一个代码熵问题" if governance else "定位根因并提出最小修复", evidence, options, cancel)
+            "自主调查仓库并选择一个代码熵问题" if governance else
+            "调查需求与已批准源码，设计最小接入或改进方案" if task["source"].get("kind") == "application" else
+            "定位根因并提出最小修复", evidence, options, cancel)
         if rediagnosis:
             result_paths = [ref["path"] for ref in (failure or {}).get("evidence_refs", []) if ref.get("sha256")]
             references = plan["evidence_refs"]
@@ -283,7 +288,7 @@ class RoleWorkflow:
         self.store.update(self.task_id, acceptance=requirements, goal_capabilities=goal_capabilities,
                           hypothesis=asdict(RepairHypothesis(plan["summary"], requirements["original"], tuple(plan["evidence_refs"]))))
         evidence["acceptance"] = requirements
-        existing = governance and plan["verification_order"] == "existing"
+        existing = (governance or original.get("kind") == "application") and plan["verification_order"] == "existing"
         test = self._read("test")
         needs_test = not existing and (not test or route in {Role.TEST, Role.PLAN})
         pending = []
@@ -308,7 +313,8 @@ class RoleWorkflow:
         if existing:
             test = {"decision": "candidate", "summary": "复用冻结测评", "verification_kind": "existing",
                     "goal_capabilities": goal_capabilities,
-                    "coverage": [{"requirement": "expected_behavior", "checks": ["repository_regressions" if governance else original["case_id"]]}], "gaps": [], "notes": []}
+                    "coverage": [{"requirement": "expected_behavior", "checks": list(original["goal_case_ids"]) if original.get("kind") == "application"
+                        else ["repository_regressions" if governance else original["case_id"]]}], "gaps": [], "notes": []}
         proposal = {**test, "goal_capabilities": goal_capabilities, "gaps": [*test["gaps"], *coding["gaps"]]}
         if any(g["requirement"] not in {item["id"] for item in requirements["items"]} for g in proposal["gaps"]):
             raise HarnessError("test_definition", "角色缺口必须绑定本任务的实际验收目标")

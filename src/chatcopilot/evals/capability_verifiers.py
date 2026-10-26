@@ -2034,7 +2034,13 @@ def _task_scenario(case, assertion, observation):
     return verify(case, assertion, observation)
 
 
+def _application_bridge(case, assertion, observation):
+    from chatcopilot.evals.bridge_scoring import verify
+    return verify(case, assertion, observation)
+
+
 _REGISTRY: dict[str, Verifier] = {
+    "application_bridge": _application_bridge,
     "task_scenario": _task_scenario,
     "ifeval_fixed": _ifeval_fixed,
     "business_behavior": _business_behavior,

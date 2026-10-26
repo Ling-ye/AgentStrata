@@ -47,6 +47,18 @@ def main(argv: list[str] | None = None) -> int:
     task_start.add_argument("--request-id")
     task_start.add_argument("--repair-hint", default="", help="调查线索或修复提示")
     task_start.add_argument("--expected-behavior", default="", help="参考答案或预期行为")
+    for name in ("integrate", "improve"):
+        goal = sub.add_parser(name, help="从明确的外部接入或 Agent 改进需求发起任务")
+        goal.add_argument("--bot", required=True)
+        goal.add_argument("--goal", required=True)
+        goal.add_argument("--allow-path", action="append", required=True)
+        goal.add_argument("--goal-case", action="append", default=[])
+        goal.add_argument("--suite", default="agentstrata-application-bridges-v1")
+        goal.add_argument("--source-envelope", type=Path, help="adapter_forge 来源与许可批准信息的 JSON 文件")
+        goal.add_argument("--profile", default="")
+        goal.add_argument("--max-attempts", type=int, default=3)
+        goal.add_argument("--timeout-seconds", type=int, default=3600)
+        goal.add_argument("--request-id")
     maintenance = sub.add_parser("maintenance", help="证明 Harness 空闲并在命令期间阻止创建和恢复任务")
     maintenance.add_argument("argv", nargs=argparse.REMAINDER)
     reset = sub.add_parser("cutover", help="确认旧任务空闲，导出历史后启用新状态库；默认只检查")
@@ -105,6 +117,16 @@ def main(argv: list[str] | None = None) -> int:
             else:
                 options = _governance_options(args) if args.enable else None
                 value = controller.set_governance_schedule(GovernanceSchedule(args.enable, args.interval_hours, options))
+        elif args.command in {"integrate", "improve"}:
+            from chatcopilot.harness.improvement_types import ImprovementRequest
+            from chatcopilot.core.model_settings import worker_profile
+            cfg, frozen = worker_profile(args.profile)
+            goal = ImprovementRequest(args.command, args.bot, args.goal, tuple(args.allow_path),
+                tuple(args.goal_case), args.suite,
+                json.loads(args.source_envelope.read_text()) if args.source_envelope else {})
+            value = controller.start_improvement(goal,
+                RepairOptions(cfg.model, cfg.reasoning_effort or "", args.max_attempts,
+                              args.timeout_seconds, frozen, cfg.profile_id), request_id=args.request_id)
         elif args.command == "start":
             from chatcopilot.core.model_settings import worker_profile
             cfg, frozen = worker_profile(args.profile)

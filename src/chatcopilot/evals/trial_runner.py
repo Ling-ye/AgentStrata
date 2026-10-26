@@ -99,12 +99,12 @@ def run_case(case: EvalCase, *, suite_id: str, bot: str, workspace_root: Path,
         final_text=observation.final_text, stop_reason=observation.stop_reason,
         events=observation.events, error=error, duration_seconds=time.monotonic() - started,
         started_at=started_at, finished_at=datetime.now(timezone.utc).isoformat(),
-        metadata={"expectation": expectation, "judge_evidence": judging, "tool_calls": list(observation.tool_calls),
+        metadata={**{key: value for entry in observation.evidence if entry.get("kind") == "adapter_metadata"
+                     for key, value in entry.items() if key != "kind"},
+                  "expectation": expectation, "judge_evidence": judging, "tool_calls": list(observation.tool_calls),
                   "task_state": observation.post_state, "post_state": observation.post_state,
                   "observation_evidence": list(observation.evidence),
                   "produced_resources": list(observation.produced_resources),
                   "usage_totals": observation.usage, "model_timing": observation.model_timing,
-                  "case_source": case.metadata.get("case_source", {}),
-                  **{key: value for entry in observation.evidence if entry.get("kind") == "adapter_metadata"
-                     for key, value in entry.items() if key != "kind"}},
+                  "case_source": case.metadata.get("case_source", {})},
     )
