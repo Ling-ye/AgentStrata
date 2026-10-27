@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
 [![Linux / WSL2](https://img.shields.io/badge/Runtime-Linux%20%2F%20WSL2-informational.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)
 
-[项目特色](#项目特色) · [应用场景](#应用场景) · [框架总览](#框架总览) · [改进闭环](#改进闭环) · [产品界面](#产品界面) · [快速开始](#快速开始) · [参与开发](#参与开发) · [English contribution guide](docs/guides/contributing-en.md)
+[项目特色](#项目特色) · [应用场景](#应用场景) · [框架总览](#框架总览) · [改进闭环](#改进闭环) · [产品界面](#产品界面) · [快速开始](#快速开始) · [参与开发](#参与开发) · [English contribution guide](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/contributing-en.md)
 
 </div>
 
@@ -26,7 +26,7 @@ AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以�
 | **改进 Agent 能力** | [查看 Agent 任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aagent)，贡献工具发现、上下文或运行策略改进 |
 | **贡献复现与评测** | [查看验证任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aeval)，提供场景、复现与可复核结果 |
 
-第一次贡献可从[未认领的新手任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-linked%3Apr)和[首次 PR 步骤](CONTRIBUTING.md#第一次提交-pr)开始。欢迎中文或英文交流。
+第一次贡献可从[未认领的新手任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-linked%3Apr)和[首次 PR 步骤](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md#第一次提交-pr)开始。欢迎中文或英文交流。
 
 ## 项目特色
 

@@ -204,7 +204,10 @@ def test_two_hop_routes_cover_development_tasks():
     checker = load_checker()
     root = Path(__file__).resolve().parents[2]
     document = checker.parse("docs/README.md", (root / "docs/README.md").read_text())
-    targets = {checker.local_target(root, document.name, link.target)[0] for link in document.links}
+    local_targets = (
+        checker.local_target(root, document.name, link.target) for link in document.links
+    )
+    targets = {target[0] for target in local_targets if target is not None}
     assert {
         "docs/guides/development.md", "docs/reference/tools.md", "docs/reference/configuration.md",
         "docs/reference/runtime.md", "docs/reference/context.md", "docs/reference/evaluation.md",
