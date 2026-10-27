@@ -233,3 +233,10 @@ Legacy QQ 合成 artifact 中的 Relay、sender envelope、transport attestation
 - [src/chatcopilot/gateway/observations.py](../../src/chatcopilot/gateway/observations.py)
 - [console/backend/routes](../../console/backend/routes)
 - [console/web/src](../../console/web/src)
+
+## 应用需求与候选对照
+
+Harness 详情按接受回执绑定的候选轮次投影基线、复测和独立确认；未接受时展示最近一轮。
+检查项的 outcome、failure_kind、重复次数和 runtime/源码版本来自原验证记录，查询不重新评分或签发回执。
+缺少记录保留未记录，环境错误不转成产品失败或通过。应用接受结论、源码交付和实例版本状态分别展示；
+切换查询只核对原操作及当前运行事实，恢复与撤回通过显式控制入口。界面与操作见[Console](console.md#应用改进工作台)。

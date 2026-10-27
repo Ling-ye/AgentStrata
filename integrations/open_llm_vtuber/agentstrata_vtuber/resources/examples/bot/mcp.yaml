@@ -7,7 +7,7 @@ servers:
     exposure: main
     risk: interactive
     tool_prefix: avatar
-    allowed_tools: [list_actions, set_expression, play_motion]
+    allowed_tools: [list_actions, set_expression, play_motion, apply_pose]
     timeout_seconds: 15
     retry_on_timeout: false
     stateless_http: true

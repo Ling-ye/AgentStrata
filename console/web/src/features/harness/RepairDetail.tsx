@@ -10,6 +10,7 @@ import { CommandLogs } from "./CommandLogs";
 import { TaskDetailState } from "../architecture/observationDetailState";
 import { RepairProgress } from "./RepairProgress";
 import { GovernanceReport } from "./GovernanceReport";
+import { ApplicationResult } from "./ApplicationResult";
 const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
@@ -56,7 +57,7 @@ export function RepairDetail({ taskId, onRestart, onSelect, managedRun = false }
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <RepairProgress key={taskId} task={task} refreshTask={() => query.refetch()} title="任务概览" summaryOnly />
     {task.continued_from && <Text copyable>接续自：{task.continued_from}（已累计原任务用时）</Text>}
-    {task.archived && !ACTIVE.includes(task.status) && <Alert type="info" content="此任务使用旧执行环境，仅保留历史记录；新流程请从来源重新创建任务。" />}
+    {task.archived && <Alert type="info" content="此任务使用旧执行环境，仅保留历史记录；新流程请从来源重新创建任务。" />}
     {currentPipeline && task.next_action === "upload_image" && <section aria-label="补充原图">
       <Alert type="warning" content="请提供原任务中的图片。上传后自动继续，无需判断技术方案；原图仅保存在私有材料中。" />
       <input aria-label="选择原图并继续" type="file" accept="image/png,image/jpeg,image/gif,image/webp" disabled={busy}
@@ -81,6 +82,7 @@ export function RepairDetail({ taskId, onRestart, onSelect, managedRun = false }
       {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.commit_state === "unconfirmed" && <Alert type="warning" content="提交回执尚未核验；继续时会检查实际提交状态。" />}
     {task.source.kind === "code_health" && <GovernanceReport taskId={taskId} active={deliveryActive(task)} />}
+    {task.source.kind === "application" && <ApplicationResult key={taskId} task={task} />}
     <RepairFlow key={taskId} taskId={taskId} active={deliveryActive(task)} commands={source => {
       setCommandSelection({ open: true, source });
       window.requestAnimationFrame(() => document.getElementById("repair-command-logs")?.scrollIntoView({ behavior: "smooth", block: "start" }));

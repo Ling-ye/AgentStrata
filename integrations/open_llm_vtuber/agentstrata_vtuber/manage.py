@@ -85,7 +85,7 @@ async def connection_checks(request: dict) -> dict:
                     await session.initialize()
                     tools = await session.list_tools()
                     checks["avatar_mcp"] = {t.name for t in tools.tools} == {
-                        "list_actions", "set_expression", "play_motion"}
+                        "list_actions", "set_expression", "play_motion", "apply_pose"}
     except Exception as exc:
         checks["avatar_mcp"] = type(exc).__name__
     return checks

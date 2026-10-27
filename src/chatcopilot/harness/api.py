@@ -75,6 +75,17 @@ class HarnessController:
         return self._start(lambda: source(self.repository, request, self.evaluator),
             {"kind": "application", **asdict(request)}, options, request_id=request_id, launch=launch)
 
+    def applications(self):
+        from chatcopilot.harness.workbench import applications
+        return applications(self.repository)
+
+    def preview_improvement(self, bot_id, suite_id="agentstrata-application-bridges-v1"):
+        return self.evaluator.application_source(bot_id, suite_id)
+
+    def comparison(self, task_id):
+        from chatcopilot.harness.workbench import comparison
+        return comparison(self.store, task_id)
+
     def prepare_activation(self, task_id, *, target_id=None, timeout=60):
         from chatcopilot.harness.activation_runtime import prepare
         return prepare(self, task_id, target_id, timeout=timeout)
@@ -483,7 +494,8 @@ class HarnessController:
             "candidate_checkpoint", "error_code", "heartbeat_at", "current_attempt", "options",
             "local_commit", "commit_state", "commit_in_main", "cleanup", "archive", "graph", "delivery_graph") if key in value}
         result["source"] = {key: item for key, item in value["source"].items() if key in {
-            "kind", "run_id", "evaluation_id", "case_id", "case_instance_id", "bot_id", "target_id", "case_ids", "blockers", "warnings", "test_sha256"}}
+            "kind", "run_id", "evaluation_id", "case_id", "case_instance_id", "bot_id", "target_id", "case_ids", "blockers", "warnings", "test_sha256",
+            "task_type", "goal", "allowed_paths", "goal_case_ids", "runtime_id"}}
         result["preparation_revisions"] = [{"revision": r["revision"], "status": r["status"]} for r in value.get("preparation_revisions", [])]
         if value.get("delivery"):
             result["delivery"] = {k: v for k, v in value["delivery"].items() if k != "checks"}

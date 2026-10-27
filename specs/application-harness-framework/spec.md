@@ -5,21 +5,22 @@ status: accepted
 created: 2026-10-26
 ---
 
-# AgentStrata 自研 Agent、外部桥接与持续改进
+# AgentStrata 可定制 Agent 运行系统与自有能力优化
 
 ## Summary
 
-AgentStrata 提供自研 Agent 系统、外部项目桥接能力，以及基于 Harness 与 Eval 的持续改进机制。
-Agent 可通过 LangGraph 或 Codex 执行，连接 Live2D、NapCat 等可由 Agent 驱动的项目。
-用户通过需求或反馈发起任务，由 Harness 完成调查、开发、对照评测和独立验收，
-并在授权范围内启用通过验收的改进。
+AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以自有四层架构承载应用接入、会话、上下文和 Agent 能力。
+项目自行实现能力装配、上下文组织、工具使用，以及基于 LangGraph 的执行循环与协作策略；
+这些自有实现都是 Harness 的主要优化对象。Harness 根据需求开发适配、能力模块和运行策略，
+通过 Eval 与独立验收验证改进。Codex 通过公开接口作为可选执行器接入，近期继续作为 Harness 的唯一开发 worker。
 
 本规格是唯一主计划。`accepted` 表示设计可实施，不表示所有目标已完成。
-当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛、M2 外部桥接基线、M3 Agent 与桥接评测、M4 Harness 改进闭环及 M5 已验收版本启用与撤回；M6—M7 待依次开发。
+当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛、M2 外部桥接基线、M3 Agent 与桥接评测、M4 Harness 改进闭环、M5 已验收版本启用与撤回及 M6 Console 改进工作台；M7 尚需证明 Harness 实际生成并正式接受自有 Agent 实现的改进候选。
 实现完成与运行实例部署分别验收。当前事实由[架构总览](../../docs/reference/architecture.md)及领域正文维护，
-计划接口在实现前不进入快速开始。
+计划接口在实现前不进入快速开始。本次定位修订只修改文档与定义；后续代码工作按本规格的 A—D 路线逐项开展。
 
-Agent 及其使用外部能力的效果是主要改进对象。fork、构建和部署按具体接入需要使用；
+自有 Agent 及其使用外部能力的效果是主要改进对象，执行循环从现在起就是正式优化对象。
+优先解决能力、上下文和应用策略问题，只表示实施顺序，不将循环视为不可修改的底座。fork、构建和部署按具体接入需要使用；
 已有 Live2D fork 方案可作为维护任务保留，不再作为 Agent 评测与优化的前置条件。
 Live2D 与 QQ 从桥接基线阶段共同参与验证，每个应用默认拥有独立配置、模型绑定、人格、工具、
 记忆和工作区。Console 与 CLI 是任务入口，需求与反馈触发改进，应用日常运行不依赖 Harness 在线。
@@ -30,11 +31,25 @@ Live2D 与 QQ 从桥接基线阶段共同参与验证，每个应用默认拥有
 
 ## Design
 
+### 产品主体与术语
+
+| 概念 | 定义与边界 |
+| --- | --- |
+| Agent 运行系统 | Channel → Gateway → Application → Agent 四层整体，是唯一产品主体；Harness、Eval 与 Console 为其提供改进、验证与控制能力 |
+| AgentRuntime | Agent 层内现有的统一执行入口与共享能力装配，保留代码中的含义；不是四层整体的新类名 |
+| 自有 LangGraph Agent | 项目编写的图、状态转换、上下文、工具执行与协作策略，属于产品能力，也是 Harness 的主要优化对象 |
+| Codex | 通过公开接口接入的可选业务执行器，以及近期唯一 Harness 开发 worker；宿主能力可扩展，不承诺修改未开放的内部行为 |
+
+LangGraph 库提供成熟的图执行基础设施，项目拥有基于它编写的 Agent 设计与实现。
+Agent 图调度日常模型与工具回合，Harness 图调度调查、开发、验证和返工；两者分别维护。
+本次不重命名 Python 类、配置键、CLI 参数或持久化字段，不新增公开 API 或 runtime ID。
+
 ### 重构起点与目标差距
 
 | 领域 | 已有基础与源码入口 | 本计划补齐的能力 |
 | --- | --- | --- |
-| Agent 执行 | [RuntimeAdapter](../../src/chatcopilot/contracts/runtime_adapter.py)、[LangGraph 会话](../../src/chatcopilot/agent/langgraph_session.py)、[Codex adapter](../../src/chatcopilot/agent/runtimes/codex.py) | 收敛为两个 runtime，保留宿主共同契约和各自能力边界 |
+| Agent 执行 | 已收敛为 LangGraph/Codex；自有 [LangGraph 会话](../../src/chatcopilot/agent/langgraph_session.py)与 [TurnOps](../../src/chatcopilot/agent/turn.py)实现模型/工具循环、预算与停止；[RuntimeAdapter](../../src/chatcopilot/contracts/runtime_adapter.py)定义执行契约 | 在实际控制流程缺口上优化自有图与策略，保持现有路由和权限边界 |
+| 能力与上下文 | 已有[能力装配](../../src/chatcopilot/agent/capabilities/assembly.py)、[工具发现](../../src/chatcopilot/agent/tools/disclosure.py)、[PromptPlan](../../src/chatcopilot/agent/context/prompt_plan.py)与会话上下文入口 | 测量外部能力发现、参数选择和上下文使用，依据缺口形成自有 Agent 实现候选 |
 | 应用与配置 | M1 已分离 [ApplicationSpec、AgentProfile](../../src/chatcopilot/contracts/application.py)，复用 BotSpec 装配与实例状态 | 保持连接配置与 Agent 配置分离，按需扩展接入信息 |
 | 外部桥接 | [QQ OneBot](../../src/chatcopilot/channels/qq_onebot/driver.py)、[VTuber](../../integrations/open_llm_vtuber/README.md)、ToolRegistry 与 MCP | 整理能力、权限、取消、回执与接入验证 |
 | Harness | [修复图](../../src/chatcopilot/harness/engine/repair_graph.py)、[验收图](../../src/chatcopilot/harness/engine/acceptance_graph.py)、[adapter_forge](../../src/chatcopilot/component_catalog/subagents.py) | 复用调查、开发、验证、返工与验收图，支持新增接入和需求改进 |
@@ -47,23 +62,41 @@ Live2D 与 QQ 从桥接基线阶段共同参与验证，每个应用默认拥有
 ### 职责与数据流
 
 遵循[四层运行时](../runtime-four-layer-definition/spec.md)和[六层依赖](../domain-layered-dependencies/spec.md)。
-宿主拥有身份、准入、权限、工具注册、上下文接入、会话路由和交付；runtime 执行一次 Agent 回合。
+四层共同承载身份、准入、权限、工具注册、上下文、会话和交付；AgentRuntime 在 Agent 层选择一次回合的执行实现。
 Harness 与 Eval 在消息链之外运行，使用冻结宿主与规则，候选实现由后续任务加载。
 
 ```mermaid
 flowchart TB
-    P["Live2D、QQ / NapCat 等外部项目"] <--> B["桥接：Channel、Gateway 客户端、工具接口"]
-    B <--> A["AgentStrata 宿主：身份、权限、上下文、工具、会话与交付"]
-    A <--> L["LangGraph Runtime：自研执行循环"]
-    A <--> C["Codex Runtime：app-server"]
+    subgraph S["AgentStrata · 自有四层运行系统"]
+        CH["Channel"] <--> GW["Gateway"]
+        GW <--> APP["Application"]
+        subgraph A["Agent 层"]
+            AR["AgentRuntime · 统一入口与能力装配"]
+            CAP["自有上下文、工具与委托能力"]
+            L["自有 LangGraph 图与执行策略"]
+            CA["Codex Adapter"]
+            AR <--> CAP
+            AR --> L
+            AR --> CA
+        end
+        APP <--> AR
+    end
+    QQ["QQ / NapCat"] <--> CH
+    LIVE["Live2D 客户端"] <--> GW
+    CAP <--> B["外部工具 / MCP / 应用接口"]
+    CA <--> C["Codex app-server"]
     U["Console / CLI：需求与反馈"] --> H["Harness：调查、设计、开发与返工"]
-    H --> E["Eval：基线、候选对照与独立验收"]
-    E --> R["授权内启用，失败撤回"]
-    R -. "更新 Agent、配置或桥接" .-> A
+    H -- "当前唯一开发 worker" --> C
+    H <--> E["Eval：基线与候选对照"]
+    H --> ACCEPT["独立验收 · 绑定候选"]
+    E --> ACCEPT
+    ACCEPT --> R["授权内启用，失败撤回"]
+    R -. "更新自有 Agent 能力与策略" .-> AR
+    R -. "更新应用配置与桥接" .-> APP
 ```
 
-需求候选与显式授权后的版本切换已有 CLI/控制接口；完整工作台与真实改进闭环仍为后续阶段目标。日常回合由配置选择一个 runtime，
-不要求每条 Codex 请求先经过 LangGraph 的模型规划。
+需求候选、版本切换与 Console 工作台已有共享控制接口；自有 Agent 的真实改进闭环按 M7 验收。
+日常回合由配置选择一个 runtime，不要求每条 Codex 请求先经过 LangGraph 的模型规划。
 
 ### 实体关系与实现映射
 
@@ -255,7 +288,8 @@ checkpoint 只记录图执行位置，不能替代外部操作回执、用户可
 模型、认证和执行循环分别配置；改变 runtime 后新建运行时会话，不复用另一 runtime 的恢复绑定。
 通用模板缺省为 LangGraph，已有明确选择 Codex 的配置保留选择。能力差异沿现有能力契约表达。
 
-LangGraph 执行自有的模型与工具循环，可优化循环、上下文和停止策略；Codex 通过 app-server 执行，
+LangGraph 路径是深度运行策略定制的主线，能力装配、上下文、工具、图和委托实现都可成为候选修改范围。
+Codex 通过 app-server 执行，
 可优化宿主提供的提示词、工具、上下文、桥接和配置。Codex 内部线程、压缩和执行行为由其公开接口决定，
 不能把外围配置改善描述为修改了 Codex 内部算法。
 
@@ -329,9 +363,9 @@ Codex 拥有原生模型循环、线程恢复和压缩，OpenClaw 负责动态�
 不要求每个桥接都实现完整的源码准备、构建、部署和撤回接口。外部项目优先经现有协议连接，
 确需修改上游时在获准范围开发受管 fork。平台逻辑留在桥接层，Harness 核心不加入平台分支。
 
-应用、Harness 编程 worker 和 Eval 评分模型分别绑定。Codex 可以担任开发 worker，
-该角色独立于被优化实例的 runtime。Console 与 CLI 共用控制与查询入口；
-`harness integrate`、`harness improve` 在落地前仅为设计名称。
+应用、Harness 编程 worker 和 Eval 评分模型分别绑定。近期开发 worker 只使用 Codex，
+该角色独立于被优化实例的 runtime，可开发和验证 LangGraph Agent 候选。
+不同时开发 LangGraph 编程 worker 或增加 worker 调度体系。Console 与 CLI 的 `integrate`、`improve` 共用既有控制与查询入口。
 
 ### M1 配置分离的实现边界
 
@@ -347,7 +381,7 @@ Live2D 新安装为 LangGraph、Codex 保存实例模型快照；已有配置的
 `botspec migrate-profile` 默认预览，`--apply` 保存私有原文备份，先写 profile 再替换应用引用；
 冲突或源文件变化阻断覆盖，中断后只复用相同内容。不会修改凭据、用户数据或运行服务。
 文件字段、路径规则和迁移步骤分别由[配置正文](../../docs/reference/configuration.md)与
-[实例运维](../../docs/guides/instances.md#迁移内联-agent-配置)维护；M6 的任务库切换仍未进入本阶段。
+[实例运维](../../docs/guides/instances.md#迁移内联-agent-配置)维护；任务库切换由既有 Harness `cutover` 负责，不混入 profile 迁移。
 
 ### 两类任务与接受条件
 
@@ -382,9 +416,9 @@ M5 沿现有实例与插件管理准备独立候选，等待可切换状态，�
 
 #### M0 定义与文档
 
-- 状态：已完成；本轮修订定位、架构图、参考依据与后续阶段。
+- 状态：已完成；本轮修订产品定义、自有 Agent 优化范围、架构图与后续阶段。
 - 交付：主计划、根 README 与 AGENTS、导航、规格索引和架构概览，不另建 ROADMAP。
-- 验收：说明自研 Agent、双 runtime、桥接与评测改进，区分现状和目标，文档检查通过。
+- 验收：四层运行系统是产品主体，自有 LangGraph Agent 是正式优化对象；说明可选 Codex 执行与开发 worker 的区别，文档检查通过。
 - 文档：保留有效安装步骤、截图及证据说明。
 
 #### M1 应用与 Agent 配置分离
@@ -454,17 +488,82 @@ M5 沿现有实例与插件管理准备独立候选，等待可切换状态，�
 
 #### M6 Console 改进工作台
 
-- 前置：M5；状态：待开发。
+- 前置：M5；状态：已完成工程实现、共享控制入口及受控界面验证。
 - 交付：实例与 runtime 选择、外部能力接入、需求反馈、候选对照、启用状态和取消入口。
 - 验收：Console 与 CLI 共用控制接口，查询不推进任务，旧优化任务只读归档。
 - 文档：更新 Console、观测与指南，界面验证后再更新截图说明。
+- 实施：按应用已配置的 runtime 选择目标，提交接入/改进需求和源码范围；复用原任务详情、流程和命令日志，
+  展示同一候选的基线、复测、独立确认与接受事实。实例及登记插件的准备、启用、撤回、取消和对账沿用 M5，查询不推进操作。
+  旧记录按现有协议标记只读，状态库切换复用既有 `cutover`，不增加新的持久化格式或迁移器。
 
 #### M7 真实闭环验证
 
-- 前置：M6；状态：待开发。
-- 交付：Live2D 一次可测量的 Agent 或工具使用改进，QQ 回归保护，桥接功能扩展验证。
-- 验收：真实模型和外部执行证据能够归因改进；增加平台能力无需在 Harness 核心写平台分支。
-- 文档：按真实支持范围更新首页、指南；硬件与实际交付缺口明确保留。
+- 前置：M6；状态：已有桥接能力扩展与分层验证，自有 Agent 实现改进和完整 Harness 独立接受尚待验收。
+- 交付：从 Live2D 需求形成一个可测量的自有 Agent 能力或上下文候选，保留 QQ 与通用 Agent 回归保护，并验证桥接扩展场景。
+- 验收：Harness 的 Codex worker 实际完成调查、开发和验证，取得绑定精确自有 Agent 候选的独立接受回执；
+  在隔离 LangGraph 实例验证启用与撤回，源码、评测、接受和实际运行身份对应。增加平台能力无需在 Harness 核心写平台分支。
+- 文档：现行机制进入领域正文，真实与受控证据分别说明；阶段状态留在本计划，README 保持产品介绍职责。
+- 已有证据边界：Live2D `apply_pose` 与 `live2d-pose` 题目保留为桥接能力示例；一次调用执行表情与动作并保留逐项回执，
+  能证明该项桥接效率目标，不能据此宣布自有 Agent 实现或循环已获优化。已有失败记录保持原样，单次运行证据不改写。
+- 未完成条件：沿下面 A—C 完成自有 Agent 基线、有效候选和真实闭环。开发执行器实际回合就绪是前置条件；
+  账户或模型目录查询成功不算就绪。环境失败与证据缺失不计作能力分数，实际模型对照、浏览器执行、正式接受和实例启用分别验收。
+
+### 自有 Agent 能力优化路线
+
+本路线在现有主计划内细化 M7 与后续优化，不另建项目路线图或任务状态机。
+A、B、C 依次推进；D 由具体控制流程缺口触发，循环从现在起就可作为优化对象，
+不要求所有能力问题都经历一次循环重构。各阶段先核对现有实现，再决定最小变更。
+
+| 阶段 | 前置与范围 | 交付和完成条件 | 文档更新 |
+| --- | --- | --- | --- |
+| A：建立自有 Agent 能力基线 | M0—M6；独立 LangGraph 实例，固定代码、配置、模型、权限和环境；盘点能力装配、发现、上下文、循环与委托 | 复用既有 Eval，记录当前能力、实际缺口、测量方法和可修改的自有实现位置；受控与真实证据分别标注 | Agent、上下文、工具和 Eval 正文维护核实的机制；实验数据留在私有产物 |
+| B：首个能力与上下文适配案例 | A 的实际缺口；从 Live2D 外部能力发现与使用切入，保护 QQ 与通用行为 | 形成自有 Agent 能力或上下文实现候选，在可比条件下证明目标改善；仅增加外部适配器函数不满足该条件 | 更新受影响领域正文与用例说明，不将新目标写成已实现 |
+| C：收口 M7 真实自主改进闭环 | A 的基线、B 的目标和独立规则已冻结，Codex worker 实际回合可用 | 真实 worker 调查、开发和验证；正式接受绑定精确候选，隔离实例启用/撤回及运行身份验证通过；工程候选不能代替 Harness 实际生成候选的证明 | 更新 M7 验收状态及相应操作指南，保留各层证据限制 |
+| D：按需求深入循环与协作策略 | 问题定位到控制流程；沿同一来源冻结和验收机制开展 | 优化自有 LangGraph 图、TurnOps、停止/恢复或委托策略，每项变化有独立目标、对照和回归；不为展示自研而增加图节点或规划阶段 | 当前机制进入 Agent、上下文及相关规格，不扩写第二套计划 |
+
+#### 现有实现与基线入口
+
+| 能力 | 已有实现，A 阶段直接复用 | 需要测量的效果 |
+| --- | --- | --- |
+| 能力装配 | [AgentRuntime](../../src/chatcopilot/agent/runtime.py)、[能力装配](../../src/chatcopilot/agent/capabilities/assembly.py)、ToolProvider 与 ToolRegistry | 应用及会话所需能力可用，未授权能力不产生副作用 |
+| 工具发现与使用 | [按需披露](../../src/chatcopilot/agent/tools/disclosure.py)、[ToolExecutor](../../src/chatcopilot/agent/tools/executor.py) | 相似工具选择、参数正确性、不可用与错误处理 |
+| 上下文组织 | [PromptPlan](../../src/chatcopilot/agent/context/prompt_plan.py)、[上下文管理](../../src/chatcopilot/agent/context/manager.py)、[Application 会话](../../src/chatcopilot/application/actor_runtime.py) | 当前应用资料使用、更新与隔离、信任分区保持 |
+| 模型与工具循环 | [LangGraphAgentSession](../../src/chatcopilot/agent/langgraph_session.py)、[TurnOps](../../src/chatcopilot/agent/turn.py)、[AgentSession](../../src/chatcopilot/agent/session.py) | 当前模型/工具两类节点、条件路由、取消、收尾及预算行为，不假定已有额外规划节点 |
+| 委托 | [SubagentRunner](../../src/chatcopilot/agent/subagents/runner.py)及既有委托工具 | 任务与工具范围、明确轮次/工具次数/时间预算、结果回传 |
+
+直接 Agent 基线复用[现有 Agent 任务题库](../../src/chatcopilot/evals/suites/agentstrata-agent-tasks-v1/README.md)，
+优先复查 `decision-select-tool`、`decision-similar-tools`、`tool-disabled-hidden-no-effect`、
+`tool-error-bounded-recovery`、`context-correction`、`evidence-select-source` 及隔离/注入相关用例。
+应用效果复用[桥接题库](../../src/chatcopilot/evals/suites/agentstrata-application-bridges-v1/README.md)。
+这些用例的存在不代表新目标已被完整覆盖；只为已证明的缺口补题，沿既有 Case/Target/Trial 管理。
+
+#### 首个案例与对照设计
+
+首个案例固定为“外部能力与上下文适配”。在任务开始前冻结目标、评分和保护集，覆盖：
+
+- 相似工具存在时，选择与当前任务相关的工具和正确参数。
+- 工具不可用、未授权或缺少必要信息时，按现有非交互执行契约安全处理并如实说明限制，不扩大权限或虚构参数。
+- 外部能力或应用上下文变化后使用当前信息，不沿用另一应用或旧会话内容；平台状态留在桥接/应用侧，Agent 消费通用契约。
+- 外部资料中的指令不能提升为宿主规则；任务完成结论依据实际结果和回执。
+
+固定外部工具实现、任务数据、模型和环境，将 Agent 侧能力装配、工具呈现与发现、上下文组织作为改进变量。
+任务完成、工具/参数正确性、上下文使用与实际效果是主要指标；调用次数、上下文量、延迟与费用作为对应任务的辅助指标。
+沿既有重复验证机制执行基线、候选和独立确认；模型、runtime 或环境改变需单独记账，不能将其收益归因于 Agent 代码。
+共享能力修改保留 QQ、通用 Agent 以及受影响 Codex 路径的回归保护，LangGraph/Codex 各自建立可比基线。
+
+优先扩展 ToolProvider、ToolRegistry、工具发现接口、PromptPlan 和会话上下文入口。
+不新增能力 DSL、工具注册中心、第三套 Native 路径或每应用一份完整 runtime。
+纯配置调整、外部桥接扩展和自有 Agent 实现变更分别记账，前两类不能替代本次自有 Agent 候选的验收证明。
+若基线已满足目标且无有效改善空间，记录“无需改动”，保留当前版本；不人为制造缺陷或无效补丁，
+该案例也不能被写成 M7 已完成一次有效改进，可依据新的实际需求再选择目标。
+
+#### 执行前置与范围
+
+保留现有 LangGraph 默认模板及明确选择 Codex 的实例，新的自有 Agent 验收使用独立 LangGraph 实例，
+不迁移生产实例。近期 Harness 开发 worker 只使用 Codex，沿现有 AgentRunner 和模型绑定执行。
+Codex 工作区路由问题单独诊断，正式任务前以隔离的实际模型回合确认就绪；账户或模型目录查询不能替代该检查。
+每次新的真实试验重新冻结输入、源码、凭据使用范围、调用预算与时限，不继承已经消耗的实验授权。
+验证、源码交付与实例启用分别授权，不默认提交、发布或切换线上实例。
 
 ### 迁移与维护
 
@@ -478,14 +577,16 @@ M1 已有的应用/profile 拆分工具保持原职责。旧优化任务只读�
 
 ## Acceptance
 
-- 项目介绍准确区分自研 Agent、LangGraph/Codex runtime、外部桥接、Harness 与 Eval。
+- 项目介绍以自有四层 Agent 运行系统为唯一产品主体，明确 AgentRuntime、自有 LangGraph Agent、Codex 与 Harness/Eval 的边界。
+- 自有能力装配、上下文、工具、LangGraph 循环与协作策略都是正式优化对象；优先顺序不排除循环修改。
 - Native 不再作为有效执行路径，自有子 Agent、默认模板和有效评测目标完成收敛。
 - 应用与 Agent 配置独立，日常运行不依赖 Harness，两个 runtime 的优化边界清楚。
 - 接入与改进使用现有协议和契约；受管 fork 仅在实际需要时进入获准范围。
 - 需求可产生候选，基线、受保护行为、评分和实际证据共同决定接受与启用。
 - 无改善、退步、评分漂移和证据不足不会自动生效，未知副作用不盲目重放。
 - 用户数据完整，历史证据不改写，实际运行版本对应验收候选。
-- Live2D 与 QQ 证明桥接及改进流程通用，真实改进可归因于具体变更。
+- Live2D 需求产生 Harness 实际开发并正式接受的自有 Agent 实现候选；QQ 与通用行为受保护，改进可归因于固定条件下的 Agent 侧变化。
+- 隔离实例的启用与撤回核对精确运行身份；桥接扩展、配置调整和历史失败记录不能替代 M7 的自有 Agent 闭环证据。
 
 ## Verification
 
@@ -504,6 +605,8 @@ M1 已有的应用/profile 拆分工具保持原职责。旧优化任务只读�
 - 废弃配置拒绝、旧绑定不能续跑、历史标识保留，Codex 原生工具与线程功能不误删。
 - 两类应用的模型、人格、记忆、工作区隔离，共享改进对另一接入的回归影响。
 - 基线条件一致，受保护行为、缺失证据、环境失败、取消和未知结果正确分类。
+- 外部能力与上下文案例覆盖相似工具、参数、不可用与未授权、缺信息、上下文更新、跨应用隔离和不可信指令；评分与验收规则不随候选修改。
+- 主指标对应任务效果，调用次数等辅助指标不掩盖关键行为退步；沿现有重复验证覆盖基线、候选与独立确认。
 - 版本启用、失败撤回与必要数据恢复，旧任务不续跑且业务历史完整。
 
 真实模型、浏览器动作、语音设备与 QQ 交付分别验收。模拟、静态或局部结果只证明各自覆盖范围，

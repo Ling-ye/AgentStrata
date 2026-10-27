@@ -36,25 +36,27 @@ def bridge_bot(tmp_path, monkeypatch):
     return path
 
 
-def _models(monkeypatch, *, motion=False):
+def _models(monkeypatch, *, motion=False, pose=False):
     calls = []
     motion_sent = False
 
     def chat(_self, **kwargs):
         nonlocal motion_sent
         calls.append("langgraph")
-        if motion and not motion_sent:
+        if (motion or pose) and not motion_sent:
             motion_sent = True
             return ChatResult(tool_calls=[{"id": "motion-call", "type": "function", "function": {
-                "name": "tool_call", "arguments": json.dumps({"name": "avatarplay_motion", "arguments": {"name": "greet"}})}}])
+                "name": "tool_call", "arguments": json.dumps({"name": "avatarapply_pose" if pose else "avatarplay_motion",
+                    "arguments": {"expression": "happy", "motion": "greet"} if pose else {"name": "greet"}})}}])
         return ChatResult(content="桥接春风，桥接已就绪。")
 
     def codex(command, **kwargs):
         calls.append("codex")
         kwargs["on_stdout_line"](json.dumps({"type": "thread.started", "thread_id": "fixture-thread"}))
-        if motion:
+        if motion or pose:
             result = kwargs["on_request"]("item/tool/call", {"namespace": "agentstrata", "threadId": "fixture-thread",
-                "tool": "avatarplay_motion", "arguments": {"name": "greet"}, "callId": "motion-call"})
+                "tool": "avatarapply_pose" if pose else "avatarplay_motion",
+                "arguments": {"expression": "happy", "motion": "greet"} if pose else {"name": "greet"}, "callId": "motion-call"})
             assert result["success"], result
         return subprocess.CompletedProcess(command, 0, json.dumps({"type": "item.completed",
             "item": {"type": "agent_message", "text": "桥接春风，桥接已就绪。"}}), "")
@@ -66,14 +68,14 @@ def _models(monkeypatch, *, motion=False):
 
 
 @pytest.mark.parametrize("runtime_id", ["langgraph", "codex"])
-@pytest.mark.parametrize("case_id", ["live2d-dialogue", "qq-dialogue", "live2d-motion", "live2d-session-isolation", "qq-admission", "qq-delivery-unknown"])
+@pytest.mark.parametrize("case_id", ["live2d-dialogue", "qq-dialogue", "live2d-motion", "live2d-pose", "live2d-session-isolation", "qq-admission", "qq-delivery-unknown"])
 def test_bridge_cases_use_core_trials_and_selected_runtime(bridge_bot, tmp_path, monkeypatch, runtime_id, case_id):
     import yaml
     profile = bridge_bot.with_name("agent.yaml")
     data = yaml.safe_load(profile.read_text())
     data["agents"]["runtime"] = runtime_id
     profile.write_text(yaml.safe_dump(data, allow_unicode=True))
-    calls = _models(monkeypatch, motion=case_id == "live2d-motion")
+    calls = _models(monkeypatch, motion=case_id == "live2d-motion", pose=case_id == "live2d-pose")
     case = next(c for c in get_cases(SUITE_ID) if c.case_id == case_id)
     result = run_case(case, suite_id=SUITE_ID, bot=str(bridge_bot), workspace_root=tmp_path / "trial", options={})
     assert result.status == "passed", (result.error, result.judge, result.metadata)
@@ -149,3 +151,42 @@ def test_missing_browser_receipt_preserves_action_evidence_without_a_verdict(bri
     result = run_case(case, suite_id=SUITE_ID, bot=str(bridge_bot), workspace_root=tmp_path / "trial", options={})
     assert result.status == "error" and result.error.code == "evidence_missing"
     assert result.judge is None and result.metadata["post_state"]["bridge"]["avatar_actions"]
+
+
+def test_pose_efficiency_requires_one_call_and_two_independent_receipts(bridge_bot, tmp_path, monkeypatch):
+    from chatcopilot.evals.models import TrialObservation
+    case = next(c for c in get_cases(SUITE_ID) if c.case_id == 'live2d-pose')
+    run = {'session_id': 'session', 'run_id': 'run', 'state': 'completed', 'display_text': 'done',
+           'client_reply': {'session_id': 'session', 'run_id': 'run', 'state': 'completed', 'text': 'done'}}
+    state = {'application': 'live2d', 'scenario': 'avatar-pose', 'production_delivery': False,
+             'runs': [run], 'avatar_actions': [
+                 {'kind': 'expression', 'request_id': 'expression', 'value': 0},
+                 {'kind': 'motion', 'request_id': 'motion', 'value': {'group': 'TapBody', 'index': 0}}],
+             'avatar_acknowledgements': [{'request_id': kind, 'matched': True, 'status': 'executed'} for kind in ('expression', 'motion')]}
+    observation = TrialObservation(final_text='done', stop_reason='end_turn', post_state={'bridge': state},
+        events=({'type': 'LlmCallFinished'},), tool_calls=({'name': 'avatarset_expression'}, {'name': 'avatarplay_motion'}))
+    monkeypatch.setattr('chatcopilot.evals.bridge_runtime.run', lambda *args, **kwargs: observation)
+    baseline = run_case(case, suite_id=SUITE_ID, bot=str(bridge_bot), workspace_root=tmp_path / 'base', options={})
+    assert baseline.status == 'failed' and 'one_writing_tool_call' in baseline.judge.violations
+    observation = replace(observation, tool_calls=({'name': 'avatarapply_pose'},))
+    candidate = run_case(case, suite_id=SUITE_ID, bot=str(bridge_bot), workspace_root=tmp_path / 'candidate', options={})
+    assert candidate.status == 'passed'
+    state['avatar_acknowledgements'].pop()
+    missing = run_case(case, suite_id=SUITE_ID, bot=str(bridge_bot), workspace_root=tmp_path / 'missing', options={})
+    assert missing.status == 'error' and missing.error.code == 'evidence_missing'
+
+
+def test_runtime_startup_failure_is_environment_evidence_not_agent_score(bridge_bot, tmp_path, monkeypatch):
+    import yaml
+    profile = bridge_bot.with_name('agent.yaml')
+    declaration = yaml.safe_load(profile.read_text())
+    declaration['agents']['runtime'] = 'codex'
+    profile.write_text(yaml.safe_dump(declaration))
+    _models(monkeypatch)
+    def disconnected(*args, **kwargs):
+        raise RuntimeError('controlled app-server startup failure')
+    monkeypatch.setattr('chatcopilot.agent.runtimes.codex.run_app_server', disconnected)
+    case = next(c for c in get_cases(SUITE_ID) if c.case_id == 'live2d-dialogue')
+    result = run_case(case, suite_id=SUITE_ID, bot=str(bridge_bot), workspace_root=tmp_path / 'failed-runtime', options={})
+    assert result.status == 'error' and result.error.code == 'model_execution_error'
+    assert result.judge is None

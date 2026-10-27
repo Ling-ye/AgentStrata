@@ -1,6 +1,6 @@
 # 参与开发 AgentStrata
 
-AgentStrata 围绕自研 Agent、外部桥接、Harness 与 Eval 组织开发。贡献的目标是让 Agent 更可靠地完成任务，让外部能力更容易接入，并让每次改进都有可复核的依据。
+AgentStrata 是面向外部应用的可定制 Agent 运行系统，四层架构共同承载应用接入、会话、上下文与 Agent 能力。贡献的目标是让自有 Agent 更可靠地完成任务，让外部能力更容易接入，并通过 Harness 与 Eval 为改进提供可复核的依据。
 
 欢迎从一个具体需求、一条失败路径、一组评测用例或一处重复实现入手。先说明预期行为，再选择最小修改范围；已经成熟的基础设施优先复用。
 
@@ -8,7 +8,7 @@ AgentStrata 围绕自研 Agent、外部桥接、Harness 与 Eval 组织开发。
 
 | 方向 | 适合贡献的内容 | 首读 |
 | --- | --- | --- |
-| Agent 能力 | 执行策略、上下文、工具使用、记忆与子 Agent | [Agent](docs/reference/agent.md)、[上下文](docs/reference/context.md)、[工具](docs/reference/tools.md) |
+| 自有 Agent 能力 | 能力装配、上下文、工具发现与使用，以及自有 LangGraph 图、停止和委托策略 | [Agent](docs/reference/agent.md#自有实现与优化边界)、[上下文](docs/reference/context.md)、[工具](docs/reference/tools.md) |
 | 外部应用与桥接 | 消息渠道、Gateway 客户端、MCP、插件和适配器 | [运行链](docs/reference/runtime.md)、[身份与资源](docs/reference/identity-resources.md) |
 | Harness | 需求调查、角色协作、候选开发、返工和独立验收 | [Harness](docs/reference/harness.md)、[图编排规格](specs/harness-langgraph/spec.md) |
 | Eval | 题目、执行环境、评分、原生基准适配与候选对照 | [Evaluation](docs/reference/evaluation.md)、[用例指南](docs/guides/evaluation-cases.md) |
@@ -16,6 +16,8 @@ AgentStrata 围绕自研 Agent、外部桥接、Harness 与 Eval 组织开发。
 | Console 与文档 | 任务操作、证据呈现、诊断与使用体验 | [Console](docs/reference/console.md)、[文档维护](docs/maintenance.md) |
 
 模块关系见 [README](README.md#框架总览)。四层运行职责与领域内部的源码依赖约束同时生效，完整边界见[架构总览](docs/reference/architecture.md)。
+
+后续优化沿唯一[主计划](specs/application-harness-framework/spec.md#自有-agent-能力优化路线)推进，先复用已有能力与 Eval 建立基线，再按实际缺口选择实现位置。LangGraph 循环也是正式优化对象；Codex 作为可选执行器和当前开发 worker，通过公开接口接入。
 
 ## 从源码环境开始
 
@@ -38,6 +40,8 @@ AgentStrata 围绕自研 Agent、外部桥接、Harness 与 Eval 组织开发。
 按[检查范围](docs/guides/development.md#选择检查范围)选择定向测试和 `docs`、`fast` 或 `full`。涉及插件、生成器和 Windows 桌面时，执行相应安装或平台检查。检查通过后停止；新增改动、失败或具体风险出现时再补充验证。
 
 评测变更应核对输入、执行条件、评分与证据，区分目标改善、已有失败和新增回归。修改验证器时保留独立的正确、错误和缺证据样本，避免只验证实现自己声明的成功。
+
+自有 Agent 改进以任务完成、工具与参数正确性、上下文使用及实际效果验收。配置调整、桥接扩展和 Agent 实现变化分别说明；比较 Agent 侧候选时固定外部工具、任务、模型与环境，没有有效改善空间就记录无需改动。
 
 本地检查、受控服务、真实模型和外部交付分别报告。截图注明数据来源，benchmark 说明数据版本与评测范围；不要把模拟回执、进程启动或一次通过写成真实交付和长期效果。
 

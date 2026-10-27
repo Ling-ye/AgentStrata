@@ -730,3 +730,16 @@ def test_gateway_task_evidence_reads_real_observation_database_without_writes(tm
         if file.is_file()
     }
     assert before == after
+
+
+def test_reporter_directory_does_not_shadow_repository_integration_namespaces(local_test):
+    verifier, task, worktree = local_test
+    module = worktree / 'integrations/example_adapter/behavior.py'
+    module.parent.mkdir(parents=True)
+    module.write_text('VALUE = "candidate-module"\n')
+    test = worktree / 'tests/unit/test_namespace_import.py'
+    test.parent.mkdir(parents=True, exist_ok=True)
+    test.write_text('from integrations.example_adapter.behavior import VALUE\n\ndef test_imports_candidate():\n    assert VALUE == "candidate-module"\n')
+    result = verifier._pytest(task, worktree, ['tests/unit/test_namespace_import.py'], lambda: None)
+    assert result['exit_code'] == 0, result
+    assert result['rows']['tests/unit/test_namespace_import.py::test_imports_candidate']['outcome'] == 'passed'

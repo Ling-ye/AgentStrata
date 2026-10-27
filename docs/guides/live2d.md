@@ -67,10 +67,16 @@ agentstrata plugin uninstall open-llm-vtuber
 
 同版本重复安装检查已有结果，保留配置；不会把新的命令行选项覆盖到现有配置。
 更换版本前先停止，再按当前清单重装；需要重建损坏程序时先停止、卸载再安装。
-没有在线升级、多版本保留或自动回滚。失败阶段写入安装记录，详细原因在私有阶段日志，
+软件包重装不提供在线升级或包版本回滚；自有代码与配置的已验收候选使用独立的[版本启用与撤回](instances.md#启用与撤回已验收版本)流程。
+失败阶段写入安装记录，详细原因在私有阶段日志，
 修正后可重新执行安装。既有手工部署不会被迁移、覆盖或删除。
 
 修改模型、动作、端口或语音配置前先停止服务，维护 `config/` 中对应配置的一致性再启动。
+
+需要同时设置表情并播放动作时，可以要求 Agent 使用 `apply_pose(expression, motion)`。
+新模板已登记该工具；已有实例需要在自己的 `config/mcp.yaml` 中把 `apply_pose` 加入对应
+头像服务的 `allowed_tools`，并按配置更新流程应用。表情和动作名称仍来自 `config/adapter.json`。
+先查看 `list_actions` 的连接状态，结果通过两项浏览器回执核对；部分失败不会回退已发生的动作，未知结果不要重复发送。
 
 应用文件 `config/bot.yaml` 引用 `config/agent.yaml`；runtime、模型用途、提示词和工具在 profile 中修改。
 新安装的 LangGraph 和 Codex 都使用该安装自己的 `config/model.json` 快照，保留连接的凭据引用，

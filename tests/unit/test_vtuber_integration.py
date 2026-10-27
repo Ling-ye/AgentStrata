@@ -600,7 +600,7 @@ def test_real_mcp_tools_can_start_without_gateway_or_browser(replacement):
                     async with ClientSession(read, write) as session:
                         await session.initialize()
                         tools = await session.list_tools()
-                        assert {tool.name for tool in tools.tools} == {"list_actions", "set_expression", "play_motion"}
+                        assert {tool.name for tool in tools.tools} == {"list_actions", "set_expression", "play_motion", "apply_pose"}
                         listed = await session.call_tool("list_actions", {})
                         assert json.loads(listed.content[0].text)["connected"] is replacement
                         action = await session.call_tool("play_motion", {"name": "greet"})
@@ -634,4 +634,47 @@ def test_disabling_avatar_control_keeps_client_app_and_dialogue_independent():
         bridge = ConversationBridge(gateway, client_id="avatar")
         bridge.select_history("character", "plain-text")
         assert (await bridge.chat("no avatar tool required")).text == "final answer"
+    asyncio.run(exercise())
+
+
+@pytest.mark.parametrize('expression_status,motion_status,expected_calls', [
+    ('executed', 'executed', ['expression', 'motion']),
+    ('unknown', 'executed', ['expression']),
+    ('failed', 'executed', ['expression']),
+    ('executed', 'unknown', ['expression', 'motion']),
+    ('executed', 'failed', ['expression', 'motion']),
+])
+def test_pose_keeps_partial_receipts_and_never_replays_unknown_actions(expression_status, motion_status, expected_calls):
+    from fastapi import FastAPI
+    import httpx
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    async def exercise():
+        calls = []
+        class Avatar:
+            def list_actions(self):
+                return {'connected': True, 'expressions': ['happy'], 'motions': ['greet']}
+            async def set_expression(self, name):
+                calls.append('expression')
+                return {'request_id': 'expression-receipt', 'status': expression_status}
+            async def play_motion(self, name):
+                calls.append('motion')
+                return {'request_id': 'motion-receipt', 'status': motion_status}
+        app = FastAPI()
+        install_control(app, _config(), Avatar())
+        async with app.router.lifespan_context(app):
+            async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app, client=('127.0.0.1', 1234)),
+                    headers={'Authorization': 'Bearer ' + 'm' * 48}) as http:
+                async with streamable_http_client('http://127.0.0.1:12393/agentstrata/mcp/', http_client=http) as (read, write, _):
+                    async with ClientSession(read, write) as session:
+                        await session.initialize()
+                        result = await session.call_tool('apply_pose', {'expression': 'happy', 'motion': 'greet'})
+                        body = json.loads(result.content[0].text)
+                        assert calls == expected_calls
+                        assert all(name + '-receipt' in json.dumps(body) for name in expected_calls)
+                        if expected_calls == ['expression']:
+                            assert 'motion-receipt' not in json.dumps(body)
+                        assert body['status'] == (motion_status if expression_status == 'executed' else expression_status)
+                        assert result.isError is (expression_status != 'executed' or motion_status != 'executed')
     asyncio.run(exercise())

@@ -14,6 +14,7 @@
 - `agentstrata_vtuber/bridge.py`：对话、取消、原请求恢复与历史映射。
 - `agentstrata_vtuber/avatar.py`：可替换的 AvatarController 和浏览器回执。
 - `agentstrata_vtuber/control.py`：本地 MCP 与浏览器 Origin 边界。
+- `apply_pose(expression, motion)`：一次工具调用组合表情与动作，复用原控制器，保留逐项浏览器回执；失败或未知时停止后续派发。
 - `agentstrata_vtuber/agent.py`：唯一导入上游 Agent 类型的模块。
 - `agentstrata_vtuber/resources/patches/` 与 `resources/upstream.json`：固定版本的小补丁；不包含第三方模型、SDK 或编译产物。
 

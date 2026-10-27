@@ -23,7 +23,7 @@ const NAV_ITEMS = [
   { itemKey: "schedules" as const, text: "机器人定时任务", icon: <IconClockCircle /> },
   { itemKey: "tools" as const, text: "组件目录", icon: <IconTool /> },
   { itemKey: "evals" as const, text: "测评中心", icon: <IconExperiment /> },
-  { itemKey: "harness" as const, text: "AI Harness 修复", icon: <IconTool /> },
+  { itemKey: "harness" as const, text: "AI Harness 改进", icon: <IconTool /> },
   { itemKey: "code-health" as const, text: "代码熵回收", icon: <IconTool /> },
   { itemKey: "models" as const, text: "模型配置", icon: <IconSettings /> },
   { itemKey: "settings" as const, text: "设置", icon: <IconSettings /> },

@@ -5,13 +5,16 @@ status: implemented
 created: 2026-09-08
 ---
 
-# 机器人运行时四层架构基线
+# Agent 运行系统四层架构基线
 
 ## Summary
 
-AgentStrata 由机器人运行时，以及启动装配、控制观测、独立测评等配套部分组成。机器人运行时按
+AgentStrata 的产品主体是面向外部应用的 Agent 运行系统，按
 **渠道适配（Channel）→ Gateway → Application → Agent** 四个职责层组织，各层通过结构化
-契约协作，由实例宿主管理生命周期。
+契约协作，由实例宿主管理生命周期。启动装配、Harness、Eval 和 Console 在消息链之外配套运行。
+AgentRuntime 指 Agent 层内的统一执行入口与共享能力装配；自有 LangGraph 图及能力实现可由 Harness 改进，
+Codex 经公开接口作为可选执行器接入。产品定义和优化阶段由[主计划](../application-harness-framework/spec.md)维护，
+这项术语修订不改变以下四层职责、交接及依赖方向。
 
 本规格是长期有效的运行时架构基线。后续涉及运行时架构、跨层契约、运行部署或相关数据迁移的
 SDD 必须遵循并引用本规格；局部规格不能另行定义运行层级。基线变更须明确提出并单独审议，

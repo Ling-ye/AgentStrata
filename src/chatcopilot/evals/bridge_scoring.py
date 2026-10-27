@@ -76,6 +76,26 @@ def verify(definition, assertion, observation):
                     checks["bound_browser_receipt"] = bool(motions) and any(
                         a.get("request_id") == motions[0].get("request_id") and a.get("matched") is True
                         and a.get("status") == "executed" for a in acks)
+            if scenario == "avatar-pose":
+                avatar = state.get("avatar_actions", [])
+                acks = state.get("avatar_acknowledgements", [])
+                calls = [c for c in observation.tool_calls if c.get("name", "").endswith(
+                    ("apply_pose", "set_expression", "play_motion"))]
+                if avatar and not calls:
+                    raise unavailable("Avatar effects lack tool invocation evidence", code="evidence_missing")
+                if any(not action.get("request_id") or not any(
+                        ack.get("request_id") == action["request_id"] and ack.get("matched") is True
+                        for ack in acks) for action in avatar):
+                    raise unavailable("Avatar pose lacks bound browser receipts", code="evidence_missing")
+                checks["one_writing_tool_call"] = len(calls) == 1
+                checks["ordered_pose"] = [action.get("kind") for action in avatar] == ["expression", "motion"]
+                checks["configured_pose"] = (len(avatar) == 2 and avatar[0].get("value") == 0
+                    and avatar[1].get("value") == {"group": "TapBody", "index": 0})
+                checks["both_actions_executed"] = len(avatar) == 2 and all(any(
+                    ack.get("request_id") == action["request_id"] and ack.get("matched") is True
+                    and ack.get("status") == "executed" for ack in acks) for action in avatar)
+                if not checks["one_writing_tool_call"] or not avatar:
+                    failure_kind = "agent_error"
     failed = tuple(name for name, value in checks.items() if not value)
     return AssertionOutcome(not failed, reasons=("bridge facts verified",) if not failed else failed,
                             violations=failed, checks={"facts": checks, "failure_kind": failure_kind if failed else ""})

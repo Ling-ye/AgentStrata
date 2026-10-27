@@ -973,7 +973,12 @@ def test_shared_transcript_uses_protected_pseudonymous_storage_identity(
 
 def test_identity_rejected_group_message_creates_redacted_intake_task(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    # Random task IDs can accidentally contain the short synthetic actor IDs.
+    # Keep the content redaction assertion independent of unrelated identifiers.
+    monkeypatch.setattr("chatcopilot.middleware.runtime.tasks.make_task_id",
+                        lambda now=None: "task_20260101_010101_abcdefab")
     runtime = acp_runtime(platform_type="qq")
     shared_workspace = Workspace(
         root=tmp_path / f"group_{_GROUP_ID}" / "shared",

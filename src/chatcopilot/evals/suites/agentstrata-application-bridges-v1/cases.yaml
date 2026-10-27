@@ -231,3 +231,41 @@ cases:
       expected: provider 不返回确认时保留未知交付，不伪造确认，不自动重复发送。
   metadata:
     test_category: task
+- schema: agentstrata-eval-case/v1
+  id: live2d-pose
+  version: 1
+  capability: application_bridge
+  capability_tags:
+  - 桥接
+  - 执行证据
+  plugin: application-bridge
+  driver: agent_configured
+  scenario_id: avatar-pose
+  scenario_params:
+    application: live2d
+  preset:
+  - full
+  - efficiency
+  severity: required
+  turns:
+  - text: 请给角色设置 happy 表情并播放一次 greet 动作。尽量用一次动作工具调用完成两项操作；只有收到两项实际执行回执后才报告完成，不要重试未知结果。
+  requirements:
+    runtime_ids:
+    - langgraph
+    - codex
+  policy:
+    side_effect: isolated_write
+    network: loopback
+    timeout_seconds: 300
+  judge:
+    mode: all
+    assertions:
+    - kind: trusted_verifier
+      id: application_bridge
+      arguments: {}
+    quality:
+      enabled: false
+      reason: 结构化运行、对端动作与回执足以判定桥接合同；不评开放语义。
+      expected: 一次写工具调用按顺序产生指定表情和动作；两项独立浏览器回执均绑定请求且确认执行。
+  metadata:
+    test_category: task

@@ -42,7 +42,7 @@
 | 机器人定时任务 | 选择实例，配置调查要求、群号、时间/时区和星期，预览、启停与查看报告及投递回执；[调度边界](schedules.md) |
 | 组件目录 | 按 tools / prompts / agents / context 四个 surface 统一浏览工具、提示词、Agent 和上下文组件（只读卡片） |
 | 测评页面 | 开始测试 / 运行记录 / 进步趋势 |
-| AI Harness | 修复发起与历史；详情抽屉显示任务概览、分层流程、独立命令日志和原始资料 |
+| AI Harness 改进 | 应用接入与改进需求、失败修复和历史；详情显示候选对照、独立验收、实例版本、分层流程及独立命令日志 |
 | 代码熵回收 | 全仓熵回收发起、可选定时与历史；复用 Harness 详情展示主题、规则、源码证据和交付 |
 | 模型配置 | 集中维护连接、模型方案与用途引用，按实际连接发现模型和推理选项 |
 | 设置 | 控制台本身 |
@@ -70,6 +70,32 @@ AI Harness 修复记录按业务阶段、准备版本与修复轮次展开。步
 | `/api/catalog/{item_id}` | GET | 单个目录条目 |
 | `/api/bots/{id}/tools` | GET | 读取实例当前工具配置 |
 | `/api/bots/{id}/tools` | PUT | 写回工具配置；`?apply=true` 时同步到运行实例并重启 |
+
+### 应用改进工作台
+
+「接入与改进需求」选择仓库应用，按该应用已保存的 LangGraph/Codex runtime 筛选；
+展示独立 Agent profile 与 Eval 预检条件。开发 worker 另选模型，不改写应用 runtime、
+模型绑定或现有会话。需求必须给出具体目标与源码可写范围；外部仓库沿现有固定版本、许可与用途包络调查。
+
+Console 和 CLI 共同调用 `HarnessController`。应用目录、评测预检、候选对照和版本状态均为只读查询；
+创建、取消、恢复、版本准备/启用/撤回/对账均为显式写操作，保留本机同源边界。
+页面不保存调度状态，不自动推进恢复，不把网络错误解释为任务取消或操作成功。
+
+对照按同一候选轮次展示基线、候选与独立确认，缺失结果保持未记录；已接受任务优先展示回执绑定的轮次。
+目标检查、回归保护、审核、接受回执和实际运行身份分别呈现。插件安装可作为启用目标，准备时核对
+其与冻结仓库应用的基线、配置和模型是否配对；页面选择不跳过版本控制层的检查。
+旧协议任务只读展示，停止执行进度轮询，不提供继续、启用或撤回操作；历史库切换沿现有 `cutover`，不新增迁移器。
+
+| 端点 | 方法 | 归属 |
+| --- | --- | --- |
+| `/api/harness/applications` | GET | 仓库应用、runtime、Agent profile 与登记启用目标 |
+| `/api/harness/applications/{id}/preview` | GET | 原 Eval 应用预检，不发起模型执行 |
+| `/api/harness/improvements` | POST | 原 `integrate` / `improve` 任务与稳定请求 ID |
+| `/api/harness/tasks/{id}/comparison` | GET | 已保存的基线、候选、独立确认与接受事实 |
+| `/api/harness/tasks/{id}/activation` | GET | 版本操作状态与实际运行身份，不执行对账 |
+| `/api/harness/tasks/{id}/activation/{action}` | POST | `prepare` / `activate` / `rollback` / `reconcile` / `cancel`，复用既有版本事务 |
+
+使用步骤见[通过 Console 提交需求](../guides/harness.md#通过-console-提交需求)。
 
 ### 四层配置工作台
 

@@ -2,6 +2,20 @@
 
 修改资料组织、人格、记忆、搜索和结果回读时阅读。资料按需加载不改变它的信任等级或执行权限。
 
+## 自有上下文能力
+
+上下文组织是 AgentStrata 自有 Agent 能力，也是 Harness 的优化对象。Application 根据当前会话准备身份、资源与资料，
+Agent 通过唯一 PromptPlan 和 session 上下文入口接收这些输入；平台专用状态留在应用或桥接侧。
+
+自有 LangGraph 路径已使用 [ContextManager](../../src/chatcopilot/agent/context/manager.py)生成消息副本：
+保留可信前缀，按 user 消息分轮，对旧工具结果生成摘要，按窗口及 token 预算裁剪对话；不改写完整原始消息列表。
+工具结果引用与分页回读保留完整证据入口。Codex 路径接收宿主组织的输入，其内部窗口与压缩由 Codex 管理，
+宿主可见快照不能证明原生内部上下文完整。
+
+改进应检验资料是否被正确使用、能力或会话变化后是否仍使用当前信息，以及应用/会话之间是否隔离。
+减少上下文量是辅助指标，不能以遗漏必要证据换取更小输入。具体案例与冻结条件见
+[主计划](../../specs/application-harness-framework/spec.md#首个案例与对照设计)，本页只维护现行机制。
+
 ## 先索引，后正文
 
 注册的 Skill 先提供已授权索引，命中任务后加载正文。工具完整结果与模型投影分开：长结果通过当前会话的引用分页读取，失效后返回明确的不可用信息，不伪造内容或重放副作用。
@@ -14,6 +28,7 @@ Bot 指令、人格、历史和原请求通过 user 输入投递。开始与续�
 
 ## 源码入口
 
+- [PromptPlanBuilder](../../src/chatcopilot/agent/context/prompt_plan.py)、[任务资料投影](../../src/chatcopilot/agent/context/task_framing.py)、[Application 上下文入口](../../src/chatcopilot/application/actor_runtime.py)
 - [src/chatcopilot/agent/tools/result_reader.py](../../src/chatcopilot/agent/tools/result_reader.py)
 - [src/chatcopilot/agent/memory](../../src/chatcopilot/agent/memory)
 - [src/chatcopilot/core/memory_records.py](../../src/chatcopilot/core/memory_records.py)
@@ -85,9 +100,11 @@ BotSpec 只通过 `tools.packs: persona.control` 向 Owner 主 Agent 注入 sess
 
 ## 双层预算机制
 
-`AgentSession` 的迭代与超时均采用 **soft cap + 健康检查 + hard cap** 三层设计：
-  - **迭代**：`max_tool_iterations`（默认 8）是 soft cap，到达后检查健康状态（无重复工具调用、无连续失败）；健康则继续执行，不健康则注入 wrap-up 指令让 LLM 总结后停止。`hard_iteration_cap` 默认为空，只有显式配置才成为硬上限；子 Agent 直接使用声明的轮数和时间，不隐式倍增。
-  - **超时**：`turn_timeout_seconds` 是 soft timeout；到达后检查最近工具活跃度（`stall_window_seconds` 内有无工具完成）；有活跃则继续。`hard_timeout_seconds` 是无条件安全线。若只设 `turn_timeout_seconds` 不设 `hard_timeout_seconds`，保持旧行为（等价硬截断）。
-  - **停滞检测**：最近 3 次工具调用 fingerprint 相同 → 判定为死循环；连续 2+ 次失败 → 判定为不健康。
-  - **Subagent 自动继承**：subagent 的 `max_model_turns` 作为 soft cap，hard cap 自动计算为 `max(soft+4, soft*2)`；hard timeout 为 soft 的 3 倍。
-  - **Env 覆盖**：`CHATCOPILOT_HARD_ITERATION_CAP`、`CHATCOPILOT_HARD_TIMEOUT_SECONDS`、`CHATCOPILOT_STALL_WINDOW_SECONDS`。
+自有 LangGraph 循环复用 AgentSession 的预算状态，由 [TurnOps](../../src/chatcopilot/agent/turn.py)在模型与工具执行边界检查取消、轮次和时间。
+这些是项目已有运行策略，可按独立目标优化；不将其描述为 LangGraph 库提供的产品策略，也不据此推定 Codex 内部预算。
+
+- **主 Agent 迭代**：`max_tool_iterations`（默认 8）为软阈值；达到后若健康则继续，不健康则进入有界收尾。`hard_iteration_cap` 默认为空，显式设置后在下一模型调用前检查硬上限。
+- **主 Agent 超时**：`turn_timeout_seconds` 对应软阈值。若同时设置硬超时，软阈值后根据 `stall_window_seconds` 内的工具完成活动决定是否收尾；硬超时到达则停止。只设软超时时，到达即停止，不额外延长。
+- **健康判断**：最近 3 次工具调用 fingerprint 相同，或连续至少 2 次失败，判为不健康；轮次和活跃度检查触发的收尾最多再执行 2 个模型轮次，仍受硬预算约束。
+- **自有子 Agent**：[SubagentRunner](../../src/chatcopilot/agent/subagents/runner.py)直接把 `max_model_turns` 用作迭代硬上限，`max_tool_calls` 限制工具调用，`timeout_seconds` 用作硬超时。没有自动倍增轮次或三倍超时。
+- **主路径配置**：沿用进程内配置解析和所选 env prefix；默认前缀下为 `CHATCOPILOT_HARD_ITERATION_CAP`、`CHATCOPILOT_HARD_TIMEOUT_SECONDS`、`CHATCOPILOT_STALL_WINDOW_SECONDS`，字段归属见[配置](configuration.md#agents)。

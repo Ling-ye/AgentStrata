@@ -32,7 +32,10 @@ class ImprovementRequest:
         if len(set(self.allowed_paths)) != len(self.allowed_paths) or len(set(self.goal_case_ids)) != len(self.goal_case_ids):
             raise ValueError("Duplicate scope or Case ids")
         if self.source_envelope:
-            envelope = AdapterApprovalEnvelope(**self.source_envelope)
+            try:
+                envelope = AdapterApprovalEnvelope(**self.source_envelope)
+            except TypeError as exc:
+                raise ValueError("来源需要完整的仓库地址、固定版本、许可依据、名称与接入用途") from exc
             errors = validate_adapter_approval(envelope)
             if errors:
                 raise ValueError("; ".join(errors))

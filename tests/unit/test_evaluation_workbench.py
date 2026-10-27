@@ -134,7 +134,7 @@ def test_qq_synthetic_snapshot_reports_actual_checker():
 def test_bridge_plan_uses_project_facts_without_an_llm_judge():
     plan = scoring_plan(get_manifest("agentstrata-application-bridges-v1"), {})
     assert plan["framework"] == "AgentStrata 链路检查器"
-    assert plan["implementation"] == "application-bridge/v1"
+    assert plan["implementation"] == "application-bridge/v2"
     assert plan["judge"] is None and plan["quality"] is False
     with pytest.raises(ValueError, match="unsupported scoring mode"):
         scoring_plan(get_manifest("agentstrata-application-bridges-v1"), {"scoring_mode": "native_geval"})

@@ -51,8 +51,8 @@ python -m chatcopilot.harness --help
 ### 提交接入或改进需求
 
 选择 Evaluation 服务已登记的仓库应用（`bots/<id>/bot.yaml`）；其 Agent profile 决定被测 runtime 和模型。
-已安装插件实例的直接选择与配置编辑留待 M6 工作台对接。以下示例使用既有桥接 Case
-作为目标，`--allow-path` 是允许修改的目录或现有文件，可重复传入。应按需求缩小范围：
+已安装插件可选择为候选启用目标，先核对其与仓库应用的基线和配置是否配对；安装目录不是任意可写源码。
+以下示例使用既有桥接 Case 作为目标，`--allow-path` 是允许修改的目录或现有文件，可重复传入。应按需求缩小范围：
 
 ```bash
 .venv/bin/python -m chatcopilot.harness improve \
@@ -72,10 +72,33 @@ python -m chatcopilot.harness --help
 成功时通过任务详情读取候选、对照、独立审核与接受回执。`get/cancel/resume` 继续操作同一任务，
 未知执行须先按原 ID 对账。完整验收不等于实例已更新，启用另行处理。
 
+### 通过 Console 提交需求
+
+1. 打开「AI Harness 改进」，选择「接入与改进需求」，再选择「改进已有能力」或「接入外部能力」。
+2. 按运行时筛选目标应用，核对 Agent profile、应用模型和评测保护集。改变 runtime 应先修改应用配置，重新建立运行时会话；筛选不会修改配置。
+3. 填写具体目标、成功条件和每行一个的可写源码路径。已有目标 Case 可在展开区选择；没有现成 Case 时，由独立 Test 角色设计新需求检查。
+4. 如需调查外部仓库，补充公开仓库地址、固定 commit、名称、许可依据与接入用途。选择开发模型、候选次数和时间预算后创建任务。
+5. 详情中查看逐项基线、候选和独立确认，结合审核及接受回执判断结果。取消或检查并继续仍操作原任务，刷新查询不会推进执行。
+6. 验收通过后，选择登记实例或插件安装，先准备版本，再确认启用。核对实际运行身份；失败或中断时沿原记录对账，需要时撤回。关闭页面不会取消已经发出的操作。
+
+旧任务标为只读归档；其原始状态与证据保留，新请求重新冻结来源。旧状态库需要切换时，使用下文既有
+维护和 `cutover` 流程，先预检并确认空闲，再显式归档，不手工删除历史文件。
+
+相同只读信息可从 CLI 获取：
+
+```bash
+.venv/bin/python -m chatcopilot.harness applications
+.venv/bin/python -m chatcopilot.harness preview-improvement --bot lingye-copilot-qq
+.venv/bin/python -m chatcopilot.harness list --kind application
+.venv/bin/python -m chatcopilot.harness comparison <task-id>
+```
+
+启用条件与恢复步骤见[实例版本运维](instances.md#启用与撤回已验收版本)。
+
 ### 修复测评失败 Case
 
 1. 在 Console「测评中心」打开运行记录，找到失败测试点，复制该行的「Case 实例 ID」。
-2. 在「AI Harness 修复」选择「测评 Case 实例」，粘贴 ID 并加载来源，核对测评、Case、Target、重复次数及失败结果。
+2. 在「AI Harness 改进」切到「修复已有失败」，选择「测评 Case 实例」，粘贴 ID 并加载来源，核对测评、Case、Target、重复次数及失败结果。
 3. 选择修复方案、预算与可选修复提示，启动任务。测评原答案不能被人工提示替换。
 
 Case 实例 ID 以 `case-` 开头，同题不同测评、Target 和重复执行分别定位。不要填测评 ID、题库

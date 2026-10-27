@@ -57,6 +57,27 @@ class LoadSource(BaseModel):
     bot_id: str = ""
 
 
+class CreateImprovement(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    task_type: Literal["integrate", "improve"]
+    bot_id: str = Field(min_length=1)
+    goal: str = Field(min_length=1)
+    allowed_paths: list[str] = Field(min_length=1)
+    goal_case_ids: list[str] = Field(default_factory=list)
+    suite_id: str = "agentstrata-application-bridges-v1"
+    source_envelope: dict[str, str] = Field(default_factory=dict)
+    request_id: str = Field(min_length=1)
+    profile: str = ""
+    max_attempts: int = Field(default=3, ge=1)
+    timeout_seconds: int = Field(default=3600, ge=1)
+
+
+class ActivationTarget(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    target_id: str | None = None
+    timeout: float = Field(default=60, gt=0, allow_inf_nan=False)
+
+
 class TimeStop(BaseModel):
     model_config = ConfigDict(extra="forbid")
     mode: Literal["time"] = "time"
@@ -145,6 +166,55 @@ def load_source(request: Request, body: LoadSource):
     return _call(lambda: _controller(request).load_source(body.kind, body.source_id, body.bot_id))
 
 
+@router.get("/applications")
+def applications(request: Request):
+    return _call(lambda: _controller(request).applications())
+
+
+@router.get("/applications/{bot_id}/preview")
+def preview_improvement(request: Request, bot_id: str, suite_id: str = "agentstrata-application-bridges-v1"):
+    return _call(lambda: _controller(request).preview_improvement(bot_id, suite_id))
+
+
+@router.post("/improvements")
+def create_improvement(request: Request, body: CreateImprovement):
+    from chatcopilot.core.model_settings import worker_profile
+    from chatcopilot.harness.improvement_types import ImprovementRequest
+    from chatcopilot.harness.models import RepairOptions
+    import os
+
+    _mutation_access(request)
+    controller = _controller(request)
+    payload = _call(lambda: ImprovementRequest(body.task_type, body.bot_id, body.goal,
+        tuple(body.allowed_paths), tuple(body.goal_case_ids), body.suite_id, body.source_envelope))
+    cfg, frozen = _call(lambda: worker_profile(body.profile, environment={**os.environ, **controller.settings}))
+    options = RepairOptions(cfg.model, cfg.reasoning_effort or "", body.max_attempts, body.timeout_seconds, frozen, cfg.profile_id)
+    return _call(lambda: controller.start_improvement(payload, options, request_id=body.request_id))
+
+
+@router.get("/tasks/{task_id}/comparison")
+def comparison(request: Request, task_id: str):
+    return _call(lambda: _controller(request).comparison(task_id))
+
+
+@router.get("/tasks/{task_id}/activation")
+def activation(request: Request, task_id: str):
+    return _call(lambda: _controller(request).activation(task_id))
+
+
+@router.post("/tasks/{task_id}/activation/{action}")
+def change_activation(request: Request, task_id: str,
+                      action: Literal["prepare", "activate", "rollback", "reconcile", "cancel"],
+                      body: ActivationTarget):
+    _mutation_access(request)
+    controller = _controller(request)
+    if action in {"prepare", "activate"}:
+        method = controller.prepare_activation if action == "prepare" else controller.activate
+        return _call(lambda: method(task_id, target_id=body.target_id, timeout=body.timeout))
+    method = getattr(controller, action + "_activation")
+    return _call(lambda: method(task_id))
+
+
 @router.get("/tasks/{task_id}/candidate-patch")
 def candidate_patch(request: Request, task_id: str):
     return Response(_call(lambda: _controller(request).candidate_patch(task_id)), media_type="text/x-diff")
@@ -162,7 +232,7 @@ def history(
     limit: int = Query(20, ge=1, le=100),
     search: str = Query("", max_length=256),
     status: str = "",
-    kind: Literal["", "repair", "code_health"] = "",
+    kind: Literal["", "repair", "code_health", "application"] = "",
 ):
     return _call(
             lambda: _controller(request).list(page=page, limit=limit, search=search, status=status,

@@ -1,14 +1,38 @@
-# Agent 与执行 Runtime
+# 自有 Agent 能力与执行 Runtime
 
 修改模型、Runtime、PromptPlan 或委托执行时阅读。应用通过 `agent_profile` 引用独立 Agent 配置，
 既有 BotSpec 装配结果继续交给 Application 投影为 Agent 输入，文件归属见[配置](configuration.md#配置归属与文件引用)。
 
-AgentRuntime 重构的目标、结构化交接与迁移验收见
-[runtime 路由规格](../../specs/agent-runtime-routing/spec.md)。
+AgentRuntime 是四层 Agent 运行系统中 Agent 层的统一执行入口与共享能力装配。
+自有 LangGraph 实现属于产品能力，Codex 是通过公开接口接入的可选执行器；
+结构化交接与路由边界见 [runtime 路由规格](../../specs/agent-runtime-routing/spec.md)。
 
 ## 一条执行契约
 
 LangGraph 和 Codex 共用任务、事件、结果与 PromptPlan 契约。Runtime 私有协议由 adapter 解释，平台身份与交付事实留在外层。能力不足时明确报不可用，不通过文本隐式切换 Runtime。
+
+## 自有实现与优化边界
+
+LangGraph 路径是深度运行策略定制主线。项目拥有以下实现，Harness 可在冻结目标与授权范围内生成下一版本候选：
+
+| 自有能力 | 当前实现与职责 |
+| --- | --- |
+| 执行入口与能力装配 | [AgentRuntime](../../src/chatcopilot/agent/runtime.py)保存执行路由与共享能力；[assembly](../../src/chatcopilot/agent/capabilities/assembly.py)按 catalog 和 runtime/session 作用域生成已有 ToolProvider |
+| 工具发现与执行 | [ToolRegistry](../../src/chatcopilot/agent/tools/registry.py)、[disclosure](../../src/chatcopilot/agent/tools/disclosure.py)与 [ToolExecutor](../../src/chatcopilot/agent/tools/executor.py)复用授权后的工具集合，负责呈现、发现、调用与结果处理 |
+| 上下文组织 | [PromptPlanBuilder](../../src/chatcopilot/agent/context/prompt_plan.py)组织信任分区，[ContextManager](../../src/chatcopilot/agent/context/manager.py)为自有循环准备消息视图；Application 经公开 session 入口刷新上下文 |
+| 自有循环 | [LangGraphAgentSession](../../src/chatcopilot/agent/langgraph_session.py)定义 `llm`、`tools` 两类节点及条件路由；[TurnOps](../../src/chatcopilot/agent/turn.py)处理模型/工具回合、预算、取消、事件、结果与收尾 |
+| 委托与协作 | [SubagentRunner](../../src/chatcopilot/agent/subagents/runner.py)以 LangGraph 执行委托任务，绑定工具范围、模型轮次、工具次数和时间预算；复用既有委托工具与工作流声明 |
+
+AgentSession 保留公共状态与辅助方法，LangGraph 库提供图执行基础设施。
+Agent 图负责日常任务；Harness 的 LangGraph 图负责调查、开发和验收，不能从 Harness 的持久化能力推定 Agent 回合具有同样的恢复能力。
+
+先按任务证据定位能力装配、上下文或应用策略问题，必要时再改图、停止/恢复或委托策略。
+循环从现在起就是正式优化对象，不要求先新增规划节点或改写整个 runtime。
+平台协议与专用状态留在桥接/Application，Agent 继续消费通用任务、工具和上下文契约。
+候选不能扩大当前权限、改变提示信任分区，或改写本轮 Harness/Eval 的冻结规则。
+
+当前机制按本页及上下文、工具正文维护；尚待取得的自有能力优化证据与实施顺序见
+[主计划 A—D 路线](../../specs/application-harness-framework/spec.md#自有-agent-能力优化路线)。
 
 ## 源码入口
 
@@ -48,9 +72,10 @@ Bot 文本只能形成 identity/style，persona、memory、journal、网页和�
 
 ## 双 runtime 与退役配置
 
-LangGraph 负责自有模型与工具循环；Codex app-server 负责原生循环、线程恢复和压缩。
+自有 LangGraph Agent 负责模型与工具循环；Codex app-server 负责自身循环、线程恢复和压缩。
 宿主继续管理身份、权限、工具、上下文接入和交付，能力差异由 RuntimeCapabilities 表达。
-Harness 的开发 worker 独立选择模型，不改变被优化实例的执行选择。
+Codex 路径可优化宿主提供的提示词、工具、上下文和桥接，不承诺修改未开放的内部循环。
+近期 Harness 开发 worker 只使用 Codex，其模型与被优化实例独立，可以开发 LangGraph Agent 候选，不改变实例的执行选择。
 
 Native 独立循环和注册入口已删除；AgentSession 保留状态与辅助方法，TurnOps 保留预算、取消、
 事件、工具结果和资源语义，LangGraph 通过 StateGraph 调度。自有子 Agent 也使用 LangGraph，

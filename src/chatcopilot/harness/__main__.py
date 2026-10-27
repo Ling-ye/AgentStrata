@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -87,6 +88,12 @@ def main(argv: list[str] | None = None) -> int:
     listing.add_argument("--page", type=int, default=1)
     listing.add_argument("--search", default="")
     listing.add_argument("--status", default="")
+    listing.add_argument("--kind", choices=("", "repair", "application", "code_health"), default="")
+    sub.add_parser("applications", help="列出需求任务可选的应用及其已配置 runtime")
+    preview = sub.add_parser("preview-improvement", help="只读核对应用评测条件")
+    preview.add_argument("--bot", required=True)
+    preview.add_argument("--suite", default="agentstrata-application-bridges-v1")
+    sub.add_parser("comparison", help="读取需求候选的基线、复测与独立确认").add_argument("task")
     for name in ("prepare-activation", "activate"):
         activation = sub.add_parser(name, help="准备或显式启用已独立验收的实例版本")
         activation.add_argument("task")
@@ -127,7 +134,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command in {"integrate", "improve"}:
             from chatcopilot.harness.improvement_types import ImprovementRequest
             from chatcopilot.core.model_settings import worker_profile
-            cfg, frozen = worker_profile(args.profile)
+            cfg, frozen = worker_profile(args.profile, environment={**os.environ, **controller.settings})
             goal = ImprovementRequest(args.command, args.bot, args.goal, tuple(args.allow_path),
                 tuple(args.goal_case), args.suite,
                 json.loads(args.source_envelope.read_text()) if args.source_envelope else {})
@@ -166,7 +173,11 @@ def main(argv: list[str] | None = None) -> int:
                 feedback=RepairFeedback(args.repair_hint, args.expected_behavior),
             )
         elif args.command == "list":
-            value = controller.list(page=args.page, search=args.search, status=args.status)
+            value = controller.list(page=args.page, search=args.search, status=args.status, kind=args.kind)
+        elif args.command == "applications":
+            value = controller.applications()
+        elif args.command == "preview-improvement":
+            value = controller.preview_improvement(args.bot, args.suite)
         elif args.command in {"prepare-activation", "activate"}:
             value = getattr(controller, args.command.replace("-", "_"))(args.task, target_id=args.target, timeout=args.timeout)
         else:

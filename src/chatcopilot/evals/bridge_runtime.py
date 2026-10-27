@@ -109,12 +109,13 @@ def run(definition, *, bot: str, workspace_root: Path) -> TrialObservation:
     with ExitStack() as stack:
         stack.enter_context(patch.dict(os.environ, env))
         avatar = ([], [])
-        if definition.scenario_id == "avatar-action":
+        if definition.scenario_id in {"avatar-action", "avatar-pose"}:
             avatar = stack.enter_context(_avatar_peer(avatar_port, control_token, timeout=definition.policy.timeout_seconds))
             runtime = replace(runtime, mcp_servers=(McpServerConfig(
                 id="bridge-avatar", transport="streamable_http", url=f"http://127.0.0.1:{avatar_port}/agentstrata/mcp/",
                 headers={"Authorization": "Bearer " + control_token}, exposure="main", risk="interactive", stateless_http=True,
-                tool_prefix="avatar", allowed_tools=("list_actions", "play_motion", "set_expression"),
+                tool_prefix="avatar", allowed_tools=("list_actions", "play_motion", "set_expression",
+                    *(("apply_pose",) if definition.scenario_id == "avatar-pose" else ())),
             ),))
         with execution_phase("runtime"):
             result = asyncio.run(_execute(definition, runtime, root, env, owner_token, other_token, avatar))
@@ -205,7 +206,7 @@ async def _execute(definition, runtime, root, env, owner_token, other_token, ava
             state["receipts"].extend({**asdict(receipt), "run_id": current.run_id}
                 for outbound in outbox for receipt in host.state_store.delivery_receipts(outbound.outbound_id))
             record_turn({**record, "completed": True, "final_text": final, "stop_reason": stop})
-            if stop == "llm_error":
+            if stop in {"llm_error", "runtime_error"}:
                 raise unavailable("Configured model execution failed; see captured model diagnostics", code="model_execution_error")
 
         if scenario == "session-isolation":

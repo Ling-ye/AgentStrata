@@ -2,6 +2,9 @@
 
 修改 Channel、Gateway、Application 或 ACP 接入时阅读。身份与文件规则见 [身份与资源](identity-resources.md)。
 
+本页说明 AgentStrata 四层 Agent 运行系统的消息链。Agent 层内的 AgentRuntime 负责统一执行入口与能力装配，
+自有 LangGraph 循环及可选 Codex 执行的边界见 [Agent](agent.md)；Harness 与 Eval 在消息链之外开发和验证下一版本。
+
 ## 主要交接
 
 准入后，Gateway 确定性响应 `/source`，所有已获准的用户均可查看许可、署名与对应源码；
@@ -111,7 +114,7 @@ Live2D 和 QQ/NapCat 使用现有接口连接 Agent，不增加统一 Bridge 驱
 | --- | --- | --- |
 | 连接 | 后端 GatewayWebSocketClient，浏览器使用客户端自己的 WebSocket | OneBot v11 正向 WebSocket Channel |
 | 配置 | `config/adapter.json` 的 Gateway 地址、client_id、凭据引用；`config/agent.yaml` 选择 runtime | `channels.qq` 的 endpoint/account/token 引用；独立 Agent profile 选择 runtime |
-| 能力 | 文字、按键语音及完整回复；可选 MCP 的 list_actions、set_expression、play_motion | 文本、结构化 @、引用与已支持的图片/文件资源；动作由 OneBot codec 显式构造 |
+| 能力 | 文字、按键语音及完整回复；可选 MCP 的 list_actions、set_expression、play_motion、apply_pose | 文本、结构化 @、引用与已支持的图片/文件资源；动作由 OneBot codec 显式构造 |
 | 身份权限 | Gateway 绑定客户端角色与会话归属；头像端点要求独立凭据、回环和允许的 Origin | 验证连接凭据、登录账号、消息来源与准入；文本和 provider 昵称不能提升角色 |
 | 工具 | 角色动作经过既有 ToolRegistry/MCP 权限与本地模型、动作白名单 | 宿主工具仍经同一 Registry/Executor，Channel 不授予工具权限 |
 | 就绪 | Gateway 就绪、浏览器已连接、语音可用是不同事实 | get_login_info 与配置账号一致后渠道才就绪；实际消息交付另看回执 |
@@ -132,6 +135,12 @@ Live2D 对尚未获知 run_id 的输入保留原参数和幂等键；普通重�
 QQ 的发送、等待回执和取消各自保留边界。发送过程中取消会释放本地待回执资源，
 但不说明 provider 没有执行；Gateway 沿既有 outbox 记录确认或未知，不自动重发未知交付。
 两类桥接均不承诺副作用恰好发生一次。
+
+Live2D 的 `apply_pose(expression, motion)` 复用原动作控制器，在一次 MCP 写调用中先设置表情，
+只有表情的浏览器回执为 `executed` 才派发动作。返回分别保留 `expression`、`motion` 回执和
+`motion_dispatched`；该标记只表示是否调用动作控制器，浏览器是否实际收到或执行仍以回执为准。
+首项失败或未知时第二项不派发。第二项失败不会撤销已执行的表情，
+整体状态沿用最后实际执行步骤的状态，未知结果不自动重试。宿主工具权限、Origin、凭据和动作白名单保持原边界。
 
 生产装配基线见[桥接与 runtime 联调](../../tests/integration/test_application_bridge_baseline.py)。
 它覆盖两类接入与两个 runtime，使用真实 Application/Gateway/Channel/RuntimeAdapter，

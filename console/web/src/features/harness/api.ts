@@ -50,6 +50,7 @@ export interface RepairTask {
   source: { kind?: SourceKind | "code_health" | "application"; task_type?: "integrate" | "improve"; goal?: string; evaluation_id?: string; run_id?: string; bot_id?: string;
     case_id?: string; case_ref?: string; target_id?: string; case_ids?: string[]; case_instance_id?: string; trial_id?: string; attempt?: number;
     blockers?: string[]; test_sha256?: string; test_relative_path?: string; regression_id?: string; feedback?: RepairFeedback;
+    allowed_paths?: string[]; goal_case_ids?: string[]; runtime_id?: string;
     warnings?: SourceWarning[];
     diagnosis?: { reason: string; expected_behavior?: string } };
   review_and_commit?: boolean; uncommitted?: boolean | null; commit_state?: string; commit_in_main?: boolean | null;
@@ -77,7 +78,7 @@ export interface RepairProgress {
 }
 export type ProgressTask = Pick<RepairTask, "task_id" | "status" | "stage" | "elapsed_seconds" |
   "heartbeat_at" | "current_attempt" | "preparation_revisions" | "next_action" | "local_commit" | "commit_in_main" | "commit_state" | "delivery" | "cleanup" | "archive" |
-  "pipeline_version" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint" | "graph" | "delivery_graph"> & {
+  "pipeline_version" | "archived" | "verification_gaps" | "acceptance_coverage" | "stop_reason" | "remaining_seconds" | "candidate_checkpoint" | "graph" | "delivery_graph"> & {
   options: { model_profile?: string; model: string; max_attempts: number; reasoning_effort: string; timeout_seconds?: number | null };
   source?: { kind?: SourceKind | "code_health" | "application" };
   governance_summary?: RepairTask["governance_summary"];
@@ -117,10 +118,13 @@ export function sourceLabel(task: RepairTask): string {
 }
 export type StartRepair = { source_kind: SourceKind; case_instance_id?: string;
   bot_id?: string; run_id?: string; feedback?: RepairFeedback; request_id: string; profile: string; max_attempts: number; timeout_seconds: number };
+export class HarnessRequestError extends Error {
+  constructor(message: string, readonly code?: string) { super(message); }
+}
 export async function harnessRequest<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api/harness${path}`, init);
   const value = await response.json();
-  if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : value.detail?.message || "Harness 暂不可用");
+  if (!response.ok) throw new HarnessRequestError(typeof value.detail === "string" ? value.detail : value.detail?.message || "Harness 暂不可用", value.detail?.code);
   return value as T;
 }
 const request = harnessRequest;
@@ -138,6 +142,7 @@ export const harnessApi = {
 };
 
 export function repairStatusLabel(task: ProgressTask): string {
+  if (task.archived) return "只读归档";
   if (task.source?.kind === "application" && task.status === "fixed") return "需求验收通过";
   if (task.source?.kind === "application" && task.status === "not_reproduced") return "未产生目标差异";
   if (task.source?.kind === "code_health" && task.status === "fixed") return "熵回收验收通过";
@@ -155,6 +160,6 @@ export function deliveryLabel(state: string): string {
     blocked: "交付受阻", merged: "已合并到远端 main", closed: "PR 已关闭", cancelled: "交付已取消",
     cancel_pending: "正在停止交付", paused: "自动合并已暂停", no_changes: "无可交付成果" } as Record<string, string>)[state] ?? state;
 }
-export function deliveryActive(task?: { status: string; delivery?: Delivery }): boolean {
-  return !!task && (ACTIVE.includes(task.status) || ["pending", "committed", "pushed", "pr_open", "waiting_checks", "checks_failed", "updating", "retryable", "cancel_pending"].includes(task.delivery?.state ?? ""));
+export function deliveryActive(task?: { status: string; delivery?: Delivery; archived?: boolean }): boolean {
+  return !!task && !task.archived && (ACTIVE.includes(task.status) || ["pending", "committed", "pushed", "pr_open", "waiting_checks", "checks_failed", "updating", "retryable", "cancel_pending"].includes(task.delivery?.state ?? ""));
 }

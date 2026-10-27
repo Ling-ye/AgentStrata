@@ -142,7 +142,7 @@ async def probe(request: dict) -> None:
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     assert {v.name for v in (await session.list_tools()).tools} == {
-                        "list_actions", "set_expression", "play_motion"}
+                        "list_actions", "set_expression", "play_motion", "apply_pose"}
                     result = await session.call_tool("play_motion", {"name": "gesture"})
                     assert json.loads(result.content[0].text)["status"] == "unavailable"
     finally:

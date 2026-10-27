@@ -5,17 +5,21 @@
 
 ## 项目定位
 
-AgentStrata 让自研 Agent 连接外部应用，并以 Harness 与 Eval 驱动持续改进。
-Live2D、QQ/NapCat 等通过 Channel、Gateway 客户端、工具接口或 MCP 接入；应用日常运行与改进任务各自拥有生命周期。
+AgentStrata 是面向外部应用的可定制 Agent 运行系统，Channel → Gateway → Application → Agent
+四层整体是产品主体。AgentRuntime 保留 Agent 层统一执行入口与共享能力装配的含义。
+Live2D、QQ/NapCat 等通过 Channel、Gateway 客户端、工具接口或 MCP 接入。
 
-统一宿主管理身份、权限、上下文、工具、会话与交付。LangGraph 与 Codex 按实例配置选择，
-一次正常回合由一个 runtime 执行。Harness 的开发 worker 与被优化应用分别绑定模型。
-Harness 编排直接复用 LangGraph；项目定义来源冻结、角色权限、候选、证据、独立验收及版本启用规则。
-Eval 负责评测条件、执行与评分，候选接受、源码交付和运行版本分别记录。
+项目自行实现能力装配、上下文、工具使用、基于 LangGraph 的循环与协作策略，均为 Harness 的主要优化对象。
+优先根据证据改进能力、上下文和应用策略，问题位于控制流程时修改自有循环；循环始终在优化范围内。
+Agent 的 LangGraph 图执行日常回合，Harness 的 LangGraph 图组织开发与验收，不混淆两者职责。
 
-改进对象包括 Agent 执行逻辑、提示词、上下文、工具、Skill 与桥接。
-接入优先复用协议和成熟组件，受管源码、fork 与构建按实际需求展开。
-项目定义与长期设计见[主计划](specs/application-harness-framework/spec.md)，本次范围以用户任务为准，事实沿源码与领域正文核对。
+LangGraph 是深度策略定制主线；Codex 通过公开接口作为可选业务执行器，近期也是 Harness 唯一开发 worker。
+一次正常回合由实例配置选择一个 runtime，开发 worker 与被优化应用分别绑定模型。
+Codex 的未开放内部行为不属于本项目可承诺的修改范围。Harness 定义来源冻结、角色权限、候选与独立接受，
+Eval 负责评测条件、执行、评分和证据；候选接受、源码交付、版本启用与实际交付分别记录。
+
+接入优先复用现有协议，fork 与构建按需展开。已完成阶段和后续自有能力优化路线只由
+[主计划](specs/application-harness-framework/spec.md)维护，本次范围以用户任务为准，事实沿源码与领域正文核对。
 
 应用 `bot.yaml` 引用独立 Agent profile，运行层复用原类型化装配结果；旧内联配置须显式迁移，
 不在加载时回退或改写文件。字段归属与原有共享引用的含义见[配置](docs/reference/configuration.md#配置归属与文件引用)。
@@ -50,13 +54,13 @@ Native 独立执行路径已退役，旧配置按运行时正文处理；业务�
 
 | 当前任务 | 首读 | 何时继续展开 |
 | --- | --- | --- |
-| 分阶段开发、双 runtime、外部桥接与需求改进 | [主计划与阶段](specs/application-harness-framework/spec.md#分阶段开发) | 先确认本阶段及前置条件，再进入相关领域；公开契约、复用源码与迁移方案见同一主计划 |
+| 分阶段开发、外部桥接与需求改进 | [主计划与阶段](specs/application-harness-framework/spec.md#分阶段开发) | 自有能力基线与 M7 验收读同一计划的 [A—D 路线](specs/application-harness-framework/spec.md#自有-agent-能力优化路线)，再进入对应领域 |
 | 外部应用插件、适配器与 Live2D | [桥接基线](docs/reference/runtime.md#外部桥接基线)、[独立客户端](docs/reference/runtime.md#独立交互客户端)、[软件插件](docs/reference/runtime.md#外部软件插件管理) | 当前操作读 [Live2D 指南](docs/guides/live2d.md)；fork、自动接入与版本启用按主计划推进 |
 | Harness 修复、验收与返工 | [角色](docs/reference/harness.md#按需角色协作)、[验收](docs/reference/harness.md#对照验证与独立验收) | 执行器或恢复问题读同页相应章节；图设计变化读 [Harness 编排规格](specs/harness-langgraph/spec.md) |
 | Eval、评分、Case 或对照结果 | [Evaluation](docs/reference/evaluation.md) | 执行归属与生命周期读[服务协议](docs/reference/evaluation-service.md)；题目变化读[用例约束](docs/reference/evaluation-cases.md) |
 | 自身治理、Skill 学习或交付 | [代码熵](docs/reference/code-health.md) | 检查规则读[黄金原则](docs/reference/harness-principles.md)；远端操作与清理读[交付契约](docs/reference/delivery.md) |
 | 消息、身份、准入和资源 | [运行链](docs/reference/runtime.md) | 权限与文件边界读[身份与资源](docs/reference/identity-resources.md) |
-| Agent、PromptPlan、上下文或工具 | [Agent](docs/reference/agent.md) | 上下文与记忆读[上下文](docs/reference/context.md)；工具发现执行读[工具](docs/reference/tools.md) |
+| 自有 Agent 能力、LangGraph 循环或委托策略 | [自有实现与优化边界](docs/reference/agent.md#自有实现与优化边界) | 上下文与记忆读[上下文](docs/reference/context.md)；能力装配与发现读[工具](docs/reference/tools.md)，验收读 [Eval](docs/reference/evaluation.md#自有-agent-能力验收) |
 | 执行或模型路由 | [执行契约](docs/reference/agent.md#一条执行契约)、[模型配置](docs/reference/configuration.md#llm) | 路由机制变化读 [runtime 路由规格](specs/agent-runtime-routing/spec.md)；修复 worker 另读 [Harness 执行适配](docs/reference/harness.md#执行适配与隔离) |
 | 模型、BotSpec 或部署 | [配置](docs/reference/configuration.md)中的相关字段 | 操作读对应指南；公开或部署边界读[公开契约](docs/reference/publication.md) |
 | 已验收版本启用、撤回或恢复 | [实例版本契约](docs/reference/delivery.md#已验收版本启用与撤回) | 操作读[启用与撤回](docs/guides/instances.md#启用与撤回已验收版本)；先核对任务回执、目标实例和原切换记录 |

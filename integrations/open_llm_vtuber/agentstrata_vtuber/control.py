@@ -71,6 +71,19 @@ def install_control(app, config: AdapterConfig, controller: AvatarController) ->
         """Request a registered motion; inspect status, including unknown. Repeating may replay it."""
         return action_result(await controller.play_motion(name))
 
+    @mcp.tool()
+    async def apply_pose(expression: str, motion: str):
+        """Set an expression, then play a motion only after its browser receipt confirms execution."""
+        expression_result = await controller.set_expression(expression)
+        if expression_result["status"] != "executed":
+            return action_result({"status": expression_result["status"],
+                                  "expression": expression_result, "motion": None,
+                                  "motion_dispatched": False})
+        motion_result = await controller.play_motion(motion)
+        return action_result({"status": motion_result["status"],
+                              "expression": expression_result, "motion": motion_result,
+                              "motion_dispatched": True})
+
     previous_lifespan = app.router.lifespan_context
 
     @asynccontextmanager

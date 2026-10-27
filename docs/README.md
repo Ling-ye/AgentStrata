@@ -1,6 +1,6 @@
 # 文档导航
 
-AgentStrata 提供自研 Agent、LangGraph/Codex 双 runtime、外部桥接及 Harness/Eval 驱动的持续改进。
+AgentStrata 是面向外部应用的可定制 Agent 运行系统。自有四层架构、Agent 能力和 LangGraph 执行策略构成产品主体，Harness 与 Eval 支撑持续改进，Codex 作为可选业务执行器和当前开发 worker 接入。
 初次了解项目先看[首页](../README.md)，理解模块关系看[框架示意图](../README.md#框架总览)，技术约束与源码入口见[架构总览](reference/architecture.md)。
 
 本页供使用者与开发者选择操作路径；AI 协作者从 [AGENTS](../AGENTS.md)按任务逐层读取。
@@ -8,13 +8,14 @@ guides 解释如何操作，reference 维护当前机制与修改边界，specs 
 
 ## 理解新架构与按阶段开发
 
-[Agent、外部桥接与持续改进主计划](../specs/application-harness-framework/spec.md)是新架构的唯一实施计划，
+[Agent 运行系统与自有能力优化主计划](../specs/application-harness-framework/spec.md)是唯一实施计划，
 包含固定版本的开源源码参考、最小公开契约和 [M0、M1、M1.1 与 M2—M7](../specs/application-harness-framework/spec.md#分阶段开发)的前置条件与验收标准。
 M1 已提供独立应用与 Agent 配置，M1.1 收敛为 LangGraph/Codex；M2 的[桥接基线](reference/runtime.md#外部桥接基线)统一说明现有 Live2D 与 QQ/NapCat 的配置和证据边界。
 M3 提供[Agent 与桥接评测](reference/evaluation.md#agent-与外部桥接评测)和版本对照；
 M4 提供[需求任务](guides/harness.md#提交接入或改进需求)，M5 提供[已验收版本启用与撤回](guides/instances.md#启用与撤回已验收版本)；
-改进工作台和真实闭环按 M6—M7 开发，受控验证不代替真实交付。
-参与新框架开发时先选择阶段，再读取相关领域，不把计划中的接口当作当前操作入口。
+M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求)；真实闭环按主计划独立验收，受控验证不代替真实交付。
+后续沿 [A—D 路线](../specs/application-harness-framework/spec.md#自有-agent-能力优化路线)建立自有 Agent 基线，完成能力与上下文案例，再收口真实 Harness 闭环；控制流程存在实际缺口时深入循环与协作策略。
+参与开发时先选择阶段，再读取相关领域，不把设计目标当作已实现能力。
 
 ## 选择使用路径
 
@@ -22,6 +23,8 @@ M4 提供[需求任务](guides/harness.md#提交接入或改进需求)，M5 提�
 | --- | --- |
 | 理解目标架构与现有差距 | [主计划](../specs/application-harness-framework/spec.md)、[当前架构](reference/architecture.md) |
 | 按阶段开发应用接入与优化能力 | [阶段范围与完成条件](../specs/application-harness-framework/spec.md#分阶段开发) |
+| 定制自有 Agent 能力、上下文或 LangGraph 策略 | [自有实现入口](reference/agent.md#自有实现与优化边界)、[能力优化路线](../specs/application-harness-framework/spec.md#自有-agent-能力优化路线) |
+| 验证自有 Agent 改进及归因 | [自有 Agent 能力验收](reference/evaluation.md#自有-agent-能力验收) |
 | 配置独立 Agent 或迁移旧内联文件 | [配置归属](reference/configuration.md#配置归属与文件引用)、[迁移步骤](guides/instances.md#迁移内联-agent-配置) |
 | 准备源码开发环境 | [开发指南](guides/development.md) |
 | 评测 Agent 或比较改动 | [Evaluation 指南](guides/evaluation.md) |

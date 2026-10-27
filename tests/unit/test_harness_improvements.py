@@ -194,14 +194,17 @@ def test_goal_cli_uses_the_public_controller(command, tmp_path, monkeypatch, cap
     from chatcopilot.harness import __main__ as cli
     called = []
     class Controller:
+        settings = {"AGENTSTRATA_LLM_CONFIG": "fixture-selected-model-settings"}
         def __init__(self, *args, **kwargs):
             pass
         def start_improvement(self, request, options, **kwargs):
             called.append((request, options, kwargs))
             return {"task_id": "fixture"}
     monkeypatch.setattr(cli, "HarnessController", Controller)
-    monkeypatch.setattr("chatcopilot.core.model_settings.worker_profile", lambda _: (
-        SimpleNamespace(model="worker", reasoning_effort="high", profile_id="worker-profile"), {}))
+    def worker_profile(_, *, environment):
+        assert environment["AGENTSTRATA_LLM_CONFIG"] == Controller.settings["AGENTSTRATA_LLM_CONFIG"]
+        return SimpleNamespace(model="worker", reasoning_effort="high", profile_id="worker-profile"), {}
+    monkeypatch.setattr("chatcopilot.core.model_settings.worker_profile", worker_profile)
     assert cli.main(["--repository-root", str(tmp_path), command, "--bot", "fixture", "--goal", "Add an action",
                      "--allow-path", "src/chatcopilot/agent", "--request-id", "stable"]) == 0
     assert called[0][0].task_type == command and called[0][1].model == "worker"

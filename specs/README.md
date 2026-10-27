@@ -2,11 +2,11 @@
 
 先读现行领域正文；这里只保留长期规则与不能从源码确认已完成的设计条件。
 
-## Agent、外部桥接与持续改进主计划
+## Agent 运行系统与自有能力优化主计划
 
-[自研 Agent、外部桥接与持续改进](application-harness-framework/spec.md)定义定位、开源复用与公开契约。
-[开发阶段](application-harness-framework/spec.md#分阶段开发)保留 M0/M1，新增独立 M1.1 双 runtime 收敛；
-M2/M3 的桥接基线、评测与版本对照沿用现有接口；M4 复用 Harness 图完成需求候选，M5 提供版本启用与撤回；M6/M7 继续实现工作台与真实闭环。
+[可定制 Agent 运行系统与自有能力优化](application-harness-framework/spec.md)定义四层产品主体、自有 LangGraph Agent、可选 Codex 执行器与开发 worker 的边界，并维护开源复用与公开契约。
+[开发阶段](application-harness-framework/spec.md#分阶段开发)保留 M0—M6 的完成事实；后续 [A—D 路线](application-harness-framework/spec.md#自有-agent-能力优化路线)推进能力基线、能力与上下文案例、真实闭环以及按需求深入循环策略。
+M7 尚需 Harness 实际生成并正式接受自有 Agent 实现候选，以及隔离实例启用/撤回证据；已有 `apply_pose` 桥接案例不能替代这一条件。
 `accepted` 表示设计可实施；阶段状态与未完成条件只在主计划维护，fork 不作为通用前置条件。
 
 ## 长期基线

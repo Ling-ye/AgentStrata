@@ -9,8 +9,10 @@ created: 2026-09-21
 
 ## Summary
 
-主 Agent 按实例选择 LangGraph 或 Codex。模型、认证与执行循环分别声明；
-LangGraph 调用模型，Codex 使用原生 App Server。宿主继续拥有身份、权限、业务工具和交付。
+AgentStrata 的四层 Agent 运行系统是产品主体，AgentRuntime 保留 Agent 层统一执行入口与共享能力装配的含义。
+主 Agent 按实例选择 LangGraph 或 Codex，模型、认证与执行循环分别声明。
+项目实现的 LangGraph 图、上下文、工具与协作策略都是自有 Agent 能力及 Harness 的优化对象；
+Codex 经公开 App Server 接入，宿主继续拥有身份、权限、业务工具和交付。
 
 ## Design
 
@@ -18,6 +20,15 @@ LangGraph 调用模型，Codex 使用原生 App Server。宿主继续拥有身�
 [六层源码依赖](../domain-layered-dependencies/spec.md)。Contracts 定义不可变 DTO 与端口；
 Core 负责模型传输和凭据；Application 绑定 actor、资源和权限；Agent 选择执行实现；
 Gateway 持有取消和交付事实。所有 Agent 固定非交互执行；Console 与 Evaluation 只使用公开控制和查询入口。
+
+定位修订沿用现有类、配置、CLI 和持久化字段，不新增 runtime ID。
+LangGraph 路径是深度策略定制主线；优先根据需求改进能力、上下文和应用策略，
+问题位于控制流程时再修改图、TurnOps、停止或委托策略。循环始终可成为正式优化对象。
+Agent 图与 Harness 编排图分别维护，候选改变下一版本的 Agent，不改变本次冻结的评分与接受规则。
+
+Codex 是可选业务执行器，近期也是 Harness 唯一开发 worker；开发 worker 与被优化实例的 runtime、
+模型和环境分别绑定，不开发第二套 LangGraph 编程 worker。Codex 路径可改进宿主提示词、工具、上下文和桥接，
+其未开放内部行为不属于自有实现修改范围。后续优化顺序与验收由[主计划](../application-harness-framework/spec.md#自有-agent-能力优化路线)维护。
 
 权威路由链固定为：
 
@@ -73,6 +84,8 @@ session ref 与活动数据库只使用 `runtime_id`。独立 code-worker 的冻
 
 ## Acceptance
 
+- 四层运行系统、AgentRuntime、自有 LangGraph Agent 与 Codex 角色含义明确，既有公开字段和路由保持稳定。
+- 自有循环与能力实现可以被优化；Agent 候选与冻结的 Harness/Eval 控制、权限和接受规则分离。
 - LangGraph/Codex 与订阅/API Key 的兼容组合显式选路，模型配置不隐式改变 runtime。
 - Codex 主会话只执行 app-server 回合；LangGraph 通过宿主模型端口执行 StateGraph 回合。
 - 宿主工具、能力投影、PromptPlan 和执行授权一致，秘密不进入 DTO、日志或浏览器响应。

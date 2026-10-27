@@ -91,6 +91,8 @@ def prepare(controller, task_id, target_id=None, *, timeout=60):
 
 
 def operation(controller, task_id, action, *, target_id=None, timeout=60):
+    if action != "status":
+        controller.lifecycle.require_current(controller.store.get(task_id))
     if action == "activate":
         prepare(controller, task_id, target_id, timeout=timeout)
     task = controller.store.get(task_id)

@@ -14,6 +14,7 @@ SUITE_ID = "agentstrata-application-bridges-v1"
 _SCENARIOS = {
     "dialogue": {"live2d", "qq"},
     "avatar-action": {"live2d"},
+    "avatar-pose": {"live2d"},
     "session-isolation": {"live2d"},
     "admission": {"qq"},
     "delivery-unknown": {"qq"},

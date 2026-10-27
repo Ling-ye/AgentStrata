@@ -2,6 +2,18 @@
 
 新增工具或修改发现、权限和投影时阅读。模型发现与实际执行使用同一 ToolRegistry；域工具通过明确 provider catalog 装配。
 
+## Agent 能力装配与应用边界
+
+工具装配、呈现、发现和使用是项目自有 Agent 能力，可以成为 Harness 候选的修改对象。
+现有路径为 `ToolProvider → 所选 pack → ToolRegistry 快照 → ToolExecutor`；
+[能力装配](../../src/chatcopilot/agent/capabilities/assembly.py)接收不可变 runtime/session 上下文，按 catalog 生成已有 provider，
+不新增能力 DSL 或第二个工具注册中心。工具选择是否正确由执行轨迹与任务结果验证，注册成功不代表 Agent 已会使用。
+
+平台协议、动作实现和平台专用状态留在桥接或应用侧，Agent 使用通用 ToolDef、参数和结果契约。
+优化相似工具的呈现与发现时，仍需保持授权过滤、真实工具名、参数语义及执行回执；
+外部工具实现保持不变的对照才能支持 Agent 侧能力改善的归因。外部适配器新增函数单独记为桥接扩展。
+自有 Agent 的验收重点见 [Evaluation](evaluation.md#自有-agent-能力验收)。
+
 ## 当前公开领域
 
 ```text
@@ -107,7 +119,7 @@ OpenAPI 响应检查与通用 GET 逃生门。源代码、示例和测试不得�
 ## 新增领域
 
 1. 在 `external_tools/<domain>/` 建立清晰的 spec/service/module 边界。
-2. 在 `tool_packs/catalog.py` 注册静态 entry，并为每个模块列出精确工具名。
+2. 在 `tool_packs/catalog.py` 注册静态 entry，由对应 `ToolProvider.packs` 声明完整工具定义，不在 catalog 重复维护工具名清单。
 3. 通过 `shared.tool_spec` 或 contracts 构造 ToolDef/HandlerResult。
 4. 在需要的 BotSpec 中显式选择 pack。
 5. 增加单元测试、架构检查和用户文档。

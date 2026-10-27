@@ -2,9 +2,9 @@
 
 # AgentStrata
 
-### 连接外部应用，用 Harness 与 Eval 持续改进 Agent
+### 面向外部应用的可定制 Agent 运行系统
 
-**自研 Agent 宿主 · LangGraph / Codex 双 Runtime · 外部项目桥接 · 评测驱动改进**
+**自有四层架构 · 可优化的 LangGraph Agent · 外部能力接入 · Harness 与 Eval**
 
 [![AGPL-3.0-only](https://img.shields.io/badge/License-AGPL--3.0--only-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
@@ -14,16 +14,17 @@
 
 </div>
 
-AgentStrata 是一个面向真实应用的开源 Agent 框架。它提供自研 Agent 系统、外部项目桥接能力，以及围绕 **Harness 与 Eval** 构建的持续改进流程。
+AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以自有四层架构承载应用接入、会话、上下文和 Agent 能力。项目自行实现能力装配、上下文组织、工具使用，以及基于 LangGraph 的执行循环与协作策略；**这些自有实现都是 Harness 的主要优化对象**。
 
-你可以把 Agent 连接到 Live2D、QQ / NapCat，或其他提供 API、工具接口和消息渠道的项目；为应用配置独立的模型、人格、工具与记忆；再通过需求或运行反馈，发起调查、开发、对照评测和独立验收，把通过验证的改动启用到指定实例。
+你可以把 Agent 连接到 Live2D、QQ / NapCat，或其他提供 API、工具接口和消息渠道的项目，为应用配置独立的模型、人格、工具与记忆。Harness 根据需求开发适配、能力模块和运行策略，通过 Eval 与独立验收验证改进，再在授权范围内启用到指定实例。Codex 通过公开接口作为可选执行器接入，当前也是 Harness 的开发 worker。
 
-**项目的重点，是把“连接应用”和“持续改进 Agent”放进同一套可追踪的工程流程：每次改动有目标，效果有对照，运行版本有来源。**
+**外部应用提出能力需求，自有 Agent 据此改进：每次改动有目标，效果有对照，运行版本有来源。**
 
 ## 项目特色
 
 | 特色 | 解决的问题 |
 | --- | --- |
+| **自有 Agent 能力可定制** | 能力装配、上下文、工具发现、LangGraph 循环与委托策略都有明确实现入口，可以按应用需求修改并评测。 |
 | **Agent、应用与配置分离** | 同一套 Agent 能力可以服务不同应用；每个实例独立选择 runtime、模型、人格、工具、记忆和工作区。 |
 | **接入现有项目** | 沿 Channel、Gateway 客户端、工具接口与 MCP 连接外部能力；优先复用现有协议，必要时编写薄适配器或维护受管源码。 |
 | **需求驱动的 Harness** | 从新增能力、运行问题或代码治理目标出发，组织调查、计划、编码、测试、审核与返工。 |
@@ -47,54 +48,68 @@ AgentStrata 是一个面向真实应用的开源 Agent 框架。它提供自研 
 
 ## 框架总览
 
-AgentStrata 将日常运行与持续改进分开组织。应用使用配置选定的 Agent；Harness 和 Eval 在运行链之外工作，生成并验证下一版代码或配置。
+**Channel → Gateway → Application → Agent 四层共同构成产品主体。** Agent 层内的 `AgentRuntime` 是统一执行入口与共享能力装配；自有 LangGraph Agent 实现模型与工具循环。Harness 和 Eval 在消息链之外工作，生成并验证下一版 Agent、配置或桥接。
 
 ```mermaid
 flowchart TB
-    QQ["QQ / NapCat"] <--> CH["Channel · 平台事件与投递"]
-    LIVE["Live2D / 自定义客户端"] <--> GW["Gateway · 身份、准入与协调"]
-    CH <--> GW
-    GW <--> APP["Application · 会话、资源与运行策略"]
-    APP <--> AG["Agent · 上下文、模型与工具"]
+    subgraph SYSTEM["AgentStrata · 自有四层 Agent 运行系统"]
+        CH["Channel · 平台事件与投递"] <--> GW["Gateway · 身份、准入与协调"]
+        GW <--> APP["Application · 会话、资源与上下文准备"]
+        subgraph AGENT["Agent 层 · 自有能力与执行设计"]
+            AR["AgentRuntime · 统一入口与能力装配"]
+            CAP["上下文与工具能力 · PromptPlan / ToolRegistry / 委托"]
+            LG["自有 LangGraph Agent · 图、工具循环与停止策略"]
+            CA["Codex Adapter · 公开协议适配"]
+            AR <--> CAP
+            AR --> LG
+            AR --> CA
+        end
+        APP <--> AR
+    end
+    QQ["QQ / NapCat"] <--> CH
+    LIVE["Live2D / 自定义客户端"] <--> GW
     PROFILE["独立 Agent Profile"] --> APP
-    AG --> LG["LangGraph Runtime"]
-    AG --> CX["Codex Runtime · app-server"]
-    AG <--> TOOLS["ToolRegistry / MCP / 外部工具"]
-    TOOLS <--> EXT["外部项目与服务"]
+    CAP <--> EXT["外部工具 / MCP / 应用接口"]
+    CA <--> CX["Codex app-server · 可选业务执行器"]
 
     UI["Console / CLI"] --> H["Harness · 调查、开发、返工与审核"]
-    AG -. "运行证据与反馈" .-> H
+    AR -. "运行证据与反馈" .-> H
+    H -- "当前开发 worker" --> CX
     H <--> E["Eval · 基线、候选与回归对照"]
     H --> ACCEPT["独立接受 · 绑定精确候选"]
     E -- "评测结果" --> ACCEPT
     ACCEPT -- "在授权范围内" --> V["版本管理 · 启用、核验与撤回"]
-    V -. "更新代码与配置" .-> APP
-    V -. "更新桥接与工具" .-> TOOLS
+    V -. "更新自有 Agent 与策略" .-> AR
+    V -. "更新应用配置与桥接" .-> APP
 
     classDef runtime fill:#eff6ff,stroke:#3b82f6,color:#172554;
     classDef improve fill:#ecfdf5,stroke:#10b981,color:#064e3b;
-    class CH,GW,APP,AG,PROFILE,LG,CX,TOOLS runtime;
+    class CH,GW,APP,AR,CAP,LG,CA,PROFILE runtime;
     class H,E,ACCEPT,V improve;
+    style SYSTEM fill:#f8fafc,stroke:#64748b
+    style AGENT fill:#eff6ff,stroke:#3b82f6
 ```
 
 日常消息遵循 **Channel → Gateway → Application → Agent** 四层职责。Live2D 等独立客户端直接使用 Gateway；外部功能也可以作为工具被 Agent 调用。身份与权限由宿主确定，执行结果、服务方确认和用户可见交付分别记录。
 
-### 一个 Agent 宿主，两种执行方式
+### 自有 Agent 与可选执行器
 
-项目统一定义身份、权限、上下文、工具、会话和结果契约。一个正常回合由配置选定的 runtime 执行，模型连接与认证独立管理。
+项目统一定义身份、权限、上下文、工具、会话和结果契约。`agents.runtime` 保留 `langgraph` 和 `codex` 两种选择，一个正常回合由其中一种执行，模型连接与认证独立管理。LangGraph 路径是深度运行策略定制的主线。
 
 | Runtime | 执行方式 | 主要改进范围 |
 | --- | --- | --- |
-| **LangGraph** | 在图执行基础上组织项目自有的 Agent 循环 | 推理与工具循环、上下文组织、预算分配和停止策略 |
+| **LangGraph** | 复用图执行基础设施，图节点、状态转换和 Agent 策略由项目实现 | 能力装配、上下文、工具使用、执行循环、预算与委托策略 |
 | **Codex** | 通过 app-server 使用原生执行循环、线程与压缩能力 | 宿主提供的提示词、工具、上下文、权限映射、桥接与配置 |
 
-应用描述引用独立的 Agent Profile，实例状态由各应用持有。开发 worker 的模型与被优化应用的模型分别绑定；应用的日常运行不依赖 Harness 任务正在执行。
+应用描述引用独立的 Agent Profile，实例状态由各应用持有。近期 Harness 开发 worker 只使用 Codex，其模型与被优化应用分别绑定：Codex worker 可以修改和验证自有 LangGraph Agent。Codex 业务执行器自身的循环与压缩仍由其公开接口决定，不承诺修改未开放的内部行为。
 
 模块职责和源码入口见[架构总览](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md)、[运行链](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/runtime.md)和 [Agent 执行契约](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md)。
 
 ## 改进闭环
 
-自我优化的对象包括 Agent 执行逻辑、提示词、上下文、工具、Skill 和桥接。它以明确目标和可验证的候选为单位推进。
+自我优化的主要对象是项目拥有的 Agent 实现：能力装配、工具发现与执行、上下文组织、Skill、LangGraph 图和协作策略。应用需求决定修改位置，优先检查能力、上下文和应用策略；问题确实位于控制流程时，再修改循环、停止或委托策略。执行循环始终属于正式优化范围。
+
+例如，外部工具已经提供正确接口，但 Agent 在相似工具中选错了能力，改进可以落在工具呈现、发现或上下文组织。比较时固定外部工具、任务、模型和环境，检验 Agent 侧修改是否提高任务完成与参数正确性，并保护权限和其他应用行为。配置调整、桥接功能扩展和自有 Agent 实现变更分别评价。
 
 | 步骤 | 框架做什么 | 留下什么依据 |
 | --- | --- | --- |
@@ -106,7 +121,7 @@ flowchart TB
 
 ### Harness：把需求变成可审查候选
 
-Harness 编排直接复用 **LangGraph 的 StateGraph、子图、检查点和中断恢复**。AgentStrata 实现应用来源与授权、角色权限、隔离工作区、操作回执、预算和接受规则。
+Harness 编排直接复用 **LangGraph 的 StateGraph、子图、检查点和中断恢复**。它组织开发与验收；Agent 层的 LangGraph 图组织日常模型和工具执行，两者职责独立。AgentStrata 实现来源与授权、角色权限、隔离工作区、操作回执、预算和接受规则。
 
 - **按职责协作。** Plan 调查和设计，Coding 修改获准代码，Test 提供独立验证，Review 审核精确候选；必要时重新规划或定向返工。
 - **当前任务的规则保持冻结。** 候选可以改进后续使用的实现，不能靠更改本轮评分、验收条件或宿主控制程序获得通过。
@@ -119,7 +134,7 @@ Harness 编排直接复用 **LangGraph 的 StateGraph、子图、检查点和中
 
 Eval 管理 Case、Target、Trial、隔离执行、评分、结果与证据。项目实现 **IFEval、BFCL、GAIA 等公开 benchmark 的适配、执行与评分流程**，并维护 Agent 任务、桥接、权限与红队用例。
 
-评测分别检查三个层面：**Agent 是否完成任务，桥接是否遵守接口与权限，外部项目是否实际执行或交付。** 原生评分、确定性事实和必要的语义评分分别保存，环境失败与证据缺失单独记录。基线、模型、题目或环境变化会影响可比性，关键行为退步不能由总分增长抵消。
+评测分别检查三个层面：**Agent 是否完成任务，桥接是否遵守接口与权限，外部项目是否实际执行或交付。** 自有 Agent 改进重点检查工具选择、参数、上下文使用和实际效果；调用次数、上下文量、延迟与费用作为相应任务的辅助指标。原生评分、确定性事实和必要的语义评分分别保存，环境失败与证据缺失单独记录。基线、模型、题目或环境变化会影响可比性，关键行为退步不能由总分增长抵消。
 
 机制见 [Evaluation](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/evaluation.md)，运行步骤见[评测指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md)。
 
@@ -133,9 +148,16 @@ Eval 管理 Case、Target、Trial、隔离执行、评分、结果与证据。�
 
 Console 将实例、运行任务、改进过程和评测证据集中呈现。以下为使用**示例数据**渲染的界面截图；图中任务状态与数字用于展示信息组织，实际效果以对应运行记录为准。点击图片可查看原图。
 
-**Harness：沿目标、候选和独立验收追踪一次改进。**
+**Harness：沿需求、基线候选对照和独立验收追踪一次改进。**
 
-[![AgentStrata Harness 界面示例：来源、候选生成、验证与审核过程](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/harness.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/harness.png)
+[![AgentStrata Harness 界面示例：来源、候选生成、验证与审核过程](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/harness-comparison.jpg)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/harness-comparison.jpg)
+
+<details>
+<summary>查看应用选择与需求提交工作台</summary>
+
+[![AgentStrata 需求工作台示例：应用与 runtime 选择、改进目标、源码范围和独立开发模型](https://raw.githubusercontent.com/Ling-ye/AgentStrata/main/docs/assets/readme/harness-workbench.png)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/assets/readme/harness-workbench.png)
+
+</details>
 
 **Eval：选择评测对象与题目，查看评分方式和执行条件。**
 
@@ -186,7 +208,7 @@ Console 是管理入口，应用运行与评测服务各自拥有生命周期。
 
 | 目录 | 主要职责 |
 | --- | --- |
-| `src/chatcopilot/agent` | Agent 会话、LangGraph/Codex 适配、上下文、工具与子 Agent |
+| `src/chatcopilot/agent` | AgentRuntime、自有 LangGraph 循环、能力装配、上下文、工具、委托与 Codex 适配 |
 | `src/chatcopilot/gateway`、`application`、`channels` | 身份与准入、会话、消息运行、渠道及交付协调 |
 | `src/chatcopilot/harness` | 调查与开发编排、候选、独立验收、受控交付 |
 | `src/chatcopilot/evals` | 题目、执行对象、评测生命周期、评分、证据与比较 |
@@ -197,12 +219,12 @@ Python 包命名空间保留为 `chatcopilot`，对外命令为 `agentstrata`。
 
 ## 开源基础与设计参考
 
-AgentStrata 优先复用成熟基础设施，把项目实现集中在 Agent 宿主、应用接入、权限、评测证据和独立验收上。
+AgentStrata 优先复用成熟基础设施，自行实现四层运行系统、自有 Agent 能力与策略、应用桥接、评测证据和独立验收。
 
 | 项目 | 在 AgentStrata 中的作用 |
 | --- | --- |
-| [LangGraph](https://github.com/langchain-ai/langgraph) | Harness 的图执行、子图、持久化和中断恢复，以及 LangGraph runtime 的执行基础 |
-| [Codex](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md#双-runtime-与退役配置) | 经 app-server 接入执行能力，也可作为 Harness 开发 worker |
+| [LangGraph](https://github.com/langchain-ai/langgraph) | 为自有 Agent 循环提供图执行基础；为 Harness 提供图编排、子图、持久化与中断恢复。两类图的设计由项目维护 |
+| [Codex](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/agent.md#双-runtime-与退役配置) | 经 app-server 作为可选业务执行器接入；近期是 Harness 唯一开发 worker |
 | [DeepEval](https://github.com/confident-ai/deepeval) 与基准原生评分器 | 在项目 Eval 生命周期中执行具体指标与必要语义评分 |
 | [Open-LLM-VTuber](https://github.com/Open-LLM-VTuber/Open-LLM-VTuber) | 独立 Live2D 客户端的上游基础，通过 Gateway 与 MCP 对接 Agent |
 

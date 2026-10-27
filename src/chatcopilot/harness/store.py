@@ -567,19 +567,21 @@ class HarnessStore:
     def page(self, *, page: int, limit: int, search: str, status: str, kind: str = "") -> dict[str, Any]:
         if page < 1 or not 1 <= limit <= 100 or len(search) > 256:
             raise ValueError("无效的历史查询参数")
-        if kind not in {"", "repair", "code_health"}:
+        if kind not in {"", "repair", "code_health", "application"}:
             raise ValueError("未知任务类型")
         clause = (
             "(?='' OR status=?) AND (?='' OR instr(lower(task_id || ' ' || "
             "COALESCE(json_extract(payload, '$.source.evaluation_id'),'') || ' ' || "
             "COALESCE(json_extract(payload, '$.source.case_instance_id'),'') || ' ' || "
-            "COALESCE(json_extract(payload, '$.source.run_id'),'')), lower(?))>0)"
+            "COALESCE(json_extract(payload, '$.source.run_id'),'') || ' ' || "
+            "COALESCE(json_extract(payload, '$.source.bot_id'),'') || ' ' || "
+            "COALESCE(json_extract(payload, '$.source.goal'),'')), lower(?))>0)"
         )
 
         args = (status, status, search, search)
         if kind:
-            clause += " AND COALESCE(json_extract(payload, '$.source.kind'),'evaluation') " + ("=?" if kind == "code_health" else "!=?")
-            args += ("code_health",)
+            clause += " AND COALESCE(json_extract(payload, '$.source.kind'),'evaluation') " + ("!=?" if kind == "repair" else "=?")
+            args += ("code_health" if kind == "repair" else kind,)
         with self.database.connect() as connection:
             total = connection.execute(
                 "SELECT COUNT(*) FROM tasks WHERE " + clause, args

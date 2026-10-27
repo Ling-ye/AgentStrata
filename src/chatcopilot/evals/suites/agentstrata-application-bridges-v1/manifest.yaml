@@ -1,6 +1,6 @@
 schema: 1
 suite_id: agentstrata-application-bridges-v1
-version: '1'
+version: '2'
 name: Agent 与应用桥接
 subject_type: agent
 capability_tags:
@@ -20,19 +20,19 @@ driver_id: agent_configured
 requires_bot: true
 source_type: project
 purpose: engineering_regression
-data_version: '1'
-split: 6 个固定工程与 Agent 桥接场景
+data_version: '2'
+split: 7 个固定工程与 Agent 桥接场景
 coverage: 实际 Application/Gateway/Channel/适配器与所选模型，模拟浏览器及 OneBot 对端
 target_scope: 所选 Agent profile 与受管桥接源码
 execution_scope: isolated_application_bridge
 native_method: 冻结执行事实与对端回执
 scorer_origin: project_adapter
-scorer_version: application-bridge/v1
+scorer_version: application-bridge/v2
 files:
 - path: cases.yaml
   role: cases
   media_type: application/yaml
-  sha256: 74eabdd33077b68aec3997fbc23acf39e337c7f080c57b3686b7774c4989aed0
+  sha256: c1c4c0653d22332e285e0c97af1a332e68e710d2610ee7919111594639890375
 presets:
   quick:
     description: quick
@@ -48,6 +48,7 @@ presets:
     - live2d-session-isolation
     - qq-admission
     - qq-delivery-unknown
+    - live2d-pose
   security:
     description: security
     case_ids:
@@ -58,6 +59,11 @@ presets:
     case_ids:
     - live2d-motion
     - qq-delivery-unknown
+  efficiency:
+    description: 组合动作工具效率与 QQ 准入保护
+    case_ids:
+    - live2d-pose
+    - qq-admission
 default_preset: quick
 setup_hint: 使用服务仓库中的受管适配源码和有效 Agent 模型配置；平台对端为本地夹具，真实平台与音频另行验收。
 options:
