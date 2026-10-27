@@ -4,7 +4,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       python-minor-patch:
         update-types: [minor, patch]
@@ -12,7 +12,7 @@ updates:
     directory: /console/web
     schedule:
       interval: monthly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       console-minor-patch:
         update-types: [minor, patch]
@@ -20,7 +20,7 @@ updates:
     directory: /deploy/docker
     schedule:
       interval: monthly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       container-minor-patch:
         update-types: [minor, patch]
@@ -28,7 +28,7 @@ updates:
     directory: /
     schedule:
       interval: monthly
-    open-pull-requests-limit: 5
+    open-pull-requests-limit: 0
     groups:
       actions-minor-patch:
         update-types: [minor, patch]
