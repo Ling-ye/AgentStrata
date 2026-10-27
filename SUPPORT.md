@@ -18,7 +18,9 @@ AgentStrata 是面向外部应用的可定制 Agent 运行系统。问题可能�
 
 ## 报告问题或提出需求
 
-通过 [GitHub Issues](https://github.com/Ling-ye/AgentStrata/issues) 提交可复现问题、明确的功能建议或使用问题。先搜索已有记录，再选择合适的 issue 模板。
+通过 [GitHub Issues](https://github.com/Ling-ye/AgentStrata/issues) 提交可复现问题、明确的功能建议或使用问题。接入选型、尚未收敛的想法和使用交流可以进入 [Discussions 问答](https://github.com/Ling-ye/AgentStrata/discussions/categories/q-a)；已有 Question Issue 仍接受使用问题。先搜索已有记录，再选择合适的入口。
+
+接入自己的应用时，说明现有应用、期望能力、可用接口和能投入的范围。形成明确开发任务后转为 Issue 并相互链接；接入成果进入[作品展示](https://github.com/Ling-ye/AgentStrata/discussions/categories/show-and-tell)。贡献步骤见[贡献指南](CONTRIBUTING.md)。
 
 尽量提供以下信息：
 

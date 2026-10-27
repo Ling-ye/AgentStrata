@@ -1,29 +1,14 @@
-## Problem
+## 问题与最终行为 / Problem and outcome
 
-<!-- Link an Issue when one exists, then explain the concrete failure or missing behavior. -->
+<!-- Link an Issue when one exists (Closes #...), or describe the concrete trigger and outcome. Chinese or English is welcome. -->
 
-## Design
+## 实际验证 / Verification
 
-<!-- Explain the chosen design, alternatives rejected, and compatibility impact. -->
+<!-- List actual commands and concise outcomes, skipped checks and environment blockers. Distinguish local tests, controlled integration, real models and external delivery. Ordinary prose uses docs; code needs focused tests plus fast/full as required by docs/guides/development.md. Ordinary community PRs do not require running Harness. -->
 
-## Changes
+## 影响范围 / Impact
 
-<!-- List the focused code, test, configuration, and documentation changes. -->
+<!-- State whether this changes configuration, an integration, Agent implementation or validation infrastructure. Include user-visible behavior (and CHANGELOG.md entry when applicable), affected docs and compatibility impact. For architecture, public contracts, deployment or migrations, link the SDD and explain the design. For new dependencies/assets, include source and license. Write "Not applicable" where appropriate. -->
 
-## Verification
-
-<!-- Paste commands and concise outcomes. Do not include secrets or private logs. -->
-
-- [ ] Validation matches the change: ordinary prose uses `docs`; code uses focused tests and `fast` or `full` as required by the development guide.
-- [ ] Actual commands, results and skipped checks are reported here or in CI, without adding run logs to documentation.
-- [ ] User-visible changes were added to `CHANGELOG.md`, or are marked not user-visible.
-- [ ] `python scripts/check_public_repo.py` passes.
-- [ ] A spec was added or updated if this changes architecture, a public
-      contract, deployment, or migration behavior.
-- [ ] New dependencies or copied assets have a reviewed source and license.
-- [ ] Affected documentation was updated.
-- [ ] The diff contains no credentials, private paths, or unrelated changes.
-
-## Release notes
-
-<!-- State the user-visible change, or write "Not user-visible". -->
+- [ ] I understand the change, including AI-assisted parts, and have reported only validation actually performed.
+- [ ] The diff contains no credentials, private logs or unrelated changes; public-boundary checks are included in the required repository validation.

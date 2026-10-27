@@ -1,5 +1,11 @@
 blank_issues_enabled: false
 contact_links:
+  - name: 接入与使用交流 / Integration and usage questions
+    url: https://github.com/Ling-ye/AgentStrata/discussions/categories/q-a
+    about: Discuss your application, expected capabilities and available interfaces. 中文或英文均可。
+  - name: 作品展示 / Show your integration
+    url: https://github.com/Ling-ye/AgentStrata/discussions/categories/show-and-tell
+    about: Share a reproducible integration, its supported version and validation limits.
   - name: Security vulnerability
     url: https://github.com/Ling-ye/AgentStrata/security/advisories/new
     about: Report vulnerabilities privately. Do not include secrets in public Issues.

@@ -1,0 +1,21 @@
+title: "[Q&A] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        中文或英文均可。请先搜索已有记录；安全问题按 SECURITY.md 私下报告，不上传凭据或私有日志。
+        Use Issues for a reproducible bug or a scoped development task.
+  - type: textarea
+    id: goal
+    attributes:
+      label: 应用与期望能力 / Application and goal
+      description: What application are you using or integrating, and what should it do?
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 已尝试的操作与接口 / Attempts and interfaces
+      description: Include the version, environment, available interface and minimal redacted evidence. Describe what you can contribute if this is an integration proposal.
+    validations:
+      required: true

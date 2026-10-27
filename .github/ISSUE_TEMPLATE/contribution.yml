@@ -1,0 +1,53 @@
+name: 贡献任务 / Contribution task
+description: Propose a scoped task; maintainers complete the implementation and validation details before opening it for claims.
+title: "[Task]: "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        中文或英文均可。普通贡献者只需说明目标和交付；维护者在开放认领前补齐入口、做法、验证与验收。
+        Do not include secrets or private logs. Only maintainers apply good first issue or help wanted after checking readiness.
+  - type: textarea
+    id: goal
+    attributes:
+      label: 为什么值得做 / Goal
+      description: Who needs this and what observable result would improve their experience?
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: 本次交付与范围 / Deliverable and scope
+      description: Describe a focused change and any important exclusions.
+    validations:
+      required: true
+  - type: dropdown
+    id: change_kind
+    attributes:
+      label: 改动对象 / Change kind
+      options:
+        - Documentation or developer experience
+        - Application configuration
+        - Integration or external tool
+        - Agent implementation
+        - Validation infrastructure
+  - type: textarea
+    id: starting_points
+    attributes:
+      label: 源码入口与建议做法 / Starting points and approach
+      description: Maintainer preparation — link code, similar examples and the agreed approach; link the existing roadmap if relevant.
+  - type: textarea
+    id: verification
+    attributes:
+      label: 如何验证、什么证据足够 / Verification and evidence
+      description: Exact commands, required environment and expected results. Identify local/controlled/real-model/external evidence; name the owner and budget arrangements if external validation is required.
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: 验收条件 / Acceptance
+      description: Maintainer preparation — observable completion criteria. Fix model, tools, tasks and environment only when comparing Agent effects.
+  - type: textarea
+    id: coordination
+    attributes:
+      label: 认领与协作 / Coordination
+      description: Maintainer, required skills, estimated effort and claim instructions. Leave assignees empty until a contributor claims the task.

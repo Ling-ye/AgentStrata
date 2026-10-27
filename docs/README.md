@@ -6,6 +6,14 @@ AgentStrata 是面向外部应用的可定制 Agent 运行系统。自有四层�
 本页供使用者与开发者选择操作路径；AI 协作者从 [AGENTS](../AGENTS.md)按任务逐层读取。
 guides 解释如何操作，reference 维护当前机制与修改边界，specs 保留长期约束及待验收条件。
 
+## 参与社区贡献
+
+- [首次 PR、认领与审查](../CONTRIBUTING.md) / [English contribution guide](guides/contributing-en.md)
+- [按贡献类型准备环境](guides/development.md#按贡献类型开始)
+- [新手任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-linked%3Apr) / [接入与使用交流](https://github.com/Ling-ye/AgentStrata/discussions/categories/q-a)
+- [作品展示](https://github.com/Ling-ye/AgentStrata/discussions/categories/show-and-tell) / [项目动态](https://github.com/Ling-ye/AgentStrata/discussions/categories/announcements)
+- [任务整理与社区维护](guides/community.md)
+
 ## 理解新架构与按阶段开发
 
 [Agent 运行系统与自有能力优化主计划](../specs/application-harness-framework/spec.md)是唯一实施计划，

@@ -1,0 +1,28 @@
+title: "[Showcase] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        分享可复现的接入或扩展，保留作者与原项目署名。中文或英文均可。
+        Separate screenshots or controlled demos from real-model and external-delivery evidence. Do not share secrets or personal data.
+  - type: textarea
+    id: application
+    attributes:
+      label: 应用、作者与链接 / Application, author and links
+      description: What did you connect, who maintains it, and where is the source?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 支持版本与复现 / Versions and reproduction
+      description: Supported AgentStrata/application versions, prerequisites and reproducible steps.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: 验证范围与限制 / Evidence and limitations
+      description: What was actually verified? Include limitations and any related contribution task.
+    validations:
+      required: true

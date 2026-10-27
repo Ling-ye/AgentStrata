@@ -2,6 +2,38 @@
 
 从可编辑源码环境开始；机器人部署是独立任务。先选择本次领域，再读取关联正文和源码入口。
 
+## 按贡献类型开始
+
+先按[贡献指南](../../CONTRIBUTING.md#第一次提交-pr) Fork 并建立分支。以下命令均在仓库根目录运行；核心 Python 环境为 3.12–3.13。
+
+| 贡献类型 | 环境与第一步 | 合并前验证 |
+| --- | --- | --- |
+| 文档、链接和导航 | Python、Git 与 PyYAML；按下方最小环境步骤准备，无需模型凭据或机器人部署 | `docs`，并核对说明中的真实命令与链接 |
+| Console | Node 22 与 npm；`npm ci --prefix console/web`，然后 `npm --prefix console/web run dev` | 相关测试及 `python3 scripts/check_repo.py console`；代码仍按下表补齐 `fast` 或 `full` |
+| Python、桥接与工具 | 按下面的完整源码环境安装锁定依赖，再运行 Issue 指定的定向测试 | 定向测试后，按风险选择 `fast` 或 `full`；平台检查按任务说明执行 |
+
+Console 开发服务器只提供前端，实际页面的 API 需要 Console 后端；不启动后端时使用现有测试中的受控数据检查局部逻辑。不要为了一个界面改动先部署真实 QQ 或模型。
+
+新的纯文档工作区只需安装项目已声明的 PyYAML；已有完整源码环境可直接运行检查：
+
+```bash
+python3 -m venv .venv
+.venv/bin/python -m pip install 'PyYAML>=6.0'
+.venv/bin/python scripts/check_repo.py docs
+```
+
+需要修改代码时再使用下面的 `uv sync --locked` 安装完整锁定依赖。
+
+QQ 编解码与 Agent 工具发现已有本地测试入口，可在完整源码环境中分别运行：
+
+```bash
+.venv/bin/python -m pytest tests/unit/test_qq_onebot_codec.py -q
+.venv/bin/python -m pytest tests/unit/test_tool_disclosure.py -q
+```
+
+这些测试使用合成输入或受控模型，不需要真实 QQ 账号和模型密钥，也不证明真实 QQ 交付或模型效果。首次安装仍需要下载开发依赖。
+如果环境未就绪，可以先提交 Draft PR 并说明阻塞；维护者协助区分安装问题、既有失败和新增回归，合并前补齐要求的验证。
+
 ## 准备环境
 
 默认 WSL/Linux。安装仓库声明的开发依赖，使用同一个解释器运行检查：

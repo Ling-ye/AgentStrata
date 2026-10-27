@@ -10,7 +10,7 @@
 [![Python](https://img.shields.io/badge/Python-3.12%E2%80%933.13-blue.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/pyproject.toml)
 [![Linux / WSL2](https://img.shields.io/badge/Runtime-Linux%20%2F%20WSL2-informational.svg)](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)
 
-[项目特色](#项目特色) · [应用场景](#应用场景) · [框架总览](#框架总览) · [改进闭环](#改进闭环) · [产品界面](#产品界面) · [快速开始](#快速开始) · [文档](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)
+[项目特色](#项目特色) · [应用场景](#应用场景) · [框架总览](#框架总览) · [改进闭环](#改进闭环) · [产品界面](#产品界面) · [快速开始](#快速开始) · [参与开发](#参与开发) · [English contribution guide](docs/guides/contributing-en.md)
 
 </div>
 
@@ -19,6 +19,14 @@ AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以�
 你可以把 Agent 连接到 Live2D、QQ / NapCat，或其他提供 API、工具接口和消息渠道的项目，为应用配置独立的模型、人格、工具与记忆。Harness 根据需求开发适配、能力模块和运行策略，通过 Eval 与独立验收验证改进，再在授权范围内启用到指定实例。Codex 通过公开接口作为可选执行器接入，当前也是 Harness 的开发 worker。
 
 **外部应用提出能力需求，自有 Agent 据此改进：每次改动有目标，效果有对照，运行版本有来源。**
+
+| 想参与什么 | 从这里开始 |
+| --- | --- |
+| **接入自己的应用** | [交流接入目标](https://github.com/Ling-ye/AgentStrata/discussions/categories/q-a)，再选择 Channel、Gateway 客户端或工具接口 |
+| **改进 Agent 能力** | [查看 Agent 任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aagent)，贡献工具发现、上下文或运行策略改进 |
+| **贡献复现与评测** | [查看验证任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aeval)，提供场景、复现与可复核结果 |
+
+第一次贡献可从[未认领的新手任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-linked%3Apr)和[首次 PR 步骤](CONTRIBUTING.md#第一次提交-pr)开始。欢迎中文或英文交流。
 
 ## 项目特色
 
@@ -233,6 +241,8 @@ AgentStrata 优先复用成熟基础设施，自行实现四层运行系统、�
 ## 参与开发
 
 欢迎贡献应用桥接、Agent 能力、评测用例、Harness 改进和工作台体验。一个清楚的需求、一条有代表性的失败路径，或一组可复现的基线与候选证据，都可以成为贡献的起点。
+
+普通社区 PR 通过对应检查与人工审查即可，不要求贡献者自行运行 Harness。欢迎 AI 辅助，作者负责理解改动、核实验证结果和回应审查。接入成果可在[作品展示](https://github.com/Ling-ye/AgentStrata/discussions/categories/show-and-tell)分享。
 
 从[贡献指南](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md)开始，按[文档导航](https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md)进入相关领域。架构与公共契约的改动遵循 [SDD](https://github.com/Ling-ye/AgentStrata/blob/main/docs/maintenance.md#sdd-生命周期)。AI 协作者先读 [AGENTS.md](https://github.com/Ling-ye/AgentStrata/blob/main/AGENTS.md)，再沿当前任务的源码和测试核对事实。
 
