@@ -11,6 +11,8 @@ and releases use [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- Raise the aiohttp and urllib3 security floors and refresh the Console
+  development dependencies to address HTTP transport and test/build tool advisories.
 - AI Harness retains actionable draft diagnostics and continuation evidence,
   distinguishes pending validation from missing prerequisites, and prepares
   complete dependencies and disk-backed temporary storage for repository regression.

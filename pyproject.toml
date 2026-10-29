@@ -33,6 +33,7 @@ dependencies = [
     "PyYAML>=6.0",
     "jsonschema>=4.26,<5",
     "Requests>=2.32,<3",
+    "urllib3>=2.8,<3",
     "mcp-server-git>=0.6",
     "websockets>=12",
 ]
@@ -63,7 +64,7 @@ console = [
     "uvicorn>=0.29",
 ]
 weixin = [
-    "aiohttp>=3.11,<4",
+    "aiohttp>=3.14.4,<4",
     "cryptography>=44",
     "qrcode>=8,<9",
 ]

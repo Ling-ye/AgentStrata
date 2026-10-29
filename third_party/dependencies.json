@@ -1,5 +1,5 @@
 {
-  "notices_sha256": "268b5e76b651c3843b9e2de6ea4696be348ec75f32eccd7bf1cef3e191a1ec50",
+  "notices_sha256": "b64b275f0cfd309aac5c7732f5c8b4b46b8d428542832fa158f5066814442288",
   "reviewed_sources_sha256": "b0a3d88ad981b19def4156d8eda60131a78c5a073da826da9d900d1c291fb258",
   "dependencies": [
     {
@@ -2190,6 +2190,32 @@
     },
     {
       "ecosystem": "npm",
+      "name": "@standard-schema/spec",
+      "version": "1.1.0",
+      "scopes": [
+        "console",
+        "test"
+      ],
+      "artifact_url": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+      "integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+      "source_url": "https://registry.npmjs.org/@standard-schema/spec/-/spec-1.1.0.tgz",
+      "source_integrity": "sha512-l2aFy5jALhniG5HgqrD6jXLi/rUWrKvqN/qJx6yoJsgKhblVd+iqqU4RCXavm/jPityDo5TCvKMnpjKnOriy0w==",
+      "lockfile": "console/web/package-lock.json",
+      "package_path": "node_modules/@standard-schema/spec",
+      "optional": false,
+      "license": "MIT",
+      "upstream_metadata_url": "https://registry.npmjs.org/@standard-schema/spec/1.1.0",
+      "upstream_repository": {
+        "type": "git",
+        "url": "https://github.com/standard-schema/standard-schema"
+      },
+      "upstream_authors": "Colin McDonnell",
+      "license_files": {
+        "package/LICENSE": "653b779005a3a4d64a7288c940f7b9a0e8f0b1e0375f6aa6af9473caf131e564"
+      }
+    },
+    {
+      "ecosystem": "npm",
       "name": "@tanstack/query-core",
       "version": "5.101.1",
       "scopes": [
@@ -3379,20 +3405,20 @@
     {
       "ecosystem": "npm",
       "name": "@vitest/expect",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/expect/-/expect-3.2.7.tgz",
-      "integrity": "sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==",
-      "source_url": "https://registry.npmjs.org/@vitest/expect/-/expect-3.2.7.tgz",
-      "source_integrity": "sha512-E8eBXaKibuvH2pSZErOjdVb5vF4PbKYcrnluBTYxEk1l/VhhwZg1kZQsdtjq+CsF5CFydf2Rdkz7jDHKSisi3w==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.12.tgz",
+      "integrity": "sha512-vFlTt+YEu9WBpNjdGayNmlMVzrWPi1+sv853/7t2FU7hpO5gAFBKHzQmkCq5Xjpr+evegF2994LQT3hF3mRlqQ==",
+      "source_url": "https://registry.npmjs.org/@vitest/expect/-/expect-4.1.12.tgz",
+      "source_integrity": "sha512-vFlTt+YEu9WBpNjdGayNmlMVzrWPi1+sv853/7t2FU7hpO5gAFBKHzQmkCq5Xjpr+evegF2994LQT3hF3mRlqQ==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/expect",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/expect/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/expect/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3400,26 +3426,26 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/mocker",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-3.2.7.tgz",
-      "integrity": "sha512-Trr0hYO9CM3Wj6ksWHRhK9IZpIY6wTMO5u/MqXurMxT57sWBaOPEtP3Oq60ihZuh5JsiagKfz95OcxdEP6dBrA==",
-      "source_url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-3.2.7.tgz",
-      "source_integrity": "sha512-Trr0hYO9CM3Wj6ksWHRhK9IZpIY6wTMO5u/MqXurMxT57sWBaOPEtP3Oq60ihZuh5JsiagKfz95OcxdEP6dBrA==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.12.tgz",
+      "integrity": "sha512-fKShNpKZzupWZuY0z7egydvL0sqW4INEZBEExMBMAa6izlENEVHwoXgdaTCaBZ5fwlr4xf2o1wXC83n9RpO+NA==",
+      "source_url": "https://registry.npmjs.org/@vitest/mocker/-/mocker-4.1.12.tgz",
+      "source_integrity": "sha512-fKShNpKZzupWZuY0z7egydvL0sqW4INEZBEExMBMAa6izlENEVHwoXgdaTCaBZ5fwlr4xf2o1wXC83n9RpO+NA==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/mocker",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/mocker/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/mocker/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3427,26 +3453,26 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/pretty-format",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-3.2.7.tgz",
-      "integrity": "sha512-KUHlwqVu0sRlhCdyPdQ/wBoTfRahjUky1MubOmYw9fWfIZy1gNoHpuaaQBPAaMaVYdQYHJLurzj8ECCj5OwTqA==",
-      "source_url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-3.2.7.tgz",
-      "source_integrity": "sha512-KUHlwqVu0sRlhCdyPdQ/wBoTfRahjUky1MubOmYw9fWfIZy1gNoHpuaaQBPAaMaVYdQYHJLurzj8ECCj5OwTqA==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.12.tgz",
+      "integrity": "sha512-XW9O8+Mxx4VpCtkYdMJLZQQwsVryP9wk7cPKDxtXFfwSak6yRh5+2fep/Y0XF/ElBvJHq8bcYdi6aeuai0opZA==",
+      "source_url": "https://registry.npmjs.org/@vitest/pretty-format/-/pretty-format-4.1.12.tgz",
+      "source_integrity": "sha512-XW9O8+Mxx4VpCtkYdMJLZQQwsVryP9wk7cPKDxtXFfwSak6yRh5+2fep/Y0XF/ElBvJHq8bcYdi6aeuai0opZA==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/pretty-format",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/pretty-format/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/pretty-format/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3454,26 +3480,26 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/runner",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/runner/-/runner-3.2.7.tgz",
-      "integrity": "sha512-sB9y4ovltoQP+WaUPwmSxO9WIg9Ig694Di5PalVPsYHklAdE027mehpWF2SQSVq+k6sFgaivbTjTJwZLSHbedA==",
-      "source_url": "https://registry.npmjs.org/@vitest/runner/-/runner-3.2.7.tgz",
-      "source_integrity": "sha512-sB9y4ovltoQP+WaUPwmSxO9WIg9Ig694Di5PalVPsYHklAdE027mehpWF2SQSVq+k6sFgaivbTjTJwZLSHbedA==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.12.tgz",
+      "integrity": "sha512-NKlVKCr5QnCe8jijdMnmkpHHU+WTqiLFR6G0pHji9uRjXK9xJl1k1nTw6F3pOOj2PDcsDt2GKQMI7wIsaT491w==",
+      "source_url": "https://registry.npmjs.org/@vitest/runner/-/runner-4.1.12.tgz",
+      "source_integrity": "sha512-NKlVKCr5QnCe8jijdMnmkpHHU+WTqiLFR6G0pHji9uRjXK9xJl1k1nTw6F3pOOj2PDcsDt2GKQMI7wIsaT491w==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/runner",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/runner/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/runner/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3481,26 +3507,26 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/snapshot",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-3.2.7.tgz",
-      "integrity": "sha512-7C+MwShwtBSI5Buwoyg3s/iY1eHL9PKAf+O1wVh/TdnjXUtkoL/9YQtre90i4MtNXM6edP1wJ2zOBpfCyhIS7g==",
-      "source_url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-3.2.7.tgz",
-      "source_integrity": "sha512-7C+MwShwtBSI5Buwoyg3s/iY1eHL9PKAf+O1wVh/TdnjXUtkoL/9YQtre90i4MtNXM6edP1wJ2zOBpfCyhIS7g==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.12.tgz",
+      "integrity": "sha512-ko1y1Qgb/slzQ9mr+b89Cuqud8WG1TKtsPD8r7ZUBdvVOGt85Af2HwCqHujrhwJq95hs/9RM7fcAPg57o1vlzw==",
+      "source_url": "https://registry.npmjs.org/@vitest/snapshot/-/snapshot-4.1.12.tgz",
+      "source_integrity": "sha512-ko1y1Qgb/slzQ9mr+b89Cuqud8WG1TKtsPD8r7ZUBdvVOGt85Af2HwCqHujrhwJq95hs/9RM7fcAPg57o1vlzw==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/snapshot",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/snapshot/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/snapshot/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3508,26 +3534,26 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/spy",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/spy/-/spy-3.2.7.tgz",
-      "integrity": "sha512-Q2eQGI6d2L/hBtZ0qNuKcAGid68XK6cv1xsoaIma6PaJhHPoqcEJhYpXZ/5myCMqkNgtP6UKuBhbc0nHKnrkuQ==",
-      "source_url": "https://registry.npmjs.org/@vitest/spy/-/spy-3.2.7.tgz",
-      "source_integrity": "sha512-Q2eQGI6d2L/hBtZ0qNuKcAGid68XK6cv1xsoaIma6PaJhHPoqcEJhYpXZ/5myCMqkNgtP6UKuBhbc0nHKnrkuQ==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.12.tgz",
+      "integrity": "sha512-RGq9x4JNGNTZHEJxvN0oSiJjeSCExm0n2gZKKJZHY9cX5AVA6M7VJILBT3ZJ/tJ/0J9uWT7fETV9/btoi//vSg==",
+      "source_url": "https://registry.npmjs.org/@vitest/spy/-/spy-4.1.12.tgz",
+      "source_integrity": "sha512-RGq9x4JNGNTZHEJxvN0oSiJjeSCExm0n2gZKKJZHY9cX5AVA6M7VJILBT3ZJ/tJ/0J9uWT7fETV9/btoi//vSg==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/spy",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/spy/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/spy/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3535,26 +3561,26 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
       "ecosystem": "npm",
       "name": "@vitest/utils",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/@vitest/utils/-/utils-3.2.7.tgz",
-      "integrity": "sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==",
-      "source_url": "https://registry.npmjs.org/@vitest/utils/-/utils-3.2.7.tgz",
-      "source_integrity": "sha512-x6BDOd7dyo3PFLY3I9/HJ25X/6OurhGXk2/B9gOZNPF7XDVjeBK4k01lQE5uvDpbuheErh91qYuE1E2OEjK3Rw==",
+      "artifact_url": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.12.tgz",
+      "integrity": "sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==",
+      "source_url": "https://registry.npmjs.org/@vitest/utils/-/utils-4.1.12.tgz",
+      "source_integrity": "sha512-Q3awXrwOfEV+qc3WmO5ONyE0yO7Q1gQ9/oyHxGLZ/pl7N3NO/ZztqQwKLuwMkV+CA1JYSIeO3gkHnRDIo4AVaA==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/@vitest/utils",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/utils/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/@vitest/utils/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -3562,7 +3588,7 @@
       },
       "upstream_authors": "",
       "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
+        "package/LICENSE": "04575fc5bfae19a9b63100f8691f901a2e15a399011ac02db435a9ef27295551"
       }
     },
     {
@@ -3768,32 +3794,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "cac",
-      "version": "6.7.14",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/cac/-/cac-6.7.14.tgz",
-      "integrity": "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==",
-      "source_url": "https://registry.npmjs.org/cac/-/cac-6.7.14.tgz",
-      "source_integrity": "sha512-b6Ilus+c3RrdDk+JhLKUAQfzzgLEPy6wcXqS7f/xe1EETvsDP6GORG7SFuOs6cID5YkqchW/LXZbX5bc8j7ZcQ==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/cac",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/cac/6.7.14",
-      "upstream_repository": {
-        "url": "egoist/cac",
-        "type": "git"
-      },
-      "upstream_authors": "egoist <0x142857@gmail.com>",
-      "license_files": {
-        "package/LICENSE": "709131d7af352b81204ada2a3d812e245a83576e327b364f92ba24c578ba9408"
-      }
-    },
-    {
-      "ecosystem": "npm",
       "name": "caniuse-lite",
       "version": "1.0.30001816",
       "scopes": [
@@ -3822,20 +3822,20 @@
     {
       "ecosystem": "npm",
       "name": "chai",
-      "version": "5.3.3",
+      "version": "6.3.0",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/chai/-/chai-5.3.3.tgz",
-      "integrity": "sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==",
-      "source_url": "https://registry.npmjs.org/chai/-/chai-5.3.3.tgz",
-      "source_integrity": "sha512-4zNhdJD/iOjSH0A05ea+Ke6MU5mmpQcbQsSOkgdaUMJ9zTlDTD/GYlwohmIE2u0gaxHYiVHEn1Fw9mZ/ktJWgw==",
+      "artifact_url": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz",
+      "integrity": "sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==",
+      "source_url": "https://registry.npmjs.org/chai/-/chai-6.3.0.tgz",
+      "source_integrity": "sha512-XWAtwJ6OHO+tj0EKCs0Y2UamnyOxseZWltU4x2U2wh8g4AigdjwvtUjvLP2tqkA/avxHEtzxNaqGq/YGNwckKg==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/chai",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/chai/5.3.3",
+      "upstream_metadata_url": "https://registry.npmjs.org/chai/6.3.0",
       "upstream_repository": {
         "type": "git",
         "url": "https://github.com/chaijs/chai"
@@ -3843,32 +3843,6 @@
       "upstream_authors": "Jake Luer <jake@alogicalparadox.com>",
       "license_files": {
         "package/LICENSE": "b181da80336ff9dd1043fc8be1a764d7382363433319aa872e4d2cb5ce2a3066"
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "check-error",
-      "version": "2.1.3",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/check-error/-/check-error-2.1.3.tgz",
-      "integrity": "sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==",
-      "source_url": "https://registry.npmjs.org/check-error/-/check-error-2.1.3.tgz",
-      "source_integrity": "sha512-PAJdDJusoxnwm1VwW07VWwUN1sl7smmC3OKggvndJFadxxDRyFJBX/ggnu/KE4kQAB7a3Dp8f/YXC1FlUprWmA==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/check-error",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/check-error/2.1.3",
-      "upstream_repository": {
-        "type": "git",
-        "url": "git+ssh://git@github.com/chaijs/check-error.git"
-      },
-      "upstream_authors": "Jake Luer <jake@alogicalparadox.com> (http://alogicalparadox.com)",
-      "license_files": {
-        "package/LICENSE": "e5aee0714b6ecc416454b968d1017570ef609f20d8722ab84b07acd550b78198"
       }
     },
     {
@@ -4062,7 +4036,8 @@
       "version": "2.0.0",
       "scopes": [
         "console",
-        "build"
+        "build",
+        "test"
       ],
       "artifact_url": "https://registry.npmjs.org/convert-source-map/-/convert-source-map-2.0.0.tgz",
       "integrity": "sha512-Kvp459HrV2FEJ1CAsi1Ku+MY3kasH19TFykTz2xWmMeq6bk2NU3XXvfJ+Q61m0xktWwt+1HSYf3JZsTms3aRJg==",
@@ -4425,8 +4400,7 @@
       "version": "4.4.3",
       "scopes": [
         "console",
-        "build",
-        "test"
+        "build"
       ],
       "artifact_url": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
       "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
@@ -4475,32 +4449,6 @@
       "preferred_source_url": "https://github.com/MikeMcl/decimal.js/archive/f1ee2f404d6bf96d59c04db80c1f404742afa3fa.tar.gz",
       "license_files": {
         "package/LICENCE.md": "3108b546bcff5d346923a82f48b2d252ca722f9088076db6d145f6b67757ad6c"
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "deep-eql",
-      "version": "5.0.2",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/deep-eql/-/deep-eql-5.0.2.tgz",
-      "integrity": "sha512-h5k/5U50IJJFpzfL6nO9jaaumfjO/f2NjK/oYB2Djzm4p9L+3T9qWpZqZ2hAbLPuuYq9wrU08WQyBTL5GbPk5Q==",
-      "source_url": "https://registry.npmjs.org/deep-eql/-/deep-eql-5.0.2.tgz",
-      "source_integrity": "sha512-h5k/5U50IJJFpzfL6nO9jaaumfjO/f2NjK/oYB2Djzm4p9L+3T9qWpZqZ2hAbLPuuYq9wrU08WQyBTL5GbPk5Q==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/deep-eql",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/deep-eql/5.0.2",
-      "upstream_repository": {
-        "type": "git",
-        "url": "git@github.com:chaijs/deep-eql.git"
-      },
-      "upstream_authors": "Jake Luer <jake@alogicalparadox.com>",
-      "license_files": {
-        "package/LICENSE": "e5aee0714b6ecc416454b968d1017570ef609f20d8722ab84b07acd550b78198"
       }
     },
     {
@@ -4645,27 +4593,27 @@
     {
       "ecosystem": "npm",
       "name": "es-module-lexer",
-      "version": "1.7.0",
+      "version": "2.3.2",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-1.7.0.tgz",
-      "integrity": "sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==",
-      "source_url": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-1.7.0.tgz",
-      "source_integrity": "sha512-jEQoCwk8hyb2AZziIOLhDqpm5+2ww5uIE6lkO/6jcOCusfk6LhMHpXXfBLXTZ7Ydyt0j4VoUQv6uGNYbdW+kBA==",
+      "artifact_url": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.3.2.tgz",
+      "integrity": "sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==",
+      "source_url": "https://registry.npmjs.org/es-module-lexer/-/es-module-lexer-2.3.2.tgz",
+      "source_integrity": "sha512-poHGpORABojJJucnV9KbOavETW8lBVnphkW77ER5/BQ5Fz7oXSoCNek7IH3vR5nRjdsEz926ibFYX8KtLQmdyw==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/es-module-lexer",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/es-module-lexer/1.7.0",
+      "upstream_metadata_url": "https://registry.npmjs.org/es-module-lexer/2.3.2",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/guybedford/es-module-lexer.git"
       },
       "upstream_authors": "Guy Bedford",
       "license_files": {
-        "package/LICENSE": "fecc38b5e10d889686b3862e7ade17e8b3e5c94b24b7256b05a354d8524b3274"
+        "package/LICENSE": "8a4b6c44eebfb026d23719a348145a661a555568dbfdc11618ff2d0dd9306b00"
       }
     },
     {
@@ -4959,29 +4907,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "js-tokens",
-      "version": "9.0.1",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/js-tokens/-/js-tokens-9.0.1.tgz",
-      "integrity": "sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==",
-      "source_url": "https://registry.npmjs.org/js-tokens/-/js-tokens-9.0.1.tgz",
-      "source_integrity": "sha512-mxa9E9ITFOt0ban3j6L5MpjwegGz6lBQmM1IJkWeBZGcMxto50+eWdjC/52xDbS2vy0k7vIMK0Fe2wfL9OQSpQ==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/strip-literal/node_modules/js-tokens",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/js-tokens/9.0.1",
-      "upstream_repository": "lydell/js-tokens",
-      "upstream_authors": "Simon Lydell",
-      "license_files": {
-        "package/LICENSE": "33038d552d766f4501d8da25b66053ed217c61274ffce1c6bee413bb037c259c"
-      }
-    },
-    {
-      "ecosystem": "npm",
       "name": "jsesc",
       "version": "3.1.0",
       "scopes": [
@@ -5090,32 +5015,6 @@
     },
     {
       "ecosystem": "npm",
-      "name": "loupe",
-      "version": "3.2.1",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/loupe/-/loupe-3.2.1.tgz",
-      "integrity": "sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==",
-      "source_url": "https://registry.npmjs.org/loupe/-/loupe-3.2.1.tgz",
-      "source_integrity": "sha512-CdzqowRJCeLU72bHvWqwRBBlLcMEtIvGrlvef74kMnV2AolS9Y8xUv1I0U/MNAWMhBlKIoyuEgoJ0t/bbwHbLQ==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/loupe",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/loupe/3.2.1",
-      "upstream_repository": {
-        "type": "git",
-        "url": "https://github.com/chaijs/loupe"
-      },
-      "upstream_authors": "Veselin Todorov <hi@vesln.com>",
-      "license_files": {
-        "package/LICENSE": "592141f7b861426ceeff937d85ad04ada5f66e386c5a8696ed1bd680f2cdb552"
-      }
-    },
-    {
-      "ecosystem": "npm",
       "name": "lru-cache",
       "version": "5.1.1",
       "scopes": [
@@ -5169,8 +5068,7 @@
       "version": "2.1.3",
       "scopes": [
         "console",
-        "build",
-        "test"
+        "build"
       ],
       "artifact_url": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
       "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
@@ -5268,6 +5166,32 @@
     },
     {
       "ecosystem": "npm",
+      "name": "obug",
+      "version": "2.2.1",
+      "scopes": [
+        "console",
+        "test"
+      ],
+      "artifact_url": "https://registry.npmjs.org/obug/-/obug-2.2.1.tgz",
+      "integrity": "sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==",
+      "source_url": "https://registry.npmjs.org/obug/-/obug-2.2.1.tgz",
+      "source_integrity": "sha512-XrsrhT5sybtKI6wakr2SPOlGZWWYbUXZ7a0jT8/QOeAPau+1X/bSegNe5YR75oJmEZQbKningirmGOEJCIk61Q==",
+      "lockfile": "console/web/package-lock.json",
+      "package_path": "node_modules/obug",
+      "optional": false,
+      "license": "MIT",
+      "upstream_metadata_url": "https://registry.npmjs.org/obug/2.2.1",
+      "upstream_repository": {
+        "type": "git",
+        "url": "git+https://github.com/sxzz/obug.git"
+      },
+      "upstream_authors": "Kevin Deng <sxzz@sxzz.moe>",
+      "license_files": {
+        "package/LICENSE": "ee48679d379ca6b4493d5e231094d85f818dd9be40b1a4f234fb7ff657ee35d9"
+      }
+    },
+    {
+      "ecosystem": "npm",
       "name": "pathe",
       "version": "2.0.3",
       "scopes": [
@@ -5287,32 +5211,6 @@
       "upstream_authors": "",
       "license_files": {
         "package/LICENSE": "52e92576851154bad7737e90cc72818936f43665cb0e3f7428ed8edc8cc5709b"
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "pathval",
-      "version": "2.0.1",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/pathval/-/pathval-2.0.1.tgz",
-      "integrity": "sha512-//nshmD55c46FuFw26xV/xFAaB5HF9Xdap7HJBBnrKdAd6/GxDBaNA1870O79+9ueg61cZLSVc+OaFlfmObYVQ==",
-      "source_url": "https://registry.npmjs.org/pathval/-/pathval-2.0.1.tgz",
-      "source_integrity": "sha512-//nshmD55c46FuFw26xV/xFAaB5HF9Xdap7HJBBnrKdAd6/GxDBaNA1870O79+9ueg61cZLSVc+OaFlfmObYVQ==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/pathval",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/pathval/2.0.1",
-      "upstream_repository": {
-        "type": "git",
-        "url": "git+ssh://git@github.com/chaijs/pathval.git"
-      },
-      "upstream_authors": "Veselin Todorov <hi@vesln.com>",
-      "license_files": {
-        "package/LICENSE": "5d45910e7ed82fecc3e29b40a5b3a17ceb609fda19f860aa2ec180d87f4f9d4a"
       }
     },
     {
@@ -5928,21 +5826,21 @@
     {
       "ecosystem": "npm",
       "name": "source-map-js",
-      "version": "1.2.1",
+      "version": "1.2.2",
       "scopes": [
         "console",
         "build",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
-      "integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
-      "source_url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.1.tgz",
-      "source_integrity": "sha512-UXWMKhLOwVKb728IUtQPXxfYU+usdybtUrK/8uGE8CQMvrhOpwvzDBwj0QhSL7MQc7vIsISBG8VQ8+IDQxpfQA==",
+      "artifact_url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.2.tgz",
+      "integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==",
+      "source_url": "https://registry.npmjs.org/source-map-js/-/source-map-js-1.2.2.tgz",
+      "source_integrity": "sha512-KGj/8Y43x35aZVDtt+J4mK1hoLGHULMYfSkODJNQjNDC3oW1PqPoxMwo0pLUsWM/UEGzON/NxeHywEfNXNP3Vw==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/source-map-js",
       "optional": false,
       "license": "BSD-3-Clause",
-      "upstream_metadata_url": "https://registry.npmjs.org/source-map-js/1.2.1",
+      "upstream_metadata_url": "https://registry.npmjs.org/source-map-js/1.2.2",
       "upstream_repository": "7rulnik/source-map-js",
       "upstream_authors": "Valentin 7rulnik Semirulnik <v7rulnik@gmail.com>",
       "license_files": {
@@ -5986,50 +5884,27 @@
     {
       "ecosystem": "npm",
       "name": "std-env",
-      "version": "3.10.0",
+      "version": "4.3.0",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/std-env/-/std-env-3.10.0.tgz",
-      "integrity": "sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==",
-      "source_url": "https://registry.npmjs.org/std-env/-/std-env-3.10.0.tgz",
-      "source_integrity": "sha512-5GS12FdOZNliM5mAOxFRg7Ir0pWz8MdpYm6AY6VPkGpbA7ZzmbzNcBJQ0GPvvyWgcY7QAhCgf9Uy89I03faLkg==",
+      "artifact_url": "https://registry.npmjs.org/std-env/-/std-env-4.3.0.tgz",
+      "integrity": "sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==",
+      "source_url": "https://registry.npmjs.org/std-env/-/std-env-4.3.0.tgz",
+      "source_integrity": "sha512-OtU/EgQ1kIm5KwqQpBC6ZEMXrZRui11w8zgfTWp8cdO9B8OaPsbA8bTHO2P+HNo1VlUTGMVBwPhydu6poeXiag==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/std-env",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/std-env/3.10.0",
-      "upstream_repository": "unjs/std-env",
+      "upstream_metadata_url": "https://registry.npmjs.org/std-env/4.3.0",
+      "upstream_repository": {
+        "type": "git",
+        "url": "unjs/std-env"
+      },
       "upstream_authors": "",
       "license_files": {
         "package/LICENCE": "a6f36438e46fb911859f3b9c4cad045ba64e1af3d8f4512c60258fa2d7552d28"
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "strip-literal",
-      "version": "3.1.0",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/strip-literal/-/strip-literal-3.1.0.tgz",
-      "integrity": "sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==",
-      "source_url": "https://registry.npmjs.org/strip-literal/-/strip-literal-3.1.0.tgz",
-      "source_integrity": "sha512-8r3mkIM/2+PpjHoOtiAW8Rg3jJLHaV7xPwG+YRGrv6FP0wwk/toTpATxWYOW0BKdWwl82VT2tFYi5DlROa0Mxg==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/strip-literal",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/strip-literal/3.1.0",
-      "upstream_repository": {
-        "type": "git",
-        "url": "git+https://github.com/antfu/strip-literal.git"
-      },
-      "upstream_authors": "Anthony Fu <anthonyfu117@hotmail.com>",
-      "license_files": {
-        "package/LICENSE": "af32efdd008a371c77b13eef5010c81d6c5c2f67c054b6bb74317e13ac38c171"
       }
     },
     {
@@ -6058,20 +5933,20 @@
     {
       "ecosystem": "npm",
       "name": "tinyexec",
-      "version": "0.3.2",
+      "version": "1.3.1",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/tinyexec/-/tinyexec-0.3.2.tgz",
-      "integrity": "sha512-KQQR9yN7R5+OSwaK0XQoj22pwHoTlgYqmUscPYoknOoWCWfj/5/ABTMRi69FrKU5ffPVh5QcFikpWJI/P1ocHA==",
-      "source_url": "https://registry.npmjs.org/tinyexec/-/tinyexec-0.3.2.tgz",
-      "source_integrity": "sha512-KQQR9yN7R5+OSwaK0XQoj22pwHoTlgYqmUscPYoknOoWCWfj/5/ABTMRi69FrKU5ffPVh5QcFikpWJI/P1ocHA==",
+      "artifact_url": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.1.tgz",
+      "integrity": "sha512-GCvB3aoys96IuDFBMcTB46JOR6mdMtAToqwiW8JlWhsoh1mhHi/xn9ss/Dg7N555GiJyEt2qzoG/NHCwM6h1EA==",
+      "source_url": "https://registry.npmjs.org/tinyexec/-/tinyexec-1.3.1.tgz",
+      "source_integrity": "sha512-GCvB3aoys96IuDFBMcTB46JOR6mdMtAToqwiW8JlWhsoh1mhHi/xn9ss/Dg7N555GiJyEt2qzoG/NHCwM6h1EA==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/tinyexec",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/tinyexec/0.3.2",
+      "upstream_metadata_url": "https://registry.npmjs.org/tinyexec/1.3.1",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/tinylibs/tinyexec.git"
@@ -6110,76 +5985,24 @@
     },
     {
       "ecosystem": "npm",
-      "name": "tinypool",
-      "version": "1.1.1",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/tinypool/-/tinypool-1.1.1.tgz",
-      "integrity": "sha512-Zba82s87IFq9A9XmjiX5uZA/ARWDrB03OHlq+Vw1fSdt0I+4/Kutwy8BP4Y/y/aORMo61FQ0vIb5j44vSo5Pkg==",
-      "source_url": "https://registry.npmjs.org/tinypool/-/tinypool-1.1.1.tgz",
-      "source_integrity": "sha512-Zba82s87IFq9A9XmjiX5uZA/ARWDrB03OHlq+Vw1fSdt0I+4/Kutwy8BP4Y/y/aORMo61FQ0vIb5j44vSo5Pkg==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/tinypool",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/tinypool/1.1.1",
-      "upstream_repository": {
-        "type": "git",
-        "url": "https://github.com/tinylibs/tinypool.git"
-      },
-      "upstream_authors": "",
-      "license_files": {
-        "package/LICENSE": "0d506ca1b2adc4ee63a9e2384a85d6cf9f014b4cf3d00c162cd60216450324fa"
-      }
-    },
-    {
-      "ecosystem": "npm",
       "name": "tinyrainbow",
-      "version": "2.0.0",
+      "version": "3.2.0",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-2.0.0.tgz",
-      "integrity": "sha512-op4nsTR47R6p0vMUUoYl/a+ljLFVtlfaXkLQmqfLR1qHma1h/ysYk4hEXZ880bf2CYgTskvTa/e196Vd5dDQXw==",
-      "source_url": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-2.0.0.tgz",
-      "source_integrity": "sha512-op4nsTR47R6p0vMUUoYl/a+ljLFVtlfaXkLQmqfLR1qHma1h/ysYk4hEXZ880bf2CYgTskvTa/e196Vd5dDQXw==",
+      "artifact_url": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.2.0.tgz",
+      "integrity": "sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==",
+      "source_url": "https://registry.npmjs.org/tinyrainbow/-/tinyrainbow-3.2.0.tgz",
+      "source_integrity": "sha512-LgO3D9yZJjApUiuUfl9iFAwrtaX4+lok3wJIqttGoKCHlWUqHqbQpnxCf82L8FjgKsh4iGo78hqJwgL8F6To2A==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/tinyrainbow",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/tinyrainbow/2.0.0",
+      "upstream_metadata_url": "https://registry.npmjs.org/tinyrainbow/3.2.0",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/tinylibs/tinyrainbow.git"
-      },
-      "upstream_authors": "",
-      "license_files": {
-        "package/LICENCE": "cebc084d54e6dd99e53292ddb4bc1cdb63d9bfcd9ce438fe3aa6eb106d79e2ea"
-      }
-    },
-    {
-      "ecosystem": "npm",
-      "name": "tinyspy",
-      "version": "4.0.4",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/tinyspy/-/tinyspy-4.0.4.tgz",
-      "integrity": "sha512-azl+t0z7pw/z958Gy9svOTuzqIk6xq+NSheJzn5MMWtWTFywIacg2wUlzKFGtt3cthx0r2SxMK0yzJOR0IES7Q==",
-      "source_url": "https://registry.npmjs.org/tinyspy/-/tinyspy-4.0.4.tgz",
-      "source_integrity": "sha512-azl+t0z7pw/z958Gy9svOTuzqIk6xq+NSheJzn5MMWtWTFywIacg2wUlzKFGtt3cthx0r2SxMK0yzJOR0IES7Q==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/tinyspy",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/tinyspy/4.0.4",
-      "upstream_repository": {
-        "type": "git",
-        "url": "git+https://github.com/tinylibs/tinyspy.git"
       },
       "upstream_authors": "",
       "license_files": {
@@ -6410,21 +6233,21 @@
     {
       "ecosystem": "npm",
       "name": "vite",
-      "version": "7.3.6",
+      "version": "7.3.7",
       "scopes": [
         "console",
         "build",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/vite/-/vite-7.3.6.tgz",
-      "integrity": "sha512-4XP60spRGjSZFf1qYH+dJIkK2znL3zQfl9KkOV9MkkRR/3Dls0dxaBsQPTloEc5BLXWPL9vsOxopxyKoMmDueg==",
-      "source_url": "https://registry.npmjs.org/vite/-/vite-7.3.6.tgz",
-      "source_integrity": "sha512-4XP60spRGjSZFf1qYH+dJIkK2znL3zQfl9KkOV9MkkRR/3Dls0dxaBsQPTloEc5BLXWPL9vsOxopxyKoMmDueg==",
+      "artifact_url": "https://registry.npmjs.org/vite/-/vite-7.3.7.tgz",
+      "integrity": "sha512-AHEzTORMbi7/7aXp7w7KZ5+DCUdSeLsJz0grY8xHpc9DHdYb0vQu6DqJfm2tOw3gDExNgPgnJTXxM6syYFHaCA==",
+      "source_url": "https://registry.npmjs.org/vite/-/vite-7.3.7.tgz",
+      "source_integrity": "sha512-AHEzTORMbi7/7aXp7w7KZ5+DCUdSeLsJz0grY8xHpc9DHdYb0vQu6DqJfm2tOw3gDExNgPgnJTXxM6syYFHaCA==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/vite",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/vite/7.3.6",
+      "upstream_metadata_url": "https://registry.npmjs.org/vite/7.3.7",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitejs/vite.git",
@@ -6437,48 +6260,21 @@
     },
     {
       "ecosystem": "npm",
-      "name": "vite-node",
-      "version": "3.2.4",
-      "scopes": [
-        "console",
-        "test"
-      ],
-      "artifact_url": "https://registry.npmjs.org/vite-node/-/vite-node-3.2.4.tgz",
-      "integrity": "sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==",
-      "source_url": "https://registry.npmjs.org/vite-node/-/vite-node-3.2.4.tgz",
-      "source_integrity": "sha512-EbKSKh+bh1E1IFxeO0pg1n4dvoOTt0UDiXMd/qn++r98+jPO1xtJilvXldeuQ8giIB5IkpjCgMleHMNEsGH6pg==",
-      "lockfile": "console/web/package-lock.json",
-      "package_path": "node_modules/vite-node",
-      "optional": false,
-      "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/vite-node/3.2.4",
-      "upstream_repository": {
-        "type": "git",
-        "url": "git+https://github.com/vitest-dev/vitest.git",
-        "directory": "packages/vite-node"
-      },
-      "upstream_authors": "Anthony Fu <anthonyfu117@hotmail.com>",
-      "license_files": {
-        "package/LICENSE": "ddc110f3b89cc397cee99d3d64c4f746928b7a3bac02fed15101eb4d367079f6"
-      }
-    },
-    {
-      "ecosystem": "npm",
       "name": "vitest",
-      "version": "3.2.7",
+      "version": "4.1.12",
       "scopes": [
         "console",
         "test"
       ],
-      "artifact_url": "https://registry.npmjs.org/vitest/-/vitest-3.2.7.tgz",
-      "integrity": "sha512-KrxIJ62Fd89gfysR4WotlgZABiz2dqFPgqGzX7s+CwsqLFomRH7777ZcrOD6+WVAh7khPQP41A+BKbpcJFrdEg==",
-      "source_url": "https://registry.npmjs.org/vitest/-/vitest-3.2.7.tgz",
-      "source_integrity": "sha512-KrxIJ62Fd89gfysR4WotlgZABiz2dqFPgqGzX7s+CwsqLFomRH7777ZcrOD6+WVAh7khPQP41A+BKbpcJFrdEg==",
+      "artifact_url": "https://registry.npmjs.org/vitest/-/vitest-4.1.12.tgz",
+      "integrity": "sha512-5eWdz2yb3ajxWF3C8C4TjkXl7FGm3n2E/VlazALrQHzK7nYMSGFnCZto0bbPNl77AwkOZVLk0YnBAejUu0NiWA==",
+      "source_url": "https://registry.npmjs.org/vitest/-/vitest-4.1.12.tgz",
+      "source_integrity": "sha512-5eWdz2yb3ajxWF3C8C4TjkXl7FGm3n2E/VlazALrQHzK7nYMSGFnCZto0bbPNl77AwkOZVLk0YnBAejUu0NiWA==",
       "lockfile": "console/web/package-lock.json",
       "package_path": "node_modules/vitest",
       "optional": false,
       "license": "MIT",
-      "upstream_metadata_url": "https://registry.npmjs.org/vitest/3.2.7",
+      "upstream_metadata_url": "https://registry.npmjs.org/vitest/4.1.12",
       "upstream_repository": {
         "type": "git",
         "url": "git+https://github.com/vitest-dev/vitest.git",
@@ -6486,7 +6282,7 @@
       },
       "upstream_authors": "Anthony Fu <anthonyfu117@hotmail.com>",
       "license_files": {
-        "package/LICENSE.md": "6b861d7554fbc8488a08ee59e613bd488785a2e27bd87b80142e5125abec6f4c"
+        "package/LICENSE.md": "881d660c26831481b697e39724d4a35c9f86e07b67156d4aeb693a0b39910435"
       }
     },
     {
@@ -6652,16 +6448,16 @@
     {
       "ecosystem": "python",
       "name": "aiohttp",
-      "version": "3.14.3",
+      "version": "3.14.5",
       "scopes": [
         "agent",
         "evaluation",
         "weixin"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/b2/0e/50d6e6471cd31edce8b282bdec59375a3a69124d8a989a0b1313355cae52/aiohttp-3.14.3-cp313-cp313-win_arm64.whl",
-      "integrity": "sha256:ddcac3c6b382e81f1dd0499199d4136b877beb4cb5ef770bbbfba56c4b8f55d2",
-      "source_url": "https://files.pythonhosted.org/packages/58/d9/22ce5786ac0c1653ae8b6c23bded02c1686d11f0dbb45b31ce128e0df985/aiohttp-3.14.3.tar.gz",
-      "source_integrity": "sha256:9491196535a88924a60afd5b5f434b5b203b6cc616250878dbdb223a8f7844bc",
+      "artifact_url": "https://files.pythonhosted.org/packages/68/30/173960c42b05a6c59f7558e4b12a4b0d9ba376cf6aa9bde7f9e08a30ca8d/aiohttp-3.14.5-py3-none-any.whl",
+      "integrity": "sha256:efc21a454892828368b11c2c780de0ff8bc991f73f6b99c6b66e56205470929b",
+      "source_url": "https://files.pythonhosted.org/packages/6c/4c/bdccd81e9ee225b69c60e7766c9a5b05364f118f4d383713b89a682d772d/aiohttp-3.14.5.tar.gz",
+      "source_integrity": "sha256:5558a7f5a05af9ecf744af91e5baefc436f93c9333e656c27ec253f9a6bbe178",
       "license": "Apache-2.0 AND MIT",
       "upstream_urls": [
         "Homepage, https://github.com/aio-libs/aiohttp",
@@ -6679,8 +6475,8 @@
         "Author-email": ""
       },
       "license_files": {
-        "aiohttp-3.14.3.dist-info/licenses/LICENSE.txt": "ea195371abbf66a39eef56600955d1137c2c196dc144ffec46b6ea530ce70044",
-        "aiohttp-3.14.3.dist-info/licenses/vendor/llhttp/LICENSE": "279012e02a10acfd59a3f2d8f13a497332535d871c2b27c89988985b06a3a438"
+        "aiohttp-3.14.5.dist-info/licenses/LICENSE.txt": "2e4be5fc6c4c72a466fcb665d726e049a6891981fe536c4f04b6366749461d23",
+        "aiohttp-3.14.5.dist-info/licenses/vendor/llhttp/LICENSE": "628168d68bb5a8a17e0bbefb3bd74e326e1edc20583d76f52f457c82c921867d"
       }
     },
     {
@@ -11097,30 +10893,31 @@
     {
       "ecosystem": "python",
       "name": "urllib3",
-      "version": "2.7.0",
+      "version": "2.8.0",
       "scopes": [
         "agent",
         "dev",
         "evaluation",
         "runtime"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/7f/3e/5db95bcf282c52709639744ca2a8b149baccf648e39c8cc87553df9eae0c/urllib3-2.7.0-py3-none-any.whl",
-      "integrity": "sha256:9fb4c81ebbb1ce9531cce37674bbc6f1360472bc18ca9a553ede278ef7276897",
-      "source_url": "https://files.pythonhosted.org/packages/53/0c/06f8b233b8fd13b9e5ee11424ef85419ba0d8ba0b3138bf360be2ff56953/urllib3-2.7.0.tar.gz",
-      "source_integrity": "sha256:231e0ec3b63ceb14667c67be60f2f2c40a518cb38b03af60abc813da26505f4c",
+      "artifact_url": "https://files.pythonhosted.org/packages/92/9d/c4e665119135114480843e7ab388fa94d8480650450e6f8e26b70d323a4c/urllib3-2.8.0-py3-none-any.whl",
+      "integrity": "sha256:0cf3cae568d36aa9576b28dfb35f11328f1cb974ca7647d9475ebb86c75ac6e3",
+      "source_url": "https://files.pythonhosted.org/packages/e3/05/b17359e1cefb4f909b5e40b1b90a496d987258916dbbf88e842c729f510e/urllib3-2.8.0.tar.gz",
+      "source_integrity": "sha256:63bf2ead4c879426ebf22ef2a781eeb4aa3b4ae798a0435506f8687fd5bb9b63",
       "license": "MIT",
       "upstream_urls": [
         "Changelog, https://github.com/urllib3/urllib3/blob/main/CHANGES.rst",
         "Documentation, https://urllib3.readthedocs.io",
         "Code, https://github.com/urllib3/urllib3",
-        "Issue tracker, https://github.com/urllib3/urllib3/issues"
+        "Issue tracker, https://github.com/urllib3/urllib3/issues",
+        "Security policy, https://urllib3.readthedocs.io/en/latest/security.html"
       ],
       "upstream_authors": {
         "Author": "",
         "Author-email": "Andrey Petrov <andrey.petrov@shazow.net>"
       },
       "license_files": {
-        "urllib3-2.7.0.dist-info/licenses/LICENSE.txt": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686"
+        "urllib3-2.8.0.dist-info/licenses/LICENSE.txt": "130e3a64d5fdd5d096a752694634a7d9df284469de86e5732100268041e3d686"
       }
     },
     {
@@ -11340,16 +11137,16 @@
     {
       "ecosystem": "python",
       "name": "yarl",
-      "version": "1.24.5",
+      "version": "1.25.1",
       "scopes": [
         "agent",
         "evaluation",
         "weixin"
       ],
-      "artifact_url": "https://files.pythonhosted.org/packages/61/02/962c1cbfc401a30c1d034dc67ff395f64b52302c6d62de556c1fca99acc0/yarl-1.24.5-py3-none-any.whl",
-      "integrity": "sha256:a33700d13d9b7d84fd10947b09ff69fb9a792e519c8cb9764a3ca70baa6c23a7",
-      "source_url": "https://files.pythonhosted.org/packages/31/33/ebe9e3d1f86c7a0b51094c0a146392045ca1631d2664889539dec8088a33/yarl-1.24.5.tar.gz",
-      "source_integrity": "sha256:e81b83143bee16329c23db3c1b2d82b29892fcbcb849186d2f6e98a5abe9a57f",
+      "artifact_url": "https://files.pythonhosted.org/packages/54/22/318c7980066769c6bcd9221ed2248294f5698811da099013098c670565ed/yarl-1.25.1-py3-none-any.whl",
+      "integrity": "sha256:681c758b0490f9e96b78e5fa8e8dc6e648e9185bb6eaebe73183c33ea0c445f3",
+      "source_url": "https://files.pythonhosted.org/packages/75/16/e8be8e2fb175bbf41a0680381a319f1199fae256588241a2ac8677eafb49/yarl-1.25.1.tar.gz",
+      "source_integrity": "sha256:03dd38de09bc213e9a8b29761eec33ee1d5318dac0e49d8af36e4d27830e23a7",
       "license": "Apache-2.0",
       "upstream_urls": [
         "Chat: Matrix, https://matrix.to/#/#aio-libs:matrix.org",
@@ -11367,8 +11164,8 @@
         "Author-email": "andrew.svetlov@gmail.com"
       },
       "license_files": {
-        "yarl-1.24.5.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
-        "yarl-1.24.5.dist-info/licenses/NOTICE": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838"
+        "yarl-1.25.1.dist-info/licenses/LICENSE": "cfc7749b96f63bd31c3c42b5c471bf756814053e847c10f3eb003417bc523d30",
+        "yarl-1.25.1.dist-info/licenses/NOTICE": "56d6ac6c8105c0a51304c21db060e361af9a8ea0af9a75c239c28b5d13693838"
       }
     },
     {

@@ -5,6 +5,7 @@ ruamel.yaml>=0.18
 PyYAML>=6.0
 jsonschema>=4.26,<5
 Requests>=2.32,<3
+urllib3>=2.8,<3
 mcp-server-git>=0.6
 websockets>=12
 fastapi>=0.110
@@ -17,6 +18,6 @@ nltk>=3.9.2,<4
 swebench==5.0.2
 huggingface-hub>=1,<2
 pyarrow>=18
-aiohttp>=3.11,<4
+aiohttp>=3.14.4,<4
 cryptography>=44
 qrcode>=8,<9
