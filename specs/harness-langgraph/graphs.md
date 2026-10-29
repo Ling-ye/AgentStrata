@@ -93,7 +93,10 @@ graph TD;
 	review(review)
 	seal(seal)
 	__end__([<p>__end__</p>]):::last
-	__start__ --> definition;
+	__start__ -.-> confirmation;
+	__start__ -.-> definition;
+	__start__ -.-> regressions;
+	__start__ -.-> seal;
 	baseline -. &nbsp;done&nbsp; .-> __end__;
 	baseline -. &nbsp;next&nbsp; .-> verification;
 	confirmation -. &nbsp;done&nbsp; .-> __end__;

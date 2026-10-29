@@ -78,6 +78,17 @@ def test_retry_has_its_own_record_and_cancelled_task_cannot_gain_success(store):
     assert store.get("repair-example")["flow_steps"][-1]["status"] == "cancelled"
 
 
+def test_confirmation_retry_projection_keeps_the_original_candidate_group(store):
+    task = store.update("repair-example", evaluations={
+        "confirm-1": {"passed_cases": [], "error": {"message": "environment"}},
+        "confirm-1-retry-2": {"passed_cases": ["target"]},
+    })
+    rows = project_flow(task, [{"number": 1, "status": "accepted"}])["steps"]
+    confirmations = [row for row in rows if row["phase"].startswith("confirm-")]
+    assert len(confirmations) == 2
+    assert all(row["parent_id"] == "attempt-1" and row["attempt"] == 1 for row in confirmations)
+
+
 def test_cancel_between_start_and_success_preserves_terminal_state(store):
     with record_step(store, "repair-example", "coding", "候选", group="attempt-1", inputs={}):
         store.update("repair-example", status="cancel_requested")

@@ -35,7 +35,11 @@ def build_acceptance_graph(stages=None):
     )
     for name, function in zip(STAGES, functions, strict=True):
         builder.add_node(name, function)
-    builder.add_edge(START, STAGES[0])
+    builder.add_conditional_edges(
+        START,
+        lambda state: state["retry_from"] if state.get("retry_from") in {"regressions", "confirmation", "seal"} else STAGES[0],
+        {name: name for name in (STAGES[0], "regressions", "confirmation", "seal")},
+    )
     for current, following in zip(STAGES, STAGES[1:]):
         builder.add_conditional_edges(current, acceptance_route, {"done": END, "next": following})
     builder.add_edge(STAGES[-1], END)

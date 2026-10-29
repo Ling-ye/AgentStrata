@@ -12,6 +12,7 @@ from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.engine.context import HarnessContext
 from chatcopilot.harness.engine.state import RepairState
 from chatcopilot.harness.engine.nodes import node
+from chatcopilot.harness.engine.evaluation import confirmation_phase
 
 _STOP_CODES = {
     "budget_exhausted",
@@ -118,7 +119,7 @@ def failure(state: RepairState, runtime: Runtime[HarnessContext]):
     for phase, field in (
         (f"reproduce-r{number}", "reproduction"),
         (f"verify-{number}", "verification"),
-        (f"confirm-{number}", "confirmation"),
+        (confirmation_phase(ctx.store.get(ctx.task_id), number), "confirmation"),
     ):
         if evaluations.get(phase, {}).get("complete"):
             attempt[field] = evaluations[phase]

@@ -146,6 +146,8 @@ def begin_attempt(state: RepairState, runtime: Runtime[HarnessContext]):
         "confirmation_ref": None,
         "review_ref": None,
         "accepted_candidate_ref": None,
+        "retry_from": "",
+        "verification_retry": 0,
         "outcome": "",
     }
 

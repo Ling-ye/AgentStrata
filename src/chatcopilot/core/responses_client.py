@@ -1,9 +1,11 @@
-"""Single-request Responses SSE transport. Never executes tools or starts an Agent."""
+"""Responses SSE transport; reconnect only before HTTP, never replay streamed output."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
+import ssl
+import time
 from typing import Any
 
 import requests
@@ -11,6 +13,33 @@ import requests
 from chatcopilot.core.config import LLMConfig
 from chatcopilot.contracts.cancellation import CancellationProbe
 from chatcopilot.contracts.model_runtime import ModelToolCall, json_value
+
+
+def _connection_error_kind(error):
+    if isinstance(error, requests.exceptions.SSLError):
+        pending, seen = [error], set()
+        handshake_eof = False
+        while pending:
+            current = pending.pop()
+            if id(current) in seen:
+                continue
+            seen.add(id(current))
+            if isinstance(current, ssl.SSLCertVerificationError):
+                return "tls_certificate_error"
+            if isinstance(current, ssl.SSLEOFError):
+                frame = current.__traceback__
+                while frame:
+                    if frame.tb_frame.f_globals.get("__name__") == "ssl" and frame.tb_frame.f_code.co_name == "do_handshake":
+                        handshake_eof = True
+                    frame = frame.tb_next
+            pending.extend(arg for arg in current.args if isinstance(arg, BaseException))
+            pending.extend(child for child in (current.__cause__, getattr(current, "reason", None))
+                           if isinstance(child, BaseException))
+        return "tls_handshake_eof" if handshake_eof else "tls_error"
+    return ("connect_timeout" if isinstance(error, requests.ConnectTimeout) else
+            "read_timeout" if isinstance(error, requests.ReadTimeout) else
+            "proxy_error" if isinstance(error, requests.exceptions.ProxyError) else
+            "connection_error" if isinstance(error, requests.ConnectionError) else "request_error")
 
 
 def responses_input(messages: list[dict]) -> tuple[str, list[dict]]:
@@ -111,19 +140,37 @@ def responses_chat(
         headers["Authorization"] = "Bearer " + config.api_key
     if cancellation:
         cancellation.raise_if_cancelled()
+    deadline = time.monotonic() + (timeout or route.timeout)
+
+    def send():
+        for attempt in range(3):
+            if cancellation:
+                cancellation.raise_if_cancelled()
+            remaining = deadline - time.monotonic()
+            if remaining <= 0:
+                raise RuntimeError("Responses connection budget exhausted; request was not replayed")
+            try:
+                return requests.post(
+                    route.base_url.rstrip("/") + "/responses", json=payload, headers=headers,
+                    stream=True, timeout=remaining, allow_redirects=False,
+                )
+            except requests.RequestException as error:
+                kind = _connection_error_kind(error)
+                # Only errors proving that the HTTP request was never sent.
+                # A failed read, certificate check or partially received stream is not replayed.
+                if kind not in {"tls_handshake_eof", "connect_timeout"} or attempt == 2:
+                    suffix = "connection attempts exhausted" if attempt else "request was not replayed"
+                    raise RuntimeError(f"Responses connection failed ({kind}); {suffix}") from None
+                time.sleep(min(0.1 * (2 ** attempt), max(0, deadline - time.monotonic())))
+
+    request_phase = ""
     try:
-        response = requests.post(
-            route.base_url.rstrip("/") + "/responses",
-            json=payload,
-            headers=headers,
-            stream=True,
-            timeout=timeout or route.timeout,
-            allow_redirects=False,
-        )
+        response = send()
         if response.status_code == 401 and config.auth_mode == "chatgpt":
             # A rejected authentication request has not started inference. Retry
             # only that explicit rejection, never a disconnected/partial stream.
             response.close()
+            request_phase = "authentication refresh "
             refreshed = access_credential(
                 Path(config.credential_root), config.auth_profile, previous_token=auth.access_token
             )
@@ -133,16 +180,13 @@ def responses_chat(
             ):
                 raise RuntimeError("model authentication identity changed; submit a new turn")
             headers["Authorization"] = "Bearer " + refreshed.access_token
-            response = requests.post(
-                route.base_url.rstrip("/") + "/responses",
-                json=payload,
-                headers=headers,
-                stream=True,
-                timeout=timeout or route.timeout,
-                allow_redirects=False,
-            )
-    except requests.RequestException:
-        raise RuntimeError("Responses connection failed") from None
+            request_phase = ""
+            response = send()
+    except requests.RequestException as error:
+        # Exception text can contain proxy credentials, URLs or request headers.
+        # Preserve a useful category without serializing provider/private data.
+        kind = _connection_error_kind(error)
+        raise RuntimeError(f"Responses {request_phase}connection failed ({kind}); request was not replayed") from None
     text, completed = [], None
     try:
         if response.status_code != 200:
@@ -176,6 +220,8 @@ def responses_chat(
             raise RuntimeError(
                 "Responses stream ended without completion; request was not replayed"
             )
+    except requests.RequestException as error:
+        raise RuntimeError(f"Responses stream failed ({_connection_error_kind(error)}); request was not replayed") from None
     finally:
         response.close()
     calls, continuation, final_parts = [], [], []

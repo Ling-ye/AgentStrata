@@ -237,6 +237,127 @@ def test_stream_disconnection_is_not_replayed(monkeypatch):
     assert len(calls) == 1
 
 
+@pytest.mark.parametrize("error_type,category", [
+    ("ConnectTimeout", "connect_timeout"), ("ReadTimeout", "read_timeout"),
+    ("ProxyError", "proxy_error"), ("SSLError", "tls_error"),
+    ("ConnectionError", "connection_error"),
+])
+def test_responses_connection_diagnostics_are_typed_and_redacted(monkeypatch, error_type, category):
+    import requests
+
+    calls = []
+
+    def fail(*args, **kwargs):
+        calls.append(kwargs)
+        raise getattr(requests.exceptions, error_type)("fixture private transport detail")
+
+    monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", fail)
+    with pytest.raises(RuntimeError) as caught:
+        responses_chat(LLMConfig(model="fixture", provider="openai", api="openai_responses", api_key="fixture"), [], [])
+    attempts = 3 if category == "connect_timeout" else 1
+    suffix = "connection attempts exhausted" if attempts > 1 else "request was not replayed"
+    assert str(caught.value) == f"Responses connection failed ({category}); {suffix}"
+    assert "fixture private transport detail" not in str(caught.value)
+    assert len(calls) == attempts
+
+
+def _handshake_eof():
+    import ssl
+    import requests
+
+    incoming, outgoing = ssl.MemoryBIO(), ssl.MemoryBIO()
+    connection = ssl.create_default_context().wrap_bio(incoming, outgoing, server_hostname="fixture.invalid")
+    incoming.write_eof()
+    with pytest.raises(ssl.SSLEOFError) as caught:
+        connection.do_handshake()
+    return requests.exceptions.SSLError(caught.value)
+
+
+def test_initial_tls_handshake_eof_reconnects_before_a_single_completed_response(monkeypatch):
+    calls = []
+    response = Response([{"type": "response.completed", "response": {"output": [
+        {"type": "message", "content": [{"type": "output_text", "text": "READY"}]},
+    ]}}])
+
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        if len(calls) < 3:
+            raise _handshake_eof()
+        return response
+
+    monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", post)
+    result = responses_chat(LLMConfig(model="fixture", api="openai_responses", api_key="fixture"), [], [])
+    assert result.content == "READY" and len(calls) == 3 and response.closed
+    assert calls[0]["timeout"] > calls[1]["timeout"] > calls[2]["timeout"]
+
+
+def test_tls_certificate_failure_and_eof_without_handshake_proof_are_not_retried(monkeypatch):
+    import requests
+    import ssl
+
+    for cause in (ssl.SSLCertVerificationError(1, "fixture certificate"), ssl.SSLEOFError(8, "fixture EOF")):
+        calls = []
+
+        def post(*args, **kwargs):
+            calls.append(kwargs)
+            raise requests.exceptions.SSLError(cause)
+
+        monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", post)
+        with pytest.raises(RuntimeError, match="request was not replayed"):
+            responses_chat(LLMConfig(model="fixture", api="openai_responses", api_key="fixture"), [], [])
+        assert len(calls) == 1
+
+
+def test_tls_error_after_stream_output_never_replays_the_response(monkeypatch):
+    calls, deltas = [], []
+
+    class Disconnected(Response):
+        def iter_lines(self):
+            yield from super().iter_lines()
+            raise _handshake_eof()
+
+    response = Disconnected([{"type": "response.output_text.delta", "delta": "partial"}])
+    monkeypatch.setattr("chatcopilot.core.responses_client.requests.post",
+                        lambda *args, **kwargs: (calls.append(kwargs), response)[1])
+    with pytest.raises(RuntimeError, match="stream failed.*not replayed"):
+        responses_chat(LLMConfig(model="fixture", api="openai_responses", api_key="fixture"), [], [],
+                       on_content_delta=deltas.append)
+    assert len(calls) == 1 and deltas == ["partial"] and response.closed
+
+
+def test_connection_retries_keep_the_original_deadline_and_honor_cancellation(monkeypatch):
+    import requests
+    from types import SimpleNamespace
+
+    calls, checks = [], []
+
+    def post(*args, **kwargs):
+        calls.append(kwargs)
+        raise _handshake_eof()
+
+    def cancel():
+        checks.append(True)
+        if len(calls):
+            raise RuntimeError("fixture cancelled")
+
+    monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", post)
+    with pytest.raises(RuntimeError, match="fixture cancelled"):
+        responses_chat(LLMConfig(model="fixture", api="openai_responses", api_key="fixture"), [], [],
+                       cancellation=SimpleNamespace(raise_if_cancelled=cancel))
+    assert len(calls) == 1
+
+    clock = [0.0]
+    monkeypatch.setattr("chatcopilot.core.responses_client.time.monotonic", lambda: clock[0])
+
+    def expired(*args, **kwargs):
+        clock[0] = 10.0
+        raise requests.ConnectTimeout("fixture connection timeout")
+
+    monkeypatch.setattr("chatcopilot.core.responses_client.requests.post", expired)
+    with pytest.raises(RuntimeError, match="connection budget exhausted"):
+        responses_chat(LLMConfig(model="fixture", api="openai_responses", api_key="fixture"), [], [], timeout=1)
+
+
 def test_duplicate_response_tool_call_ids_fail_before_tool_execution(monkeypatch):
     response = Response(
         [

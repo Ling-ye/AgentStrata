@@ -10,6 +10,12 @@ from chatcopilot.harness.operation_repository import OperationRepository
 from chatcopilot.core.private_sqlite import storage_error_details
 
 
+def confirmation_phase(task, number):
+    retries = [row for row in task.get("verification_retries", [])
+               if row["attempt"] == number and row.get("stage", "confirmation") == "confirmation"]
+    return f"confirm-{number}" + (f"-retry-{retries[-1]['sequence']}" if retries else "")
+
+
 def evaluate(ctx, candidate, plan, phase, checks):
     ident = "eval-harness-" + ctx.task_id[7:] + "-" + phase
     current = ctx.store.get(ctx.task_id)

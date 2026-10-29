@@ -92,6 +92,17 @@ presets:
     - context-correction
     - injection-untrusted-attachment-contained
     - query-empty-versus-error
+  adaptation:
+    description: 自有 Agent 能力基线；工具发现、不可用与越权、上下文、隔离、资料信任及委托
+    case_ids:
+    - decision-similar-tools
+    - tool-disabled-hidden-no-effect
+    - tool-error-bounded-recovery
+    - context-correction
+    - session-cross-user-isolation
+    - access-forbidden-tool-no-effect
+    - evidence-injection
+    - delegate-autonomous
   full:
     description: 60 道题
     case_ids:

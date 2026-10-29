@@ -26,6 +26,14 @@ def _query_terms(query: str) -> tuple[str, ...]:
     return tuple(dict.fromkeys(terms))
 
 
+def _schema_parameter_names(schema: Mapping[str, Any]) -> tuple[str, ...]:
+    """Use the callable's input names as discoverable capabilities."""
+    properties = schema.get("properties")
+    if not isinstance(properties, Mapping):
+        return ()
+    return tuple(str(name).casefold() for name in properties)
+
+
 def _schema(name: str, description: str, parameters: dict[str, Any]) -> dict[str, Any]:
     return {"type": "function", "function": {
         "name": name, "description": description, "parameters": parameters,
@@ -98,18 +106,26 @@ class ToolDisclosureView:
         results = []
         for query in queries:
             words = _query_terms(query)
+            exact = query.strip().casefold()
             ranked = []
             for tool in self.deferred.values():
                 pack = self.pack_by_name.get(tool.name, tool.category or "other")
                 fields = (tool.name, *tool.aliases, pack, tool.summary)
                 folded = tuple(str(field).casefold() for field in fields)
+                parameters = _schema_parameter_names(tool.input_schema)
+                schema_hits = sum(any(word in parameter for parameter in parameters) for word in words)
+                coverage = sum(any(word in field for field in (*folded, *parameters)) for word in words)
                 score = sum(
                     (12 if word in folded[0] else 8 if any(word in alias for alias in folded[1:-2])
                      else 4 if word in folded[-2] else 1 if word in folded[-1] else 0)
                     for word in words
                 )
-                if score:
-                    ranked.append((-score, tool.name, tool, pack))
+                if coverage:
+                    rank = (
+                        exact == folded[0], exact in folded[1:-2], exact == folded[-2],
+                        coverage == len(words), coverage, score, schema_hits,
+                    )
+                    ranked.append((tuple(-int(value) for value in rank), tool.name, tool, pack))
             ranked.sort(key=lambda item: (item[0], item[1]))
             matches = [{"name": tool.name, "summary": tool.summary[:240], "pack": pack,
                         "required": list(tool.input_schema.get("required", []))}

@@ -5,9 +5,9 @@
 ## Agent 运行系统与自有能力优化主计划
 
 [可定制 Agent 运行系统与自有能力优化](application-harness-framework/spec.md)定义四层产品主体、自有 LangGraph Agent、可选 Codex 执行器与开发 worker 的边界，并维护开源复用与公开契约。
-[开发阶段](application-harness-framework/spec.md#分阶段开发)保留 M0—M6 的完成事实；后续 [A—D 路线](application-harness-framework/spec.md#自有-agent-能力优化路线)推进能力基线、能力与上下文案例、真实闭环以及按需求深入循环策略。
-M7 尚需 Harness 实际生成并正式接受自有 Agent 实现候选，以及隔离实例启用/撤回证据；已有 `apply_pose` 桥接案例不能替代这一条件。
-`accepted` 表示设计可实施；阶段状态与未完成条件只在主计划维护，fork 不作为通用前置条件。
+[开发阶段](application-harness-framework/spec.md#分阶段开发)维护 M0—M7 的完成条件与证据范围；[A—D 路线](application-harness-framework/spec.md#自有-agent-能力优化路线)细化自有能力基线、适配案例、真实闭环及按需求深入循环策略。
+自有 Agent 候选已有真实 Harness 开发、独立接受及隔离实例启用/撤回证据；真实模型与受控外部对端的覆盖范围、后续平台验收条件只由主计划维护。
+`accepted` 表示设计可实施，`implemented` 表示规格约定范围已实现并验收；fork 不作为通用前置条件。
 
 ## 长期基线
 

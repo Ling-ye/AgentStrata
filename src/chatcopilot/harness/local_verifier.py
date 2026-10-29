@@ -352,7 +352,7 @@ class LocalVerifier:
         command = sandbox_command(
             # The trusted reporter's directory contains its own integrations
             # package; it must not shadow repository namespace packages.
-            [self.python, "-P", str(runner), str(request), str(report)], scope=scope, cwd=worktree
+            [self.python, "-u", "-P", str(runner), str(request), str(report)], scope=scope, cwd=worktree
         )
         boundary = command.index("--")
         runtime_bindings = [arg for name in ("/etc/alternatives", "/etc/os-release", "/etc/lsb-release")

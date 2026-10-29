@@ -1,24 +1,23 @@
 """Acceptance nodes; control flow is owned by the compiled graph."""
 
 from __future__ import annotations
-import hashlib
 import time
 from dataclasses import asdict
 from langgraph.runtime import Runtime
-from chatcopilot.core.private_sqlite import json_text
 from chatcopilot.harness.models import (
     acceptance_digest,
     VerificationRequest,
     Cancelled,
     HarnessError,
     review_decision,
+    review_binding,
 )
 from chatcopilot.harness.agent_types import AcceptedCandidate
 from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.engine.context import HarnessContext
 from chatcopilot.harness.engine.state import RepairState
 from chatcopilot.harness.engine.nodes import node
-from chatcopilot.harness.engine.evaluation import evaluate
+from chatcopilot.harness.engine.evaluation import confirmation_phase, evaluate
 
 
 @node
@@ -160,7 +159,8 @@ def confirmation(state: RepairState, runtime: Runtime[HarnessContext]):
     task, attempt, plan, candidate = ctx.inputs(state)
     number = state["attempt"]
     if plan.real_agent:
-        confirmation = evaluate(ctx, candidate, plan, f"confirm-{number}", list(plan.checks))
+        phase = confirmation_phase(task, number)
+        confirmation = evaluate(ctx, candidate, plan, phase, list(plan.checks))
         attempt["confirmation"] = confirmation
         ctx.save(state, attempt)
         if not (set(plan.primary_checks) | set(task["protected_cases"])).issubset(
@@ -229,20 +229,7 @@ def review(state: RepairState, runtime: Runtime[HarnessContext]):
         "patch": ctx.artifacts.patch(attempt),
         "task_id": ctx.task_id,
     }
-    binding = hashlib.sha256(
-        json_text(
-            {
-                "candidate": candidate.digest,
-                "goal": requirements,
-                "plan": plan.to_payload(),
-                "binding": asdict(ctx.scenario.binding(task)),
-                "baseline": reproduction["passed_cases"],
-                "verified": verification["passed_cases"],
-                "regressions": attempt["regressions"],
-                "gaps": gaps,
-            }
-        ).encode()
-    ).hexdigest()
+    binding = review_binding(task, attempt, asdict(ctx.scenario.binding(task)))
     cached_ref = ctx.store.get(ctx.task_id).get("review_cache", {}).get(binding)
     try:
         cached = ctx.records.read(cached_ref) if cached_ref else None

@@ -20,6 +20,8 @@ class RepairInput(GraphIdentity, total=False):
     policy_ref: dict[str, Any] | None
     error_ref: dict[str, Any] | None
     outcome: str
+    retry_from: str
+    verification_retry: int
 
 
 class RepairOutput(TypedDict, total=False):
@@ -52,6 +54,7 @@ class AcceptanceInput(GraphIdentity, total=False):
     submission_ref: dict[str, Any] | None
     replaying: bool
     candidate_ref: dict[str, Any] | None
+    retry_from: str
 
 
 class AcceptanceOutput(RepairOutput, total=False):

@@ -618,6 +618,21 @@ class HarnessController:
         self._require_standalone(task_id)
         return self._resume_task(task_id)
 
+    def reconcile_pytest_gap(self, task_id: str, gap_digest: str) -> dict[str, Any]:
+        """Host selects a declaration about the pytest draft; never waive other material."""
+        self._require_standalone(task_id)
+        with self.store.creation_guard(), self.lifecycle.operation(task_id):
+            task = self.store.get(task_id)
+            self.lifecycle.require_current(task)
+            self.lifecycle.require_stopped(task)
+            self.lifecycle._require_evaluation_stopped(task)
+            from chatcopilot.harness.verification_retry_runtime import reconcile_pytest_gap
+            reconcile_pytest_gap(self.store, task_id, gap_digest)
+            task = self.store.update(task_id, if_status=frozenset({"needs_review"}),
+                                     status="queued", error_code=None, delivery_cancel_requested=False)
+            self._launch(task)
+            return self.get(task_id)
+
     def _require_standalone(self, task_id):
         task = self.store.get(task_id)
         if task.get("governance_run_id"):
@@ -636,6 +651,9 @@ class HarnessController:
                 source_manifest(Path(task["worktree"]))
             ) != task.get("working_digest"):
                 raise HarnessError("workspace_changed", "工作区被外部修改，不能继续原任务")
+            if task.get("error_code") in {"verification_environment", "budget_exhausted"}:
+                from chatcopilot.harness.verification_retry_runtime import prepare_acceptance_retry
+                prepare_acceptance_retry(self.store, task_id)
             task, claimed = self.lifecycle.claim_resume_locked(task_id)
             if claimed:
                 self._launch(task)

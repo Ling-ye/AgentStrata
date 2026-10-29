@@ -5,7 +5,7 @@ import logging
 from typing import Any
 
 from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES, EvaluationControlPort, WorkerControlPort, WorkerState, external_evaluation_id
-from chatcopilot.harness.models import ACTIVE, PIPELINE_VERSION, Cancelled, HarnessError
+from chatcopilot.harness.models import ACTIVE, PIPELINE_VERSION, Cancelled, HarnessError, can_resume_exhausted
 from chatcopilot.harness.store import HarnessStore
 
 
@@ -53,7 +53,8 @@ class HarnessLifecycle:
             raise HarnessError("source_archived", "旧测评来源已归档，请使用新测评发起修复")
         if task["source"].get("blockers"):
             raise HarnessError("source_incomplete", "来源证据不完整，补充观测后重新加载并发起")
-        if task["status"] not in {"blocked", "interrupted", "cancelled", "waiting_input"}:
+        if (task["status"] not in {"blocked", "interrupted", "cancelled", "waiting_input"}
+                and not can_resume_exhausted(task, self.store.attempts(task_id))):
             raise HarnessError("conflict", "此任务尚未停止或已完成，不能恢复")
         if task["status"] == "waiting_input" and not task["source"].get("image_resources"):
             raise HarnessError("image_required", "请先补充原图，系统会自动继续")

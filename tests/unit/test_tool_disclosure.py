@@ -187,6 +187,44 @@ def test_chinese_query_matches_description_without_full_phrase():
     assert matches[0]["name"] == "read_text_head"
 
 
+def test_discovery_prioritizes_combined_request_and_preserves_exact_name_lookup():
+    temperature, humidity, combined = (_tool(name) for name in (
+        "read_temperature", "read_humidity", "read_environment",
+    ))
+    temperature.summary = "Read current temperature."
+    humidity.summary = "Read current humidity."
+    combined.summary = "Read current temperature and humidity together."
+    view = ToolDisclosureView((temperature, humidity, combined), {})
+    result = view.search({"queries": ["temperature humidity", "read_temperature"], "limit": 1})
+    assert [row["matches"][0]["name"] for row in result.data["results"]] == [
+        "read_environment", "read_temperature",
+    ]
+
+
+@pytest.mark.parametrize("query", ["avatar.controls", "expression motion"])
+def test_discovery_finds_tools_by_pack_and_actual_input_parameters(query):
+    tool = _tool("configure_appearance")
+    tool.summary = "Update the selected appearance."
+    tool.input_schema = object_schema({
+        "expression": {"type": "string"}, "motion": {"type": "string"},
+    }, required=("expression", "motion"))
+    view = ToolDisclosureView((tool,), {tool.name: "avatar.controls"})
+    matches = view.search({"queries": [query], "limit": 1}).data["results"][0]["matches"]
+    assert [match["name"] for match in matches] == ["configure_appearance"]
+
+
+def test_complete_query_coverage_beats_partial_parameter_matches():
+    complete, partial = _tool("complete_report"), _tool("partial_report")
+    complete.summary = "Read temperature humidity pressure together."
+    partial.summary = "Read two readings."
+    partial.input_schema = object_schema({
+        "temperature": {"type": "string"}, "humidity": {"type": "string"},
+    })
+    view = ToolDisclosureView((complete, partial), {})
+    result = view.search({"queries": ["temperature humidity pressure"], "limit": 1})
+    assert [match["name"] for match in result.data["results"][0]["matches"]] == ["complete_report"]
+
+
 def test_responses_transport_serializes_only_direct_and_bridge_tools(monkeypatch):
     from chatcopilot.core.config import LLMConfig
     from chatcopilot.core.responses_client import responses_chat
@@ -212,3 +250,78 @@ def test_responses_transport_serializes_only_direct_and_bridge_tools(monkeypatch
     assert {tool["name"] for tool in captured["tools"]} == {
         "read_memory", "tool_search", "tool_describe", "tool_call",
     }
+
+
+@pytest.mark.parametrize("discovery_name,arguments,catalog_ok", [
+    ("tool_search", {"queries": ["business"]}, True),
+    ("tool_describe", {"names": ["business"]}, True),
+    ("tool_search", {"queries": []}, False),
+    ("tool_describe", {"names": []}, False),
+])
+def test_discovery_cannot_erase_business_failures(discovery_name, arguments, catalog_ok):
+    attempts = []
+
+    def unavailable(args, _ctx):
+        attempts.append(args)
+        return ToolResult(ok=False, error="external service unavailable", error_code="unavailable")
+
+    tool = _tool("business", handler=unavailable)
+    view = ToolDisclosureView((tool,), {tool.name: "business.pack"})
+    model = _ScriptedModel("chat_completions")
+    model.responses = [
+        _call("tool_call", {"name": "business", "arguments": {"key": "x"}}, "first"),
+        _call(discovery_name, arguments, "catalog"),
+        _call("tool_call", {"name": "business", "arguments": {"key": "x"}}, "second"),
+        ChatResult(content="unavailable", finish_reason="stop"),
+    ]
+    session = LangGraphAgentSession(
+        session_id="failure-budget", llm=model,
+        executor=ToolExecutor(tools=[tool], caller_role_hint="user"),
+        tools_schema=view.model_schemas(), disclosure=view,
+        prompt_plan=prompt_plan(), resolved_runtime_id="langgraph", stream_first_turn=False,
+        max_consecutive_tool_failures=2,
+    )
+    events = []
+    try:
+        result = session.run_task(AgentTask("Use the authorized external service."), on_event=events.append)
+        assert result.stop_reason == "tool_failure_cap"
+        assert len(model.calls) == 3
+        assert len(attempts) == 2
+        finished = [e for e in events if isinstance(e, ToolFinished)]
+        assert [(e.name, e.ok) for e in finished] == [
+            ("business", False), (discovery_name, catalog_ok), ("business", False),
+        ]
+    finally:
+        session.close()
+
+
+def test_actual_business_recovery_resets_failure_budget():
+    attempts = []
+
+    def recover(args, _ctx):
+        attempts.append(args["key"])
+        return ToolResult(ok=True, summary="recovered") if args["key"] == "recovered" else ToolResult(ok=False, error="unavailable")
+
+    tool = _tool("business", handler=recover)
+    view = ToolDisclosureView((tool,), {tool.name: "business.pack"})
+    model = _ScriptedModel("chat_completions")
+    model.responses = [
+        _call("tool_call", {"name": "business", "arguments": {"key": "first"}}, "first"),
+        _call("tool_describe", {"names": ["business"]}, "catalog"),
+        _call("tool_call", {"name": "business", "arguments": {"key": "recovered"}}, "ok"),
+        _call("tool_call", {"name": "business", "arguments": {"key": "later"}}, "later"),
+        ChatResult(content="The last operation is unavailable.", finish_reason="stop"),
+    ]
+    session = LangGraphAgentSession(
+        session_id="recovered-budget", llm=model,
+        executor=ToolExecutor(tools=[tool], caller_role_hint="user"),
+        tools_schema=view.model_schemas(), disclosure=view,
+        prompt_plan=prompt_plan(), resolved_runtime_id="langgraph", stream_first_turn=False,
+        max_consecutive_tool_failures=2,
+    )
+    try:
+        result = session.run_task(AgentTask("Check each operation and report actual outcomes."), on_event=lambda _: None)
+        assert result.stop_reason == "end_turn"
+        assert attempts == ["first", "recovered", "later"]
+    finally:
+        session.close()

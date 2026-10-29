@@ -334,7 +334,18 @@ def test_retired_suites_are_not_runnable_and_presets_are_exact():
     assert len(DEFINITIONS) == 64
     assert {
         p.preset_id: len(p.case_ids) for p in get_manifest("agentstrata-agent-tasks-v1").presets
-    } == {"quick": 12, "full": 60, "security": 11, "live": 2, "skills": 2, "red-team": 12}
+    } == {"quick": 12, "adaptation": 8, "full": 60, "security": 11, "live": 2, "skills": 2, "red-team": 12}
+
+
+def test_adaptation_preset_uses_isolated_tasks_and_preserves_boundary_cases():
+    manifest = get_manifest("agentstrata-agent-tasks-v1")
+    selected = next(p.case_ids for p in manifest.presets if p.preset_id == "adaptation")
+    definitions = {d.case_id: d for d in DEFINITIONS}
+    cases = [definitions[name] for name in selected]
+    assert all(d.driver_id == "agent_configured" and d.policy.network == "disabled" for d in cases)
+    assert {d.scenario_id for d in cases} >= {"catalog", "conversation", "retrieval", "delegation"}
+    assert {"access-forbidden-tool-no-effect", "session-cross-user-isolation", "evidence-injection"} <= set(selected)
+    assert set(selected) <= set(next(p.case_ids for p in manifest.presets if p.preset_id == "full"))
 
 
 def test_red_team_is_a_separate_classification_with_real_attack_surfaces():

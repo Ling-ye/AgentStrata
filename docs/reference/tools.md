@@ -36,6 +36,12 @@ external_tools/
 
 主 Agent 的完整工具集合仍由同一 ToolRegistry 快照、会话权限和 ToolExecutor 决定。`ToolDef.disclosure` 默认 `deferred`；交付、人格、记忆、Skill 读取、结果回读、统一搜索及委托工具显式 `direct`。LangGraph 直接提交基础工具 schema，其余通过 `tool_search`、`tool_describe`、`tool_call` 发现并单次调用；Codex 复用 App Server `deferLoading`。桥接调用不会授予新权限，实际执行、结果过滤和审计仍使用原工具名。细节和验收见[按需披露规格](../../specs/tool-progressive-disclosure/spec.md)。
 
+LangGraph 优先处理精确工具名、别名和 pack 查找。一般需求先比较完整词项覆盖和覆盖数，再使用原有名称、别名、pack、简介的字段权重，补充顶层输入参数名的命中数，并按工具名稳定排序。
+组合需求因此可优先找到同时覆盖各项要求的能力，部分参数命中不会压过完整覆盖；参数名取自当前输入 schema。
+排序只影响已经授权的目录，执行前仍读取实际 schema，并由 ToolExecutor 检查权限与参数。
+
+目录查询和业务执行分别计费：查询的成功与失败均不改变业务失败累计，也不占用业务工具调用次数，查询错误仍保留回执并受模型迭代和时间约束；实际业务成功恢复失败预算。
+
 ## Tool pack
 
 `tool_packs/catalog.py` 是静态 catalog。Entry 可以声明：

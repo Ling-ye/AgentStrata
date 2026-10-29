@@ -55,6 +55,30 @@ python -m chatcopilot evals run \
   --output reports/evals/manual/bfcl-smoke
 ```
 
+### 自有 LangGraph Agent 能力基线
+
+现有 `agentstrata-agent-tasks-v1` 的 `adaptation` 预设选择 8 道已有题，覆盖相似工具、能力不可用、不可重试错误、
+上下文更正、跨会话隔离、越权、资料注入与自有子 Agent 委托。题目和评分沿原定义，quick/full 的题单不因新增预设改变。
+它是自有能力的通用保护集；外部能力目录变更和平台实际效果仍需目标相关用例与桥接 Suite，不能由这 8 道题推定完整覆盖。
+
+先在当前源码树内被 Git 忽略的私有目录（如 `.cache/agent-baseline/`）准备独立应用声明及 Agent profile，按[配置归属](../reference/configuration.md#配置归属与文件引用)引用已有模型用途，
+显式设置 `agents.runtime: langgraph`。使用合成 identity/style，不引用生产人格、记忆、工作区、MCP 或渠道。
+评测自身按 Trial 创建隔离状态；不要为了运行基线修改生产实例的 runtime。GEval 所需 Judge 仍独立配置。
+
+```bash
+.venv/bin/python -m chatcopilot evals run \
+  --suite agentstrata-agent-tasks-v1 --preset adaptation \
+  --bot "$PWD/.cache/agent-baseline/bot.yaml" --validate-only
+```
+
+预检通过后，在本次已授权的输入与预算范围内移除 `--validate-only`，使用新的输出目录并显式设置 `--repetitions 3`。
+真实执行会调用模型及必要的语义评分；受控响应仅验证工程契约。比较源码候选时使用[代码对照](#代码基线与候选对照)的内容绑定流程，
+不能把未绑定源码的 standalone 结果直接作为接受回执。
+
+在结果中核对实际 `runtime_id`、模型与评分身份、题单、权限、工具轨迹和上下文快照。
+用任务完成、参数、资料使用及副作用判断能力，调用次数与上下文量只作为相应目标的辅助指标。
+新增外部场景前先复查这组已有题，单独补足真实缺口，不复制运行器、Registry 或评测状态机。
+
 ### Live2D 与 QQ 桥接基线
 
 `agentstrata-application-bridges-v1` 通过真实宿主与桥接代码运行，使用本地浏览器/OneBot 对端。

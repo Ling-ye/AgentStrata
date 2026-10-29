@@ -931,7 +931,7 @@ HARNESS_LAYERS = {
                 "delivery_candidate", "delivery_checks", "delivery_runtime", "delivery_validation", "evaluation_adapter",
                 "gateway_adapter", "github_delivery", "local_commit", "local_verifier", "pytest_runner", "quality",
                 "repair_repository", "repair_runtime", "repair_session", "repository_checks", "sources", "task_environment",
-                "verification", "governance_verification", "improvement_repository", "improvement_runtime", "improvement_verification", "activation_runtime", "workbench", "schedule_runtime", "governance_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
+                "verification", "verification_retry_runtime", "governance_verification", "improvement_repository", "improvement_runtime", "improvement_verification", "activation_runtime", "workbench", "schedule_runtime", "governance_runtime", "verification_ledger", "worker", "worker_runtime", "workspace"},
     "ui": {"__main__"},
 }
 

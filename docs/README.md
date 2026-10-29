@@ -22,7 +22,7 @@ M1 已提供独立应用与 Agent 配置，M1.1 收敛为 LangGraph/Codex；M2 �
 M3 提供[Agent 与桥接评测](reference/evaluation.md#agent-与外部桥接评测)和版本对照；
 M4 提供[需求任务](guides/harness.md#提交接入或改进需求)，M5 提供[已验收版本启用与撤回](guides/instances.md#启用与撤回已验收版本)；
 M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求)；真实闭环按主计划独立验收，受控验证不代替真实交付。
-后续沿 [A—D 路线](../specs/application-harness-framework/spec.md#自有-agent-能力优化路线)建立自有 Agent 基线，完成能力与上下文案例，再收口真实 Harness 闭环；控制流程存在实际缺口时深入循环与协作策略。
+沿 [A—D 路线](../specs/application-harness-framework/spec.md#自有-agent-能力优化路线)定位自有 Agent 基线、能力与上下文案例、真实 Harness 闭环，以及依据实际缺口开展的循环策略改进；具体完成状态只在主计划维护。
 参与开发时先选择阶段，再读取相关领域，不把设计目标当作已实现能力。
 
 ## 选择使用路径

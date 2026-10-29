@@ -101,7 +101,7 @@ def flow_rows(task: dict[str, Any], attempts: list[dict[str, Any]]) -> list[dict
             locator={"section": "plans", "generation": task.get("plan_generation")},
             conclusion="已记录根因假设与冻结验收方案")
     for phase, value in task.get("evaluations", {}).items():
-        match = re.fullmatch(r"(verify|confirm)-(\d+)(?:-r\d+)?", phase)
+        match = re.fullmatch(r"(verify|confirm)-(\d+)(?:-(?:r\d+|retry-\d+))?", phase)
         n = int(match[2]) if match else None
         add("evaluation-" + phase, "独立确认" if phase.startswith("confirm") else "候选复测" if n else "确认原问题" if phase.startswith("reproduce") else "保护集基线",
             f"attempt-{n}" if n else "baseline", phase, value, locator={"section": "evaluations", "key": phase}, attempt=n)

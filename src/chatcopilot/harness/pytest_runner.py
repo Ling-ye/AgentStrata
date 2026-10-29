@@ -77,7 +77,7 @@ def main() -> int:
     args = [
         *request["paths"],
         "--rootdir=" + request["root"],
-        "-q",
+        "-v",
         "--tb=short",
         "-p",
         "no:cacheprovider",

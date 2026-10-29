@@ -20,7 +20,7 @@ from chatcopilot.core.private_sqlite import (
     repair_owned_private_directory,
     storage_error_details,
 )
-from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError
+from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, can_resume_exhausted
 from chatcopilot.core.source_snapshot import manifest_digest
 
 _SCHEMA = """
@@ -462,7 +462,10 @@ class HarnessStore:
                 raise HarnessError("not_found", "修复任务不存在")
             task = self._load(row[0])
             if task["status"] not in {"blocked", "interrupted", "cancelled", "waiting_input"}:
-                return task, False
+                attempts = [self._load(item[0]) for item in connection.execute(
+                    "SELECT payload FROM attempts WHERE task_id=?", (task_id,)).fetchall()]
+                if not can_resume_exhausted(task, attempts):
+                    return task, False
             task.update(
                 status="queued",
                 dispatch_state="creating",

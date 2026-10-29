@@ -16,6 +16,12 @@ ACTIVE = frozenset({"queued", "running", "cancel_requested"})
 TERMINAL = frozenset({"fixed", "needs_review", "no_changes", "not_reproduced", "failed", "blocked", "cancelled", "interrupted"})
 
 
+def can_resume_exhausted(task, attempts):
+    return (task["status"] == "failed" and task.get("error_code") == "attempts_exhausted"
+            and sum(row.get("counts_toward_budget", True) for row in attempts)
+                < task["options"]["max_attempts"])
+
+
 class HarnessError(RuntimeError):
     def __init__(self, code: str, message: str) -> None:
         self.code = code
@@ -221,6 +227,17 @@ def acceptance_digest(task: dict[str, Any], attempt: dict[str, Any]) -> str:
         "binding": task.get("verification_binding"), "verification": attempt.get("verification"),
         "confirmation": attempt.get("confirmation"), "regressions": attempt.get("repository_regressions"),
         "review": attempt.get("review")}
+    if attempt.get("material_resolutions"):
+        value["material_resolutions"] = attempt["material_resolutions"]
+    return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+
+
+def review_binding(task, attempt, binding):
+    value = {"candidate": attempt["candidate_digest"], "goal": task["acceptance"],
+             "plan": task["verification_plan"], "binding": binding,
+             "baseline": attempt["reproduction"]["passed_cases"],
+             "verified": attempt["verification"]["passed_cases"],
+             "regressions": attempt["regressions"], "gaps": attempt["gaps"]}
     return hashlib.sha256(json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
 
 

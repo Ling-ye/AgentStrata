@@ -34,6 +34,17 @@ Agent 图负责日常任务；Harness 的 LangGraph 图负责调查、开发和�
 当前机制按本页及上下文、工具正文维护；尚待取得的自有能力优化证据与实施顺序见
 [主计划 A—D 路线](../../specs/application-harness-framework/spec.md#自有-agent-能力优化路线)。
 
+## 基线与已知覆盖边界
+
+自有能力基线复用既有 Eval 的 `adaptation` 预设和独立 LangGraph 应用配置，操作见[基线指南](../guides/evaluation.md#自有-langgraph-agent-能力基线)。
+现有题验证一般工具、上下文、权限与委托；外部能力目录变化、应用状态更新和真实平台交付需目标相关证据，不能从普通工具题通过直接推定。
+组合工具发现的[适配回归](../../tests/integration/test_agent_capability_adaptation.py)复用 AgentRuntime、MCP 和真实 Live2D 控制器，
+检查排序、当前 schema、实际动作参数与逐项回执，并保护成员权限及新会话的目录作用域。
+该回归的模型与浏览器接收端受控，不能推定真实模型任务效果或真实浏览器渲染。
+
+循环的业务失败预算应根据实际业务执行判定。目录查询成功只表示取得了工具资料，不能证明之前失败的业务恢复；
+相关实现位于 TurnOps，具体改进与验收沿主计划，不增设第二个循环或发现注册中心。
+
 ## 源码入口
 
 - [src/chatcopilot/agent/runtimes](../../src/chatcopilot/agent/runtimes)
@@ -88,6 +99,10 @@ Native 独立循环和注册入口已删除；AgentSession 保留状态与辅助
 ## LLM 三槽配置
 
 `llm.chat` 是所有 runtime 的主模型；`llm.research` 是辅助模型；`llm.code` 只供独立 worker。`agents.runtime` 只选择谁执行 loop，模型名、API Key 和历史记录不能改变它。LangGraph 的模型传输可选 Chat Completions、Platform Responses 或 ChatGPT Responses；这些传输只做一次推理，不启动 Codex Agent 或执行工具。
+
+Responses 仅对连接超时，或异常链能证明发生在 TLS 握手阶段的 EOF，在原请求时限内最多重连两次。
+证书校验保持开启；证书错误、其他连接错误、读取超时及已开始返回的流不自动重放。
+取消和原截止时间继续约束重连，错误仅保留脱敏分类，不记录异常中的 URL、凭据或请求头。
 
 认证使用互斥的 `auth: {mode: chatgpt, profile: main}` 或 `auth: {mode: api_key, key_env: ENV_NAME}`。BotSpec、配置快照和 DTO 只保存引用；订阅 token 不会发送到自定义端点，也不会被环境 API Key 覆盖。请求序列化完成后才生成 Responses 模型输入观察，私有 continuation 只用于协议回传。
 

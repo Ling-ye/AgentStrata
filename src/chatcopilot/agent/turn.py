@@ -560,8 +560,9 @@ class TurnOps:
                 state.successful_operations.append(name)
 
         if not tool_result.ok:
-            state.consecutive_failures += 1
-            if state.consecutive_failures >= self.session.max_consecutive_tool_failures:
+            if not discovery:
+                state.consecutive_failures += 1
+            if not discovery and state.consecutive_failures >= self.session.max_consecutive_tool_failures:
                 fail_text = (
                     f"（连续 {state.consecutive_failures} 次工具失败，已停止自动重试；"
                     "请检查参数后再试或换一种问法）"
@@ -570,7 +571,8 @@ class TurnOps:
             self.raise_if_cancelled()
             return
 
-        state.consecutive_failures = 0
+        if not discovery:
+            state.consecutive_failures = 0
         if not discovery and tool_result.summary:
             state.last_successful_tool_summary = tool_result.summary
             if name == _SEARCH_INFORMATION_TOOL and tool_result.data.get("ok") is True:
