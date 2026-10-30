@@ -86,6 +86,15 @@ class HarnessController:
         from chatcopilot.harness.workbench import comparison
         return comparison(self.store, task_id)
 
+    def export_delivery(self, task_id, output: Path):
+        from chatcopilot.harness.activation_runtime import release_source
+        from chatcopilot.deployment.application_bundle import export_bundle
+        with self.lifecycle.operation(task_id):
+            value = export_bundle(release_source(self, task_id), output)
+            reference = {key: value[key] for key in ("path", "bot_id", "source_digest")}
+            self.store.update(task_id, application_delivery=reference)
+            return reference
+
     def prepare_activation(self, task_id, *, target_id=None, timeout=60):
         from chatcopilot.harness.activation_runtime import prepare
         return prepare(self, task_id, target_id, timeout=timeout)
@@ -272,10 +281,22 @@ class HarnessController:
             raise HarnessError("source_incomplete", "；".join(source["blockers"]))
         if feedback_payload:
             source = {**source, "feedback": feedback_payload}
+        from chatcopilot.core.application_installation import application_identity
+        installed = application_identity(self.repository, source.get("bot_id"))
+        if installed:
+            if source.get("kind") not in {"application", "robot_task", "evaluation"}:
+                raise HarnessError("unsupported_source", "独立应用仅支持应用需求、对话反馈与测评修复")
+            if source.get("kind") == "robot_task":
+                recorded = (source.get("evidence", {}).get("configuration") or {}).get("application_version")
+                if recorded != {key: installed[key] for key in ("bot_id", "source_digest")}:
+                    raise HarnessError("application_version_mismatch", "任务记录缺少当前应用版本，或属于其他版本；请在当前版本复测后发起")
+            source = {**source, "application_version": installed}
         from chatcopilot.harness.delivery import remote_baseline
-        if source.get("kind") == "application":
+        if source.get("kind") == "application" or installed:
             from chatcopilot.harness.improvement_repository import baseline
             delivery = baseline(self.repository)
+            if installed and delivery["source_digest"] != installed["source_digest"]:
+                raise HarnessError("workspace_changed", "应用版本在来源冻结期间发生变化")
         else:
             delivery = remote_baseline(self.repository, self.settings)
         commit = delivery["base_sha"]
@@ -598,7 +619,7 @@ class HarnessController:
             return self.get(task_id)
         self.lifecycle.cancel(task_id)
         if task.get("activation_ref"):
-            from chatcopilot.plugins.activation_service import PENDING
+            from chatcopilot.deployment.activation_service import PENDING
             if self.activation(task_id)["state"] in {"prepared", *PENDING}:
                 self.cancel_activation(task_id)
         return self.get(task_id)

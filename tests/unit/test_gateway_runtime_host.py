@@ -31,11 +31,11 @@ from chatcopilot.contracts.gateway import (
 from chatcopilot.contracts.gateway_protocol import RequestFrame
 from chatcopilot.contracts.identity import ConversationIdentity, Role
 from chatcopilot.core.config import ChatConfig
-from chatcopilot.gateway import runtime as runtime_module
-from chatcopilot.gateway import channel_assembly
+from chatcopilot.host import runtime as runtime_module
+from chatcopilot.host import channel_assembly
 from chatcopilot.gateway.channels import ChannelRuntimeError
 from chatcopilot.gateway.coordinator import GatewayTurnCoordinatorError
-from chatcopilot.gateway.runtime import (
+from chatcopilot.host.runtime import (
     GatewayRuntimeConfigurationError,
     GatewayRuntimeLifecycleError,
     build_gateway_runtime_host,

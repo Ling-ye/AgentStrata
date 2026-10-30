@@ -280,6 +280,7 @@ ALLOWED_SYSTEMD_UNIT_TOKEN_RE = re.compile(
 )
 ALLOWED_SYSTEMD_UNIT_PATH_PREFIXES = (
     "console/systemd/",
+    "deploy/systemd/",
     "deploy/wsl/",
     "docs/",
     "specs/",

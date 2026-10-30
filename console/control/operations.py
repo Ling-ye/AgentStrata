@@ -75,9 +75,6 @@ _XHS_MCP_CONTAINER = "chatcopilot-xiaohongshu-mcp"
 _XHS_MCP_NOT_RUNNING_MESSAGE = "小红书 MCP 未启动，请先在服务管理中启动小红书 MCP。"
 
 
-def _console_script(name: str) -> Path:
-    """控制面动作脚本（console/scripts/<name>），按实例 id 操作宿主。"""
-    return repo_root() / "console" / "scripts" / name
 
 
 def _deploy_script(name: str) -> Path:
@@ -767,7 +764,7 @@ def control(inst: BotInstance, verb: str) -> Dict[str, object]:
         return {"ok": False, "error": "systemd --user 不可用（WSL 是否开启 systemd？）"}
     if not instance_registered(inst):
         return {"ok": False, "error": "尚未注册 systemd，请先点卡片上的「注册服务」"}
-    cp = run_capture(["bash", str(_console_script("ctl.sh")), verb, inst.instance_id])
+    cp = run_capture(["bash", str(_deploy_script("instance_control.sh")), verb, inst.instance_id])
     ok = cp.returncode == 0
     return {
         "ok": ok,
@@ -806,7 +803,7 @@ def _isolation_error(inst: BotInstance) -> Optional[str]:
         return (
             f"该实例 wsl_home 指向控制仓库根（{inst.wsl_home}），与控制台同目录。"
             "机器人操作已中止以保护控制台：请把 bot.yaml 的 deploy.wsl_home 设为独立目录"
-            "（如 ~/ChatCopilot-<id>），并重跑 console/systemd/register.sh <id>。"
+            "（如 ~/ChatCopilot-<id>），并重跑 deploy/wsl/register_instance.sh <id>。"
         )
     return None
 
@@ -1212,7 +1209,7 @@ def stream_setup_action(inst: BotInstance, action_id: str, verb: str = "start") 
 # 首次部署：注册 systemd 模板服务（长操作，生成器）
 # ---------------------------------------------------------------------------
 def stream_register(inst: BotInstance) -> Iterator[str]:
-    script = repo_root() / "console" / "systemd" / "register.sh"
+    script = _deploy_script("register_instance.sh")
     if not script.is_file():
         yield f"[ERR] 找不到 {script}"
         yield "__EXIT__ 1"

@@ -7,8 +7,8 @@ from chatcopilot.core.application_configuration import load_application_spec
 from chatcopilot.core.source_snapshot import manifest_digest, source_manifest, verify_copy
 from chatcopilot.harness.delivery_candidate import accepted
 from chatcopilot.harness.models import HarnessError, PIPELINE_VERSION
-from chatcopilot.plugins.activation_types import ReleaseSource
-from chatcopilot.plugins.activation_service import ActivationService
+from chatcopilot.contracts.deployment import ReleaseSource
+from chatcopilot.deployment.activation_service import ActivationService
 
 
 def _authorized(controller, task_id):
@@ -18,7 +18,9 @@ def _authorized(controller, task_id):
 
 def release_source(controller, task_id):
     task = controller.store.get(task_id)
-    if (task.get("pipeline_version") != PIPELINE_VERSION or task["source"].get("kind") != "application"
+    application = task["source"].get("kind") == "application" or (
+        task["source"].get("application_version") and task.get("delivery", {}).get("mode") == "local")
+    if (task.get("pipeline_version") != PIPELINE_VERSION or not application
             or not accepted(controller.store, task)):
         raise HarnessError("activation_not_accepted", "只有当前协议完整验收的应用需求候选可以启用")
     receipt = task["accepted_candidate"]
@@ -60,10 +62,10 @@ def release_source(controller, task_id):
 
 
 def resolve_runtime(repository, bot_relative, bot_id, target_id):
-    from chatcopilot.plugins.runtime import require_platform
+    from chatcopilot.deployment.systemd import require_platform
     require_platform()
     if target_id == "instance:" + bot_id:
-        from chatcopilot.plugins.activation_runtime import source_target
+        from chatcopilot.deployment.activation_runtime import source_target
         return source_target(repository, bot_relative, bot_id)
     parts = target_id.split(":")
     if len(parts) == 3 and parts[0] == "plugin":

@@ -15,10 +15,13 @@ import pytest
 
 from chatcopilot.core.install_artifacts import InstallError, download, extract_archive, write_private
 from chatcopilot.plugins.repository import InstallRepository
-from chatcopilot.plugins.runtime import UserServices, dependency_environment, require_free_port
+from chatcopilot.deployment.systemd import require_free_port
+from chatcopilot.plugins.runtime import UserServices, dependency_environment
 from chatcopilot.plugins.service import PluginManager
 from chatcopilot.plugins.service import observable_agents
-from chatcopilot.plugins.types import PluginDefinition, ServiceDefinition
+from chatcopilot.deployment.configuration import parse_service_definition
+from chatcopilot.contracts.deployment import ServiceDefinition
+from chatcopilot.plugins.types import PluginDefinition
 
 
 @pytest.fixture
@@ -365,7 +368,7 @@ def test_start_failure_stops_the_failed_unit(tmp_path, monkeypatch):
     commands = []
     monkeypatch.setattr(manager, "_owned", lambda *args, **kwargs: None)
     monkeypatch.setattr(manager, "active", lambda *args: False)
-    monkeypatch.setattr("chatcopilot.plugins.runtime.require_free_port", lambda _: None)
+    monkeypatch.setattr("chatcopilot.deployment.systemd.require_free_port", lambda _: None)
 
     def command(*args):
         commands.append(args)
@@ -397,7 +400,7 @@ def test_generated_unit_is_accepted_by_real_systemd_parser(tmp_path, monkeypatch
 
 def test_service_definition_rejects_external_state(tmp_path):
     with pytest.raises(InstallError, match="inside"):
-        ServiceDefinition.parse({"name": "server", "command": ["/bin/true"], "cwd": "/",
+        parse_service_definition({"name": "server", "command": ["/bin/true"], "cwd": "/",
                                  "environment_file": str(tmp_path / "env"), "port": 19600}, root=tmp_path)
 
 

@@ -11,7 +11,9 @@ from typing import Callable
 
 from chatcopilot.core.install_artifacts import InstallError, sha256, write_private
 from chatcopilot.plugins.repository import InstallRepository, validate_observable_agents
-from chatcopilot.plugins.types import InstalledAgent, PluginDefinition, ServiceDefinition
+from chatcopilot.deployment.configuration import parse_service_definition
+from chatcopilot.contracts.deployment import ServiceDefinition
+from chatcopilot.plugins.types import InstalledAgent, PluginDefinition
 
 _LOG = logging.getLogger(__name__)
 
@@ -64,7 +66,7 @@ class PluginManager:
 
     @staticmethod
     def _services(record: dict, root: Path) -> list[ServiceDefinition]:
-        return [ServiceDefinition.parse(value, root=root) for value in record.get("services", [])]
+        return [parse_service_definition(value, root=root) for value in record.get("services", [])]
 
     def list(self) -> list[dict]:
         result = []
@@ -136,7 +138,7 @@ class PluginManager:
                 write_private(request_file, json.dumps(request, ensure_ascii=False, indent=2) + "\n")
                 stage("prepare")
                 prepared = self.driver(entry, repository.root, "prepare")
-                services = [ServiceDefinition.parse(v, root=repository.root) for v in prepared["services"]]
+                services = [parse_service_definition(v, root=repository.root) for v in prepared["services"]]
                 if not services or len({s.name for s in services}) != len(services):
                     raise InstallError("Plugin must return distinct service definitions")
                 record.update(services=[asdict(service) for service in services], url=prepared["url"],
@@ -213,7 +215,7 @@ class PluginManager:
             self.services.remove(plugin_id, self._services(record, repository.root), repository.root)
             control = repository.root / ".agentstrata-versions"
             if control.exists():
-                from chatcopilot.plugins.activation_repository import ActivationRepository
+                from chatcopilot.deployment.activation_repository import ActivationRepository
                 versions = ActivationRepository(control)
                 with versions.lock():
                     versions.select(None)

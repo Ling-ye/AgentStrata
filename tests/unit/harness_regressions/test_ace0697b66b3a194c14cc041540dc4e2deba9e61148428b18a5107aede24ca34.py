@@ -26,8 +26,8 @@ from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef, Me
 from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
-from chatcopilot.gateway import runtime as runtime_module
-from chatcopilot.gateway import channel_assembly
+from chatcopilot.host import runtime as runtime_module
+from chatcopilot.host import channel_assembly
 from chatcopilot.gateway.state_store import (
     MAX_OUTBOUND_ENVELOPE_JSON_BYTES,
     GatewayStateError,

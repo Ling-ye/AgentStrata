@@ -33,6 +33,7 @@ class EvaluationBotRef:
 
     instance_id: str
     bot_spec: Path
+    source_root: Path | None = None
 
 
 class EvaluationBotResolver:
@@ -45,6 +46,16 @@ class EvaluationBotResolver:
         requested = str(instance_id or "").strip()
         if not requested:
             raise KeyError(requested)
+        from chatcopilot.core.application_installation import application_source, installation
+        installed = installation(self.repository_root)
+        if installed:
+            if requested != installed.bot_id:
+                raise KeyError(requested)
+            selected = application_source(self.repository_root, requested)
+            if selected is None:
+                raise RuntimeError("Application installation changed while resolving its Agent")
+            root, _manifest = selected
+            return EvaluationBotRef(requested, root / installed.bot_relative, root)
         bots_root = (self.repository_root / "bots").resolve()
         try:
             bots_root.relative_to(self.repository_root)
@@ -87,13 +98,21 @@ def bot_spec_path(bot: EvaluationBotRef, repository_root: Path) -> Path:
     return resolved
 
 
+def bot_relative_path(bot: EvaluationBotRef, repository_root: Path) -> Path:
+    """The same application path is used inside every frozen candidate source."""
+    return bot_spec_path(bot, repository_root).relative_to(bot.source_root or repository_root)
+
+
 def bot_env(bot: EvaluationBotRef, repository_root: Path) -> dict[str, str]:
     spec_path = bot_spec_path(bot, repository_root)
     spec = load_botspec(spec_path)
     local_values = llm_runtime_env_defaults(spec.llm)
+    local_directory = spec_path.parent
+    if bot.source_root is not None:
+        local_directory = (repository_root / bot_relative_path(bot, repository_root)).parent
     local_values.update(
         load_local_env_values(
-            spec_path.parent / "local.env",
+            local_directory / "local.env",
             missing_ok=True,
             expand_home=True,
         )

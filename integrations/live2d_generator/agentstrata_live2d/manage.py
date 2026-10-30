@@ -21,7 +21,7 @@ def resource(name: str) -> Path:
 
 def prepare(request: dict) -> dict:
     from chatcopilot.core.install_artifacts import run_install
-    from chatcopilot.plugins.runtime import require_free_port
+    from chatcopilot.deployment.systemd import require_free_port
 
     root = Path(request["root"])
     target = root / "config/generator.json"

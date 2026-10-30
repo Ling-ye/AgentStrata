@@ -1,21 +1,42 @@
 """Version transactions with controlled service facts; no deployed instance is touched."""
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from copy import deepcopy
 import hashlib
 import json
 from pathlib import Path
 import sys
+from types import SimpleNamespace
 
 import pytest
 
 from chatcopilot.contracts.model_runtime import digest
 from chatcopilot.core.release_identity import configuration_manifest, environment_identity, model_identity, tree_manifest
 from chatcopilot.core.source_snapshot import manifest_digest
-from chatcopilot.plugins.activation_repository import ActivationRepository
-from chatcopilot.plugins.activation_service import ActivationService
-from chatcopilot.plugins.activation_types import ActivationTarget, ReleaseSource
-from chatcopilot.plugins.types import ServiceDefinition
+from chatcopilot.deployment.activation_repository import ActivationRepository
+from chatcopilot.deployment.activation_service import ActivationService
+from chatcopilot.contracts.deployment import ActivationTarget, ReleaseSource
+from chatcopilot.contracts.deployment import ServiceDefinition
 from tests.application_fixture import write_application
+
+
+@pytest.mark.parametrize("action", ["start", "stop"])
+def test_shared_activation_checks_plugin_ownership_before_service_actions(action):
+    from chatcopilot.deployment.activation_runtime import InstalledReleaseRuntime
+    calls = []
+    @contextmanager
+    def installation_lock():
+        calls.append("locked")
+        yield
+        calls.append("released")
+    def ownership():
+        calls.append("ownership")
+        raise ValueError("installation ownership changed")
+    runtime = InstalledReleaseRuntime(SimpleNamespace(services=()), installation_lock=installation_lock,
+        require_ownership=ownership, services=SimpleNamespace(command=lambda *_: pytest.fail("service command before ownership")))
+    with runtime.installation_lock():
+        with pytest.raises(ValueError, match="ownership changed"):
+            getattr(runtime, action)()
+    assert calls == ["locked", "ownership", "released"]
 
 
 def manifest(root):
@@ -271,6 +292,8 @@ def test_release_controls_remain_hidden_inside_an_owner_project(tmp_path, monkey
     scope = execution_scope(Role.OWNER, tmp_path / "workspace", (tmp_path,))
     assert scope.permits(tmp_path / "ordinary.py", write=True)
     assert not scope.permits(control / "current.json", write=True)
+    assert not scope.permits(control / "runtime.env", write=False)
+    assert not scope.permits(control.parent / ".agentstrata-application.json", write=True)
     assert not scope.permits(gateway / "release-admission.lock", write=True)
 
 

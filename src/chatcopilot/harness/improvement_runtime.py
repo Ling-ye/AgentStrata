@@ -10,8 +10,11 @@ import hashlib
 
 
 def source(repository: Path, request, evaluator):
+    from chatcopilot.core.application_installation import application_source
+    selected = application_source(repository, request.bot_id)
+    product = selected[0] if selected else repository
     for name in request.allowed_paths:
-        path = repository / name
+        path = product / name
         if path.resolve() != path or not path.exists() or not permitted_change(
                 name + "/scope.py" if path.is_dir() else name, request.bot_id, application=True):
             raise ValueError("Writable scope is not an existing application product path: " + name)

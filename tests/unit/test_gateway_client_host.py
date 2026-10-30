@@ -17,8 +17,8 @@ from chatcopilot.contracts.gateway_rpc import (
 )
 from chatcopilot.contracts.identity import Role
 from chatcopilot.core.config import ChatConfig
-from chatcopilot.gateway import runtime as runtime_module
-from chatcopilot.gateway.runtime import build_gateway_runtime_host, parse_gateway_runtime_config
+from chatcopilot.host import runtime as runtime_module
+from chatcopilot.host.runtime import build_gateway_runtime_host, parse_gateway_runtime_config
 from chatcopilot.project import source_notice
 from chatcopilot.protocols.gateway_client import (
     GatewayClientConfig, GatewayClientError, GatewayRemoteError, GatewayWebSocketClient,

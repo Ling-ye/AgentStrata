@@ -135,7 +135,7 @@ def prepare_models(root: Path) -> None:
 def prepare(request: dict) -> dict:
     root = Path(request["root"])
     # These checks must precede expensive downloads and never silently choose a port.
-    from chatcopilot.plugins.runtime import require_free_port
+    from chatcopilot.deployment.systemd import require_free_port
     for port in (request["options"]["port"], request["options"]["gateway_port"]):
         require_free_port(port)
     if request["options"]["port"] == request["options"]["gateway_port"]:

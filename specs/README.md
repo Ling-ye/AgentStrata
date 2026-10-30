@@ -4,7 +4,7 @@
 
 ## Agent 运行系统与自有能力优化主计划
 
-[可定制 Agent 运行系统与自有能力优化](application-harness-framework/spec.md)定义四层产品主体、自有 LangGraph Agent、可选 Codex 执行器与开发 worker 的边界，并维护开源复用与公开契约。
+[Agent 定制、运行与交付及自有能力优化](application-harness-framework/spec.md)定义四层运行底座、自有 LangGraph Agent、独立应用与通用开发能力的边界，并维护开源复用与公开契约。
 [开发阶段](application-harness-framework/spec.md#分阶段开发)维护 M0—M7 的完成条件与证据范围；[A—D 路线](application-harness-framework/spec.md#自有-agent-能力优化路线)细化自有能力基线、适配案例、真实闭环及按需求深入循环策略。
 自有 Agent 候选已有真实 Harness 开发、独立接受及隔离实例启用/撤回证据；真实模型与受控外部对端的覆盖范围、后续平台验收条件只由主计划维护。
 `accepted` 表示设计可实施，`implemented` 表示规格约定范围已实现并验收；fork 不作为通用前置条件。
@@ -13,6 +13,7 @@
 
 - [四层运行时职责](runtime-four-layer-definition/spec.md)
 - [领域内部六层依赖](domain-layered-dependencies/spec.md)
+- [实例宿主与通用部署目录归属](runtime-deployment-layout/spec.md)
 - [工具按需披露](tool-progressive-disclosure/spec.md)
 - [会话长期记忆条目与召回](conversation-memory-records/spec.md)
 - [文档结构与治理](documentation-governance/spec.md)
@@ -23,6 +24,7 @@
 
 ## 待确认的设计条件
 
+- [独立应用交付与本机改进](standalone-agent-applications/spec.md)：复用现有能力，补齐独立安装、应用版本归属和本机反馈更新闭环。
 - [独立 Live2D 生成插件](live2d-generation/spec.md)：多模态输入、模型资产交付及独立于 AgentRuntime 的生成流程。
 - [外部软件插件与受管部署](external-software-plugins/spec.md)：固定版本自动安装、独立发行与部署验收。
 

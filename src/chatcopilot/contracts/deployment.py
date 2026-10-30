@@ -1,9 +1,20 @@
-"""Accepted source inputs and installed service facts for local version switching."""
+"""Pure installed-service and accepted-source data shared by control domains."""
+from __future__ import annotations
+
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from chatcopilot.plugins.types import ServiceDefinition
+
+@dataclass(frozen=True)
+class ServiceDefinition:
+    name: str
+    command: tuple[str, ...]
+    cwd: str
+    environment_file: str
+    port: int
+    ready_url: str = ""
+    versioned: bool = False
 
 
 @dataclass(frozen=True)
@@ -18,7 +29,6 @@ class ReleaseSource:
     bot_relative: str
     runtime_environment: dict[str, Any]
     model_identity: str
-
 
 @dataclass(frozen=True)
 class ActivationTarget:

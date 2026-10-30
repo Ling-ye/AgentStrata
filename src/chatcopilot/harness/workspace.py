@@ -25,6 +25,7 @@ _AREAS = (
     "core",
     "external_tools",
     "gateway",
+    "host",
     "protocols",
     "tool_packs",
 )
@@ -36,6 +37,7 @@ _FIXED_CORE = (
     "inspection.py",
     "candidate_configuration.py",
     "application_configuration.py",
+    "application_installation.py",
     "release_gate.py", "release_identity.py", "release_runtime.py",
 )
 _FIXED_AUTHORITY = ("src/chatcopilot/authorization/policy.py", "src/chatcopilot/contracts/execution_scope.py",

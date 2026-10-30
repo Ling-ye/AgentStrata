@@ -12,6 +12,12 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     command = args.pop(0)
+    if command == "app":
+        from chatcopilot.application_cli import main as application_main
+        return application_main(args)
+    if command == "harness":
+        from chatcopilot.harness.__main__ import main as harness_main
+        return harness_main(args)
     if command == "plugin":
         from chatcopilot.plugins.cli import main as plugin_main
 
@@ -67,6 +73,12 @@ def main(argv: list[str] | None = None) -> int:
 def _print_help() -> None:
     print(
         "AgentStrata commands:\n"
+        "  agentstrata app inspect <bundle>\n"
+        "  agentstrata app install <bundle> --root <directory>\n"
+        "  agentstrata app setup --root <directory> --with-console\n"
+        "  agentstrata app status --root <directory>\n"
+        "  agentstrata app update|rollback <task> --root <directory>\n"
+        "  agentstrata harness export-delivery <task> --output <directory>\n"
         "  agentstrata plugin list\n"
         "  agentstrata plugin install <id> --model-binding <binding>\n"
         "  agentstrata plugin doctor|start|stop|uninstall <id>\n"

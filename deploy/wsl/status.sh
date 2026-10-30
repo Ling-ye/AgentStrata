@@ -593,7 +593,7 @@ PY
     cat <<'EOF'
   # 推荐：所有部署/起停/日志/诊断都走运维控制台 http://localhost:8910
   # 更新实例：cd ~/ChatCopilot && bash deploy/wsl/update_instance.sh --instance <id>
-  # 控制台起停（等价 UI 按钮）：bash console/scripts/ctl.sh start|stop|restart <id>
+  # 控制台起停（等价 UI 按钮）：bash deploy/wsl/instance_control.sh start|stop|restart <id>
   bash status.sh -w            # 每 5s 刷新本检查（手动排查用）
 EOF
     echo

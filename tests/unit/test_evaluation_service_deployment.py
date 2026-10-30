@@ -40,7 +40,7 @@ def _copy_console_deploy_sources(repository: Path) -> Path:
 
 
 def test_evaluation_unit_uses_private_unix_socket_and_preserves_workers() -> None:
-    unit = _read("console/systemd/chatcopilot-evaluation.service")
+    unit = _read("deploy/systemd/chatcopilot-evaluation.service")
 
     assert "-m chatcopilot.evals.service serve" in unit
     assert "--socket %t/agentstrata-evaluation/service.sock" in unit
@@ -56,7 +56,7 @@ def test_evaluation_unit_uses_private_unix_socket_and_preserves_workers() -> Non
 
 
 def test_console_unit_waits_for_but_does_not_own_evaluation_service() -> None:
-    unit = _read("console/systemd/chatcopilot-console.service")
+    unit = _read("deploy/systemd/chatcopilot-console.service")
 
     assert "Environment=CHATCOPILOT_CONSOLE_HOST=127.0.0.1" in unit
     assert "Environment=CHATCOPILOT_CONSOLE_HOST=0.0.0.0" not in unit

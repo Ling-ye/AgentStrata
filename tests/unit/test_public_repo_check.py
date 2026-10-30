@@ -257,6 +257,10 @@ def test_current_scan_allows_exact_public_and_placeholder_values(tmp_path: Path)
             "cc-connect" + "@" + "demo-bot.service",
         ),
         (
+            "worktree:deploy/systemd/example.md",
+            "chatcopilot" + "@" + "demo-bot.service",
+        ),
+        (
             "history:specs/example/spec.md@deadbeef",
             "user" + "@" + "1000.service",
         ),

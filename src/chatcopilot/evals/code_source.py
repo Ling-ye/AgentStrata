@@ -36,6 +36,7 @@ _TRUSTED_FILES = frozenset(
                 "inspection.py",
                 "candidate_configuration.py",
                 "application_configuration.py",
+                "application_installation.py",
                 "release_gate.py", "release_identity.py", "release_runtime.py",
             )
         ),
@@ -51,22 +52,26 @@ def prepare_code_source(
     path = Path(str(source["path"])).absolute()
     if path.resolve() != path or path.stat().st_uid != os.getuid():
         raise ValueError("candidate source must be a canonical user-owned worktree")
+    from chatcopilot.core.application_installation import application_source
+    installed = application_source(repository)
+    installed_source = installed is not None and path == installed[0]
     origin = git_output(repository, "rev-parse", "--path-format=absolute", "--git-common-dir")
-    if git_output(path, "rev-parse", "--path-format=absolute", "--git-common-dir") != origin:
+    if not installed_source and git_output(path, "rev-parse", "--path-format=absolute", "--git-common-dir") != origin:
         raise ValueError("candidate source must belong to the service repository")
-    candidate = source_manifest(path)
+    candidate = installed[1] if installed_source else source_manifest(path)
     if manifest_digest(candidate) != source["sha256"]:
         raise ValueError("candidate source changed since submission")
     trusted = source_manifest(repository)
-    for name in candidate.keys() | trusted.keys():
-        if not name.startswith("bots/") or candidate.get(name) == trusted.get(name):
+    baseline_root, baseline = installed if installed else (repository, trusted)
+    for name in candidate.keys() | baseline.keys():
+        if not name.startswith("bots/") or candidate.get(name) == baseline.get(name):
             continue
         if not configuration_path(name):
             raise ValueError("candidate changes a protected Bot resource")
         if Path(name).name in {"bot.yaml", "agent.yaml"}:
-            if name not in candidate or name not in trusted:
+            if name not in candidate or name not in baseline:
                 raise ValueError("candidate cannot add or remove a Bot runtime envelope")
-            validate_configuration((repository / name).read_bytes(), (path / name).read_bytes())
+            validate_configuration((baseline_root / name).read_bytes(), (path / name).read_bytes())
     members = {
         name: (repository if name.startswith(_TRUSTED_PREFIXES) or name in _TRUSTED_FILES else path)
         for name in candidate
@@ -84,7 +89,11 @@ def prepare_code_source(
             subset = {name: value for name, value in manifest.items() if members[name] == root}
             if subset:
                 copy_sources(root, output, subset)
-        if manifest_digest(source_manifest(path)) != source["sha256"]:
+        if installed_source:
+            current = application_source(repository)
+            if current is None or current[0] != path or manifest_digest(current[1]) != source["sha256"]:
+                raise ValueError("application version changed during preparation")
+        elif manifest_digest(source_manifest(path)) != source["sha256"]:
             raise ValueError("candidate source changed during preparation")
         verify_copy(output, manifest)
     except BaseException:
@@ -96,7 +105,7 @@ def prepare_code_source(
         "sha256": source["sha256"],
         "execution_sha256": manifest_digest(manifest),
         "manifest": manifest,
-        "commit": git_output(path, "rev-parse", "HEAD"),
+        "commit": git_output(repository if installed_source else path, "rev-parse", "HEAD"),
         "trusted_evaluation_sha256": manifest_digest(
             {n: v for n, v in manifest.items() if n.startswith("src/chatcopilot/evals/")}
         ),

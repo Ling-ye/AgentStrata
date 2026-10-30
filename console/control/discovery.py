@@ -7,6 +7,8 @@
 from __future__ import annotations
 
 import functools
+import os
+from dataclasses import replace
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -16,8 +18,11 @@ from chatcopilot.plugins.service import observable_agents
 
 @functools.lru_cache(maxsize=1)
 def repo_root() -> Path:
-    """仓库根 = console/ 的上一级。控制台读取此处的 bots/ 与 deploy/ 作为源。"""
-    return Path(__file__).resolve().parents[2]
+    """Use the operator-selected application copy or this Console's source tree."""
+    root = Path(os.environ.get("CHATCOPILOT_SOURCE_ROOT", Path(__file__).resolve().parents[2])).expanduser().resolve(strict=True)
+    if not (root / "src/chatcopilot").is_dir() or not (root / "pyproject.toml").is_file():
+        raise ValueError("CHATCOPILOT_SOURCE_ROOT must identify an AgentStrata application source tree")
+    return root
 
 
 def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
@@ -73,13 +78,20 @@ def _parse_bot_yaml(path: Path) -> Optional[BotInstance]:
 
 
 def discover_instances(root: Optional[Path] = None) -> List[BotInstance]:
-    base = (root or repo_root()) / "bots"
+    from chatcopilot.core.application_installation import installation
+    repository = root or repo_root()
+    installed = installation(repository)
+    base = repository / "bots"
     out: List[BotInstance] = []
     if not base.is_dir():
         return out
-    for bot_yaml in sorted(base.glob("*/bot.yaml")):
+    paths = (repository / installed.bot_relative,) if installed else sorted(base.glob("*/bot.yaml"))
+    for bot_yaml in paths:
         inst = _parse_bot_yaml(bot_yaml)
         if inst is not None:
+            if installed:
+                locations = installed.deployment_overrides()
+                inst = replace(inst, **{key: locations[key] for key in ("wsl_home", "workspace_root", "log_dir", "env_file")})
             out.append(inst)
     return out
 

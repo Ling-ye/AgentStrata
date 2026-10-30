@@ -1,20 +1,24 @@
 ---
 id: application-harness-framework
 type: architecture
-status: implemented
+status: accepted
 created: 2026-10-26
 ---
 
-# AgentStrata 可定制 Agent 运行系统与自有能力优化
+# AgentStrata 定制、运行与交付及自有能力优化
 
 ## Summary
 
-AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以自有四层架构承载应用接入、会话、上下文和 Agent 能力。
+AgentStrata 是面向外部应用的 Agent 定制、运行与交付系统。它提供自有基础 Agent 和运行底座，
+通过 Harness 根据应用需求，对 Agent 能力及接入组件进行针对性开发与验证，最终交付能够在
+目标环境运行的特化 Agent，以及配套的插件、适配器或其他接入组件。不同应用共享基础能力，
+保留各自的特化配置与必要实现。自有四层架构继续承载应用接入、会话、上下文和 Agent 能力。
 项目自行实现能力装配、上下文组织、工具使用，以及基于 LangGraph 的执行循环与协作策略；
 这些自有实现都是 Harness 的主要优化对象。Harness 根据需求开发适配、能力模块和运行策略，
 通过 Eval 与独立验收验证改进。Codex 通过公开接口作为可选执行器接入，近期继续作为 Harness 的唯一开发 worker。
 
-本规格是唯一主计划。`implemented` 表示下述 M0—M7 的实施与约定范围内验收已完成，不表示所有平台和生产环境均已交付。
+本规格是唯一主计划。M0—M7 已完成其实施与约定范围内验收，不表示所有平台和生产环境均已交付。
+新增 M8 独立应用交付与本机改进在完成对应验收前保持未完成，不改写此前阶段的证据。
 当前已完成 M0 定义与文档、M1 应用与 Agent 配置分离、M1.1 双 runtime 收敛、M2 外部桥接基线、M3 Agent 与桥接评测、M4 Harness 改进闭环、M5 已验收版本启用与撤回、M6 Console 改进工作台及 M7 真实闭环。A 的能力盘点与隔离基线、B 的能力发现候选、C 的真实 worker 开发与独立接受，以及 D 本次失败停止策略修复均已留证；精确候选已在隔离实例启用并撤回。
 实现完成与运行实例部署分别验收。当前事实由[架构总览](../../docs/reference/architecture.md)及领域正文维护，
 计划接口在实现前不进入快速开始。自有 Agent 的代码改进及后续验收沿本规格的 A—D 路线推进，已实现机制同步到对应领域正文。
@@ -35,7 +39,8 @@ Live2D 与 QQ 从桥接基线阶段共同参与验证，每个应用默认拥有
 
 | 概念 | 定义与边界 |
 | --- | --- |
-| Agent 运行系统 | Channel → Gateway → Application → Agent 四层整体，是唯一产品主体；Harness、Eval 与 Console 为其提供改进、验证与控制能力 |
+| Agent 运行系统 | Channel → Gateway → Application → Agent 四层整体，构成业务运行底座；Harness、Eval 与 Console 为应用提供通用改进、验证与控制能力 |
+| 独立 Agent 应用 | 面向具体外部应用的特化 Agent 及必要接入组件，拥有明确版本、可独立部署，并可在本机继续优化 |
 | AgentRuntime | Agent 层内现有的统一执行入口与共享能力装配，保留代码中的含义；不是四层整体的新类名 |
 | 自有 LangGraph Agent | 项目编写的图、状态转换、上下文、工具执行与协作策略，属于产品能力，也是 Harness 的主要优化对象 |
 | Codex | 通过公开接口接入的可选业务执行器，以及近期唯一 Harness 开发 worker；宿主能力可扩展，不承诺修改未开放的内部行为 |
@@ -276,7 +281,7 @@ Target 的局部 ID（例如 `codex`）不能充当全局主键，需连同 Eval
 | 版本与验证 | [CandidateRef、VerificationPlan、VerificationResult](../../src/chatcopilot/harness/models.py) | M3—M5 复用快照、模型/runtime 事实和独立验收身份，运行清单绑定实际加载组件 |
 | Evaluation、Target、Case、Trial | [现有评测契约](../../src/chatcopilot/evals/models.py)、[版本快照](../../src/chatcopilot/evals/version_snapshot.py) | M3 复用生命周期与定义快照，加入桥接 Suite；版本身份存于 `config_snapshot.version_snapshot`，不新增表 |
 | 候选接受 | [AcceptedCandidate](../../src/chatcopilot/harness/agent_types.py) | 沿用独立验收签发，按目标版本清单补齐绑定 |
-| 版本启用 | [启用记录](../../src/chatcopilot/plugins/activation_repository.py)、[实例运维](../../docs/guides/instances.md) | M5 已实现源码版本准备、明确启用、运行核对、撤回与中断对账；既有安装与数据位置保持独立 |
+| 版本启用 | [启用记录](../../src/chatcopilot/deployment/activation_repository.py)、[实例运维](../../docs/guides/instances.md) | M5 已实现源码版本准备、明确启用、运行核对、撤回与中断对账；既有安装与数据位置保持独立 |
 
 引用可变配置文件不等于冻结了配置。比较与接受需绑定当时的内容摘要；
 代码、runtime、配置或桥接产物改变后，旧回执不能直接用于新候选。
@@ -510,6 +515,14 @@ M5 沿现有实例与插件管理准备独立候选，等待可切换状态，�
   不据此声明真实浏览器渲染、语音硬件、真实 QQ 送达或生产实例切换通过。环境失败、旧候选和未获接受的尝试均保留原记录。
   开发执行器以实际模型回合确认就绪，账户或模型目录查询不能替代；模型对照、外部执行、正式接受和实例启用分别留证。
 
+#### M8 独立应用交付与本机改进
+
+- 沿用现有运行、Console、Harness、Evaluation 和 M5 机制，调整开发仓库依赖、应用版本归属和安装更新入口。
+- 首个交付使用 NapCat/OneBot；完整源码副本及内容清单支持独立安装，应用使用本机配置与业务数据。
+- 本机对话反馈绑定实际应用版本，在隔离 worktree 中开发，经过原验收流程后显式启用或撤回。
+- 验收覆盖无原 checkout 的安装、Console/Eval 使用、版本正确性和反馈更新；真实模型与 QQ 往返另行留证。
+- 设计边界见[独立应用规格](../standalone-agent-applications/spec.md)，当前机制由[交付正文](../../docs/reference/delivery.md#独立应用交付与本机改进)维护。
+
 ### 自有 Agent 能力优化路线
 
 本路线在现有主计划内细化 M7 与后续优化，不另建项目路线图或任务状态机。
@@ -615,7 +628,7 @@ M1 已有的应用/profile 拆分工具保持原职责。旧优化任务只读�
 
 ## Acceptance
 
-- 项目介绍以自有四层 Agent 运行系统为唯一产品主体，明确 AgentRuntime、自有 LangGraph Agent、Codex 与 Harness/Eval 的边界。
+- 项目介绍覆盖 Agent 定制、运行与交付，以四层系统承载业务运行，明确 AgentRuntime、自有 LangGraph Agent、Codex 与 Harness/Eval 的边界。
 - 自有能力装配、上下文、工具、LangGraph 循环与协作策略都是正式优化对象；优先顺序不排除循环修改。
 - Native 不再作为有效执行路径，自有子 Agent、默认模板和有效评测目标完成收敛。
 - 应用与 Agent 配置独立，日常运行不依赖 Harness，两个 runtime 的优化边界清楚。

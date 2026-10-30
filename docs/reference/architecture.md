@@ -1,6 +1,6 @@
 # 架构总览
 
-AgentStrata 是面向外部应用的可定制 Agent 运行系统，以自有四层架构承载应用接入、会话、上下文与 Agent 能力。
+AgentStrata 是面向外部应用的 Agent 定制、运行与交付系统，以自有四层运行底座承载应用接入、会话、上下文与 Agent 能力。
 能力装配、上下文、工具使用及基于 LangGraph 的循环和协作策略由项目实现，都是 Harness 的主要优化对象。
 Harness 根据需求开发适配、能力模块和运行策略，Eval 与独立验收验证改进；Codex 通过公开接口接入。
 本页维护当前实现与目标架构的关系，具体运行规则由对应领域正文维护。
@@ -13,7 +13,8 @@ Harness 根据需求开发适配、能力模块和运行策略，Eval 与独立�
 
 | 概念 | 当前含义 |
 | --- | --- |
-| Agent 运行系统 | Channel → Gateway → Application → Agent 四层整体，是唯一产品主体 |
+| Agent 运行系统 | Channel → Gateway → Application → Agent 四层整体，承载独立应用的业务运行 |
+| 独立 Agent 应用 | 共享基础能力与应用专属配置、必要实现形成的交付物，可使用通用 Console，并在本机继续开发与验收 |
 | AgentRuntime | Agent 层的统一执行入口与共享能力装配，沿用现有类与执行契约，不代表四层整体 |
 | 自有 LangGraph Agent | 项目编写的图、状态转换、上下文、工具与协作策略；LangGraph 库提供图执行基础设施 |
 | Codex | 可选业务执行器及近期唯一 Harness 开发 worker，二者分别绑定模型和运行环境；未开放的内部行为不属于可承诺修改范围 |
@@ -35,6 +36,8 @@ LangGraph 是深度运行策略定制主线。优化先定位能力、上下文�
 配置拆分和显式迁移已实现，字段归属见[配置正文](configuration.md#配置归属与文件引用)。
 改进工作台复用原需求与版本控制入口；仓库调查、适配开发与受管 fork 按具体授权范围展开。
 各阶段完成后再更新相关领域正文、规格和操作指南。应用正常运行独立于 Harness 的优化任务。
+独立交付保留现有源码布局、部署工具和任务图，仅为安装副本补充来源与版本绑定。
+具体机制由[交付正文](delivery.md#独立应用交付与本机改进)维护。
 
 ## 自我优化与模块分工
 
@@ -77,6 +80,18 @@ Native 已退出有效执行路径，自有子 Agent 统一使用 LangGraph，�
 
 四层描述运行职责；六层按基础到上层排列，使用方依赖矩阵允许的基础层。实例宿主负责装配与生命周期，Harness、Evaluation 和 Console 位于消息链之外。
 
+### 实例宿主与部署归属
+
+`host` 组织整个实例及具体渠道的装配，调用 Application 的 Agent 组件装配入口；Gateway
+继续负责消息、准入、run 与交付。运行各层不反向依赖 Host，Host 不引入控制台、Harness 或 Eval。
+
+`deployment` 拥有应用交付、安装和通用版本事务，共用数据类型归 Contracts。Plugins 保留
+外部软件清单、准备与插件目标解析，通过注入锁和归属检查接入部署机制。Deployment 不导入
+Plugins 或 Harness；Harness 保留接受与 Git 发布，入口 CLI 组合其公开操作。
+
+通用运维实现位于 `deploy/wsl`，服务模板位于 `deploy/systemd`；Console 调用这些部署入口。
+目录迁移约束见[宿主与部署规格](../../specs/runtime-deployment-layout/spec.md)。
+
 ## 按修改目标进入
 
 | 目标 | 领域正文 |
@@ -101,7 +116,7 @@ Native 已退出有效执行路径，自有子 Agent 统一使用 LangGraph，�
 
 - [scripts/check_architecture.py](../../scripts/check_architecture.py)
 - [src/chatcopilot/contracts](../../src/chatcopilot/contracts)
-- [src/chatcopilot/gateway/runtime.py](../../src/chatcopilot/gateway/runtime.py)
+- [src/chatcopilot/host/runtime.py](../../src/chatcopilot/host/runtime.py)
 - [执行路由注册](../../src/chatcopilot/agent/runtimes/registry.py)、[模型路由契约](../../src/chatcopilot/contracts/model_runtime.py)
 - [AgentRuntime](../../src/chatcopilot/agent/runtime.py)、[能力装配](../../src/chatcopilot/agent/capabilities/assembly.py)、[自有 LangGraph 图](../../src/chatcopilot/agent/langgraph_session.py)、[TurnOps](../../src/chatcopilot/agent/turn.py)
 - [Harness 默认装配](../../src/chatcopilot/harness/assembly.py)

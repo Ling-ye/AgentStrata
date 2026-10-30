@@ -155,7 +155,7 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         "fi\n",
     )
     _write_executable(
-        source / "console/scripts/ctl.sh",
+        source / "deploy/wsl/instance_control.sh",
         "#!/usr/bin/env bash\n"
         'echo restart >> "$STAGE_LOG"\n'
         'if [ "${FAIL_STAGE:-}" = "restart" ]; then\n'
@@ -164,7 +164,7 @@ def _make_update_fixture(tmp_path: Path) -> tuple[Path, Path, Path, Path]:
         "fi\n",
     )
     _write_executable(
-        source / "console/systemd/register.sh",
+        source / "deploy/wsl/register_instance.sh",
         "#!/usr/bin/env bash\n"
         'echo register >> "$STAGE_LOG"\n'
         "exit 0\n",
@@ -855,7 +855,7 @@ def test_register_script_fails_when_daemon_reload_fails(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        ["bash", "console/systemd/register.sh", "lingye-copilot-qq"],
+        ["bash", "deploy/wsl/register_instance.sh", "lingye-copilot-qq"],
         capture_output=True,
         text=True,
         env={
@@ -885,7 +885,7 @@ def test_register_script_fails_when_unit_copy_fails(tmp_path: Path) -> None:
     )
 
     result = subprocess.run(
-        ["bash", "console/systemd/register.sh", "lingye-copilot-qq"],
+        ["bash", "deploy/wsl/register_instance.sh", "lingye-copilot-qq"],
         capture_output=True,
         text=True,
         env={
@@ -924,7 +924,7 @@ def test_register_script_fails_when_worker_env_generation_fails(tmp_path: Path) 
     )
 
     result = subprocess.run(
-        ["bash", "console/systemd/register.sh", "lingye-copilot-qq"],
+        ["bash", "deploy/wsl/register_instance.sh", "lingye-copilot-qq"],
         capture_output=True,
         text=True,
         env={

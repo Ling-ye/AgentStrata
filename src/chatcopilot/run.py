@@ -43,7 +43,7 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def _run_gateway(runtime: BotRuntimeContext) -> int:
-    from chatcopilot.gateway.runtime import main as gateway_main
+    from chatcopilot.host.runtime import main as gateway_main
 
     return gateway_main(
         runtime,

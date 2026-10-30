@@ -24,14 +24,16 @@ def _registration_fixture(
     requires_code_worker: bool,
 ) -> tuple[Path, Path, Path, Path]:
     repository = tmp_path / "repository"
-    systemd_dir = repository / "console" / "systemd"
+    systemd_dir = repository / "deploy" / "systemd"
     systemd_dir.mkdir(parents=True)
     for name in (
-        "register.sh",
         "chatcopilot@.service",
         "chatcopilot-code-worker@.service",
     ):
-        shutil.copy2(REPO_ROOT / "console" / "systemd" / name, systemd_dir / name)
+        shutil.copy2(REPO_ROOT / "deploy" / "systemd" / name, systemd_dir / name)
+    entry = repository / "deploy/wsl/register_instance.sh"
+    entry.parent.mkdir(parents=True)
+    shutil.copy2(REPO_ROOT / "deploy/wsl/register_instance.sh", entry)
 
     packs = "  - dev.code_tasks\n" if requires_code_worker else "  - memory.chat\n"
     bot_dir = repository / "bots" / "starter"
@@ -86,7 +88,7 @@ def _run_register(
     return subprocess.run(
         [
             "bash",
-            str(repository / "console" / "systemd" / "register.sh"),
+            str(repository / "deploy/wsl/register_instance.sh"),
             "--enable",
             "starter",
         ],
@@ -181,8 +183,8 @@ def test_deploy_all_delegates_the_complete_bot_lifecycle_once() -> None:
     script = (REPO_ROOT / "deploy/wsl/deploy_all.sh").read_text(encoding="utf-8")
 
     assert 'update_instance.sh" --instance "$bot" --enable' in script
-    assert 'console/systemd/register.sh" --enable "$bot"' not in script
-    assert 'console/scripts/ctl.sh" start "$bot"' not in script
+    assert 'deploy/wsl/register_instance.sh" --enable "$bot"' not in script
+    assert 'deploy/wsl/instance_control.sh" start "$bot"' not in script
 
 
 def test_status_marks_worker_not_applicable_without_code_task_pack() -> None:

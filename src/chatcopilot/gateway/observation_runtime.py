@@ -7,6 +7,7 @@ import copy
 from importlib.metadata import PackageNotFoundError, version
 import logging
 import os
+from pathlib import Path
 import threading
 import time
 import traceback
@@ -56,6 +57,16 @@ class ObservationRecorder:
         self.store = ObservationStore(state_store.root, writable=True)
         self.configuration = configuration or {"layers": [], "entities": []}
         self.snapshot_provider = snapshot_provider
+        from chatcopilot.core.application_installation import running_application_identity
+        control = os.environ.get("AGENTSTRATA_RELEASE_CONTROL")
+        self.application_version = None
+        try:
+            self.application_version = running_application_identity(
+                Path(__file__).resolve().parents[3], Path(control) if control else None)
+        except (OSError, ValueError, KeyError, TypeError):
+            _LOG.warning("Application version evidence unavailable; task observations remain enabled")
+        if self.application_version:
+            self.configuration["application_version"] = self.application_version
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._handler = _RunLogHandler(self)
@@ -110,6 +121,8 @@ class ObservationRecorder:
                               "ORDER BY observed_at DESC,decision_id DESC LIMIT 101", ())
             if self.snapshot_provider:
                 self.configuration = self.snapshot_provider()
+            if self.application_version:
+                self.configuration["application_version"] = self.application_version
             for entity in self.configuration.get("entities", []):
                 if entity["id"] == "service:instance":
                     entity["runtime"] = {"version": self.version, "ready_at": self.ready_at, "pid": os.getpid()}

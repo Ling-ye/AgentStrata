@@ -20,7 +20,7 @@ from chatcopilot.core.release_identity import configuration_manifest, model_iden
 from chatcopilot.core.release_runtime import validate_selection
 from chatcopilot.core.settings import load_local_env_values
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, verify_copy
-from chatcopilot.plugins.activation_repository import ActivationRepository
+from chatcopilot.deployment.activation_repository import ActivationRepository
 
 PENDING = frozenset({"draining", "stopping", "switching", "starting", "restoring", "recovery_required"})
 FACTS = ("version", "components", "configuration", "model", "environment", "gate_root")

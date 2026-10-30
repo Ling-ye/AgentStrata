@@ -149,7 +149,7 @@ class RoleWorkflow:
         governance = original.get("kind") == "code_health"
         # Robot-task evidence is ingested from Gateway observations. The legacy
         # ACP adapter is not the execution entrypoint for this source kind.
-        runtime_entrypoint = "src/chatcopilot/gateway/runtime.py" if not governance else ""
+        runtime_entrypoint = "src/chatcopilot/host/runtime.py" if not governance else ""
         plan = self._read("plan")
         route = retry_role(previous["stage"], previous["code"]) if previous else Role.PLAN
         rediagnosis = bool(previous and previous.get("rediagnosis"))

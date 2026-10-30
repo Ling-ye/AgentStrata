@@ -38,23 +38,23 @@ from chatcopilot.core.access import get_admins
 from chatcopilot.core.config import load_config
 from chatcopilot.schedules.runtime import ScheduleRuntime
 from chatcopilot.schedules.service import ScheduleService
-from .scheduled import GatewayScheduleExecutor
+from chatcopilot.gateway.scheduled import GatewayScheduleExecutor
 
-from .observation_runtime import ObservationRecorder, runtime_configuration
+from chatcopilot.gateway.observation_runtime import ObservationRecorder, runtime_configuration
 from chatcopilot.core.inspection import plain, fingerprint
-from .application import GatewaySessionService
-from .channels import ChannelRuntimeHealth, ChannelRuntimeManager
+from chatcopilot.gateway.application import GatewaySessionService
+from chatcopilot.gateway.channels import ChannelRuntimeHealth, ChannelRuntimeManager
 from .channel_assembly import assemble_channel
-from .coordinator import GatewayTurnCoordinator
-from .events import GatewayEventPublisher, GatewaySessionEventVisibility
-from .protocol import (
+from chatcopilot.gateway.coordinator import GatewayTurnCoordinator
+from chatcopilot.gateway.events import GatewayEventPublisher, GatewaySessionEventVisibility
+from chatcopilot.gateway.protocol import (
     GatewayCredentialBinding,
     MUTATION_METHODS,
     StaticGatewayCredentialAuthority,
 )
 from chatcopilot.channels.qq_onebot.driver import ConnectionFactory
 from chatcopilot.contracts.resources import ResourceFetcherPort
-from .server import (
+from chatcopilot.gateway.server import (
     GatewayClientContext,
     GatewayDispatchError,
     GatewayMutationReconciliation,
@@ -62,7 +62,7 @@ from .server import (
     GatewayServerHealth,
     GatewayWebSocketServer,
 )
-from .state_store import (
+from chatcopilot.gateway.state_store import (
     GatewayInstanceLease,
     GatewayInstanceLeaseUnavailable,
     GatewayStateError,
@@ -648,7 +648,7 @@ def build_gateway_runtime_host(
 
     # Imported here so the composition root cannot be loaded with an incomplete
     # application dispatcher during source-level tooling or legacy ACP startup.
-    from .dispatcher import GatewayApplicationDispatcher
+    from chatcopilot.gateway.dispatcher import GatewayApplicationDispatcher
 
     config = parse_gateway_runtime_config(runtime, environ)
     values = os.environ if environ is None else environ

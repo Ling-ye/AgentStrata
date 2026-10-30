@@ -59,7 +59,7 @@ def test_host_advances_without_repeated_main_calls(repair):
     assert len(store.attempts(ident)) == 2
     assert result["source_index_ref"]["kind"] == "source_index"
     plan_input = next(evidence for role, evidence in roles.evidence if role == Role.PLAN)
-    assert plan_input["source"]["runtime_entrypoint"] == "src/chatcopilot/gateway/runtime.py"
+    assert plan_input["source"]["runtime_entrypoint"] == "src/chatcopilot/host/runtime.py"
     assert store.attempts(ident)[0]["failure_brief"]["kind"] == "failure_brief"
     retry = [evidence for role, evidence in roles.evidence if role == Role.CODING][1]
     assert retry["failure_brief"]["recommended_role"] == "coding"

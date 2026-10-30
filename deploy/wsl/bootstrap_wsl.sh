@@ -210,5 +210,5 @@ ok "bootstrap 完成"
 echo
 printf "%s下一步：%s\n" "$C_BOLD" "$C_END"
 echo "  推荐在运维控制台（http://localhost:8910）点「启动」拉起本实例（systemd 托管，开机自启）。"
-echo "  等价命令：bash console/scripts/ctl.sh start <instance-id>"
+echo "  等价命令：bash deploy/wsl/instance_control.sh start <instance-id>"
 echo "  健康检查：bash $DEPLOY_DIR/status.sh"

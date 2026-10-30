@@ -27,6 +27,7 @@ from chatcopilot.evals.application.bots import (
     EvaluationBotRef,
     EvaluationBotResolver,
     bot_env,
+    bot_relative_path,
     bot_spec_path,
     evaluation_subprocess_env,
     temporary_eval_env,
@@ -529,6 +530,13 @@ class EvaluationApplication:
         expected_conditions: Mapping[str, Any] | None = None,
     ) -> dict[str, Any]:
         bot = self._resolve_bot(bot_id)
+        if code_source is None and bot.source_root is not None:
+            from chatcopilot.core.application_installation import application_source
+            from chatcopilot.core.source_snapshot import manifest_digest
+            selected = application_source(self.repository_root, bot_id)
+            if selected is None or selected[0] != bot.source_root:
+                raise ValueError("Application version changed before Evaluation preparation")
+            code_source = {"path": str(selected[0]), "sha256": manifest_digest(selected[1])}
         self._expire_trace_archives()
         effective_env = evaluation_subprocess_env(bot_env(bot, self.repository_root))
         from chatcopilot.core.model_settings import read_settings
@@ -654,7 +662,7 @@ class EvaluationApplication:
                 "start_request_fingerprint": request_fingerprint,
                 **({"model_profile": model_profile} if model_profile else {}),
                 "bot_spec": str(
-                    bot_spec_path(bot, self.repository_root).relative_to(self.repository_root)
+                    bot_relative_path(bot, self.repository_root)
                 ),
                 "bot_spec_sha256": bot_spec_digest,
                 "created_at": created_at,

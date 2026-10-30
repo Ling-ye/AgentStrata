@@ -31,6 +31,24 @@ def test_architecture_graph_detects_strongly_connected_components(checker) -> No
     assert components == (("a", "b", "c"),)
 
 
+@pytest.mark.parametrize("source,target", [
+    ("gateway", "host"), ("application", "host"), ("agent", "host"),
+    ("core", "deployment"), ("gateway", "deployment"),
+    ("deployment", "plugins"), ("deployment", "harness"), ("host", "harness"),
+])
+def test_host_and_deployment_domains_reject_reverse_dependencies(checker, tmp_path, monkeypatch, source, target):
+    package = tmp_path / "src/chatcopilot"
+    for name in (source, target):
+        (package / name).mkdir(parents=True, exist_ok=True)
+        (package / name / "__init__.py").write_text("")
+    path = package / source / "probe.py"
+    path.write_text(f"import chatcopilot.{target}.entry\n")
+    (package / target / "entry.py").write_text("")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", package)
+    assert path.relative_to(tmp_path).as_posix() in checker._graph_checks()["imports_follow_declared_area_dag"]
+
+
 @pytest.mark.parametrize("name,source", [
     ("control_types", "from .store import HarnessStore\n"),
     ("control_types", "import os\n"),
@@ -303,15 +321,15 @@ def runtime_architecture_workspace(tmp_path: Path, monkeypatch, checker):
 
 
 @pytest.mark.parametrize(("source_area", "target", "rule"), (
-    ("channels", "gateway.runtime", "channels_do_not_own_domain_authority"),
+    ("channels", "gateway.coordinator", "channels_do_not_own_domain_authority"),
     ("channels", "application.actor_runtime", "channels_do_not_own_domain_authority"),
     ("channels", "authorization.policy", "channels_do_not_own_domain_authority"),
     ("application", "channels.qq_onebot.codec", "application_has_no_protocol_or_transport_implementation"),
-    ("application", "gateway.runtime", "application_has_no_protocol_or_transport_implementation"),
+    ("application", "gateway.coordinator", "application_has_no_protocol_or_transport_implementation"),
     ("application", "protocols.acp.server", "application_has_no_protocol_or_transport_implementation"),
     ("application", "middleware.acp.server", "application_has_no_protocol_or_transport_implementation"),
     ("agent", "application.actor_runtime", "agent_no_upper_layers"),
-    ("agent", "gateway.runtime", "agent_no_upper_layers"),
+    ("agent", "gateway.coordinator", "agent_no_upper_layers"),
     ("agent", "channels.qq_onebot.codec", "agent_no_upper_layers"),
     ("agent", "botspec.model", "agent_no_upper_layers"),
     ("agent", "platforms.qq.adapter", "agent_no_upper_layers"),
@@ -343,8 +361,8 @@ def test_four_layer_baseline_allows_supporting_systems_and_structured_ports(
         "channels/inbound.py": "from chatcopilot.contracts.gateway import CanonicalInboundEvent\n",
         "gateway/coordinator.py": "import chatcopilot.application.actor_runtime\nimport chatcopilot.channels.base\n",
         "application/actor_runtime.py": "import chatcopilot.agent.runtime\nfrom chatcopilot.contracts.resources import ResourceFetcherPort\n",
-        # The instance host remains outside message responsibilities even in this directory.
-        "gateway/runtime.py": "import chatcopilot.botspec.runtime\nimport chatcopilot.application.agent_runtime\nimport chatcopilot.channels.base\n",
+        # The instance host composes the runtime without becoming a message layer.
+        "host/runtime.py": "import chatcopilot.botspec.runtime\nimport chatcopilot.application.agent_runtime\nimport chatcopilot.channels.base\n",
         "protocols/acp/server.py": "import chatcopilot.protocols.gateway_client\n",
         "protocols/gateway_client.py": "import chatcopilot.contracts.gateway_rpc\n",
         "evals/isolated.py": "import chatcopilot.agent.runtime\n",

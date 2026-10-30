@@ -5,8 +5,12 @@
 
 ## 项目定位
 
-AgentStrata 是面向外部应用的可定制 Agent 运行系统，Channel → Gateway → Application → Agent
-四层整体是产品主体。AgentRuntime 保留 Agent 层统一执行入口与共享能力装配的含义。
+AgentStrata 是面向外部应用的 Agent 定制、运行与交付系统，提供自有基础 Agent 与运行底座，
+通过 Harness 按应用需求开发和验证 Agent 及接入组件，交付可在目标环境运行的特化 Agent 应用。
+不同应用共享基础能力，保留各自的特化配置与必要实现。Channel → Gateway → Application → Agent
+四层定义运行职责；Harness、Eval 与 Console 是可复用的开发、验证与管理能力。
+`host` 拥有实例总装配，`deployment` 拥有通用安装与版本管理；Plugins 保留外部软件专属适配。
+AgentRuntime 保留 Agent 层统一执行入口与共享能力装配的含义。
 Live2D、QQ/NapCat 等通过 Channel、Gateway 客户端、工具接口或 MCP 接入。
 
 项目自行实现能力装配、上下文、工具使用、基于 LangGraph 的循环与协作策略，均为 Harness 的主要优化对象。
@@ -20,6 +24,8 @@ Eval 负责评测条件、执行、评分和证据；候选接受、源码交付
 
 接入优先复用现有协议，fork 与构建按需展开。已完成阶段和后续自有能力优化路线只由
 [主计划](specs/application-harness-framework/spec.md)维护，本次范围以用户任务为准，事实沿源码与领域正文核对。
+独立应用的交付、本机反馈与版本更新见[交付正文](docs/reference/delivery.md#独立应用交付与本机改进)；
+优先复用现有运行和验收机制，开发基线必须绑定目标应用实际版本。
 
 应用 `bot.yaml` 引用独立 Agent profile，运行层复用原类型化装配结果；旧内联配置须显式迁移，
 不在加载时回退或改写文件。字段归属与原有共享引用的含义见[配置](docs/reference/configuration.md#配置归属与文件引用)。

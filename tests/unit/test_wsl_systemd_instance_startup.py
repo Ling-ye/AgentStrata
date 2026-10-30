@@ -9,7 +9,7 @@ def _read(relative: str) -> str:
 
 
 def test_code_worker_unit_keeps_wsl_compatible_hardening() -> None:
-    unit = _read("console/systemd/chatcopilot-code-worker@.service")
+    unit = _read("deploy/systemd/chatcopilot-code-worker@.service")
 
     assert "-m chatcopilot.code_task_service" in unit
     assert "ProtectKernelLogs=" not in unit
@@ -28,7 +28,7 @@ def test_code_worker_unit_keeps_wsl_compatible_hardening() -> None:
 
 
 def test_bot_unit_runs_gateway_as_the_systemd_main_process() -> None:
-    unit = _read("console/systemd/chatcopilot@.service")
+    unit = _read("deploy/systemd/chatcopilot@.service")
 
     assert (
         "ExecStart=/usr/bin/env bash ${CCP_WSL_HOME}/deploy/wsl/start.sh "
@@ -39,7 +39,7 @@ def test_bot_unit_runs_gateway_as_the_systemd_main_process() -> None:
 
 
 def test_registration_accepts_exported_worker_values_and_pins_main_instance() -> None:
-    script = _read("console/systemd/register.sh")
+    script = _read("deploy/wsl/register_instance.sh")
 
     assert 'key = re.sub(r"^export\\s+", "", key)' in script
     assert 'echo "CHATCOPILOT_INSTANCE_ID=$iid"' in script

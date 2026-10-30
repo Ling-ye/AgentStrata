@@ -5,12 +5,9 @@ from importlib.metadata import version
 import json
 import os
 from pathlib import Path
-import platform
 import re
 import shutil
-import socket
 import subprocess
-import sys
 import time
 from urllib.request import urlopen
 
@@ -18,7 +15,9 @@ from chatcopilot.core.install_artifacts import (
     InstallError, dependency_environment, download, extract_archive, private_directory,
     run_install, sha256, verify_wheel,
 )
-from chatcopilot.plugins.types import PluginDefinition, ServiceDefinition
+from chatcopilot.plugins.types import PluginDefinition
+from chatcopilot.contracts.deployment import ServiceDefinition
+from chatcopilot.deployment import systemd
 from chatcopilot.project import PROJECT_REPOSITORY
 
 
@@ -27,9 +26,6 @@ UV_ARCHIVE_SHA256 = "68a509da24b06b4223a1c0175fb5eb5bc79342b76cbeff0cfe51ac3f5b1
 UV_BINARY_SHA256 = "b65f23a420c4acc96427efb30e5ed9bc0f7e25d2d712000f6ede77c1a0de5f46"
 
 
-def require_platform() -> None:
-    if sys.platform != "linux" or platform.machine() not in {"x86_64", "amd64"}:
-        raise InstallError("Managed software plugins currently support Linux/WSL x86_64")
 
 
 def release_artifacts(entry: PluginDefinition, cache: Path, local: Path | None) -> tuple[Path, Path, str]:
@@ -140,7 +136,7 @@ def _systemd_quote(value: str, *, executable_argument: bool = False) -> str:
     return json.dumps(value, ensure_ascii=False)
 
 
-class UserServices:
+class UserServices(systemd.UserSystemd):
     def __init__(self, directory: Path | None = None):
         self.directory = directory or Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "systemd/user"
 
@@ -148,13 +144,7 @@ class UserServices:
     def name(plugin_id: str, service: ServiceDefinition) -> str:
         return f"agentstrata-plugin-{plugin_id}-{service.name}.service"
 
-    def command(self, *args: str) -> subprocess.CompletedProcess:
-        return subprocess.run(["systemctl", "--user", *args], capture_output=True, text=True, check=False, timeout=60)
 
-    def preflight(self) -> None:
-        result = self.command("show-environment")
-        if result.returncode:
-            raise InstallError("systemd user manager is unavailable; enable WSL/Linux user services first")
 
     def active(self, plugin_id: str, service: ServiceDefinition) -> bool:
         return self.command("is-active", "--quiet", self.name(plugin_id, service)).returncode == 0
@@ -214,13 +204,13 @@ class UserServices:
             for service in services:
                 if self.active(plugin_id, service):
                     continue
-                require_free_port(service.port)
+                systemd.require_free_port(service.port)
                 name = self.name(plugin_id, service)
                 started.append(service)
                 if self.command("start", name).returncode:
                     raise InstallError(f"Service failed to start: {name}")
                 deadline = time.monotonic() + 60
-                while not self._ready(service):
+                while not self.ready(service):
                     if self.command("is-failed", "--quiet", name).returncode == 0 or time.monotonic() >= deadline:
                         raise InstallError(f"Service did not become ready: {name}; inspect journalctl --user -u {name}")
                     time.sleep(0.25)
@@ -231,16 +221,6 @@ class UserServices:
                 raise InstallError(f"{error}; cleanup also failed: {cleanup}") from None
             raise
 
-    @staticmethod
-    def _ready(service: ServiceDefinition) -> bool:
-        try:
-            if service.ready_url:
-                with urlopen(service.ready_url, timeout=2) as result:
-                    return result.status == 200
-            with socket.create_connection(("127.0.0.1", service.port), timeout=1):
-                return True
-        except OSError:
-            return False
 
     def stop(self, plugin_id: str, services: list[ServiceDefinition], root: Path) -> None:
         self._owned(plugin_id, services, root, missing_ok=True)
@@ -264,17 +244,6 @@ class UserServices:
             raise InstallError("systemd daemon-reload failed")
 
 
-def require_free_port(port: int) -> None:
-    if type(port) is not int or not 1 <= port <= 65535:
-        raise InstallError("Port must be between 1 and 65535")
-    try:
-        with socket.socket() as probe:
-            # A stopped HTTP service can leave accepted connections in TIME_WAIT.
-            # Match the servers' reuse semantics; a live listener still rejects bind.
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind(("127.0.0.1", port))
-    except OSError:
-        raise InstallError(f"Loopback port {port} is occupied; select another port explicitly") from None
 
 
 def create_manager(root: Path):

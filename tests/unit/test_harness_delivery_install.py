@@ -19,10 +19,10 @@ TIMER = "agentstrata-harness-delivery.timer"
 @pytest.mark.parametrize("directory", ["repository", "repository with spaces"])
 def test_rendered_delivery_units_pass_systemd_verification(tmp_path, directory):
     repository = tmp_path / directory
-    templates = repository / "console/systemd"
+    templates = repository / "deploy/systemd"
     templates.mkdir(parents=True)
     for name in (SERVICE, TIMER):
-        shutil.copyfile(ROOT / "console/systemd" / name, templates / name)
+        shutil.copyfile(ROOT / "deploy/systemd" / name, templates / name)
     runtime = tmp_path / "runtime"
     runtime.mkdir(mode=0o700)
     config = tmp_path / "config with spaces" / "harness.env"

@@ -31,7 +31,7 @@ from chatcopilot.evals.isolated_executor import _isolated_subagents
 from chatcopilot.evals.models import EvalCase, TrialObservation
 from chatcopilot.evals.trial_capture import execution_phase, record_turn
 from chatcopilot.gateway.observation_queries import events as observation_events
-from chatcopilot.gateway.runtime import build_gateway_runtime_host
+from chatcopilot.host.runtime import build_gateway_runtime_host
 from chatcopilot.gateway.coordinator import GatewayTurnCoordinatorError
 from chatcopilot.tool_packs.catalog import resolve_tool_modules
 

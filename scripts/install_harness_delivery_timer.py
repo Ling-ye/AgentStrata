@@ -20,7 +20,7 @@ def main() -> int:
         raise ValueError("systemd paths contain unsupported characters")
     directory = Path.home() / ".config/systemd/user"
     for name in ("agentstrata-harness-delivery.service", "agentstrata-harness-delivery.timer"):
-        text = (repo / "console/systemd" / name).read_text().replace("@@REPO@@", str(repo)).replace("@@PYTHON@@", str(python))
+        text = (repo / "deploy/systemd" / name).read_text().replace("@@REPO@@", str(repo)).replace("@@PYTHON@@", str(python))
         config = os.environ.get("CHATCOPILOT_HARNESS_ENV")
         if name.endswith(".service") and config:
             config_path = str(Path(config).expanduser().absolute())

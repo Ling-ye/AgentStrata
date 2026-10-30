@@ -30,6 +30,14 @@ def deployment_environment(spec, local_env: Mapping[str, str], *, source_root: P
     )
     log_dir = expand_deploy_path(deploy.log_dir) or str(home / "chatcopilot-logs" / instance_id)
     env_file = expand_deploy_path(deploy.env_file) or str(home / f".chatcopilot-{instance_id}.env")
+    from chatcopilot.core.application_installation import installation
+    installed = installation(source_root)
+    if installed:
+        if instance_id != installed.bot_id:
+            raise ValueError("Deployment targets another installed application")
+        locations = installed.deployment_overrides()
+        wsl_home, workspace_root, log_dir, env_file = (
+            locations[name] for name in ("wsl_home", "workspace_root", "log_dir", "env_file"))
     qq_gateway = spec.gateway is not None
     cc_config_dir = ""
     if not qq_gateway:

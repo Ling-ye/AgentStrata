@@ -11,7 +11,8 @@ from chatcopilot.core.install_artifacts import InstallError
 from chatcopilot.core.model_settings import ModelSettingsError, read_settings, resolve_binding, settings_path
 from chatcopilot.plugins.catalog import PLUGINS, default_root
 from chatcopilot.plugins.repository import InstallRepository
-from chatcopilot.plugins.runtime import create_manager, require_platform
+from chatcopilot.deployment.systemd import require_platform
+from chatcopilot.plugins.runtime import create_manager
 
 
 def main(argv: list[str] | None = None) -> int:

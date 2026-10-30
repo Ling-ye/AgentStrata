@@ -12,8 +12,8 @@ from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.contracts.identity import TurnIdentity
 from chatcopilot.core.config import ChatConfig
 from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
-from chatcopilot.gateway import runtime as runtime_module
-from chatcopilot.gateway import channel_assembly
+from chatcopilot.host import runtime as runtime_module
+from chatcopilot.host import channel_assembly
 from test_application_actor_runtime import _runtime, _FakeAgentRuntime, _principal
 from test_gateway_runtime_host import _environment, _FakeServer
 from test_image_delivery_fixture import PNG

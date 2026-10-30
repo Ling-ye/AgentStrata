@@ -4,6 +4,10 @@
 
 ## 使用约定
 
+通用实例运维实现位于 `deploy/wsl`，systemd 模板位于 `deploy/systemd`。
+本页已有的 `console/scripts/ctl.sh` 与 `console/systemd/register.sh` 是保留的公开命令入口，
+分别调用 `deploy/wsl/instance_control.sh` 和 `deploy/wsl/register_instance.sh`；服务名和配置位置不变。
+
 除标明 PowerShell 的片段外，命令都在 Linux/WSL 的 **AgentStrata 源仓根目录**
 执行。下文的 `<id>` 是 BotSpec 的实例 ID，例如 `lingye-copilot-qq`。
 
@@ -64,6 +68,59 @@ bootstrap。命令失败会停止后续阶段，不提供自动回滚。首次�
 ```bash
 bash deploy/wsl/update_instance.sh --instance <id> --enable
 ```
+
+## 独立应用交付与本机改进
+
+独立交付沿用 Linux/WSL、NapCat/OneBot 与现有 Console/Harness/Eval。首期保留完整源码和部署工具，
+不要求接收方保留开发者仓库或任务目录。源码安装、服务就绪、真实模型和 QQ 往返分别确认；
+版本与权限边界见[交付正文](../reference/delivery.md#独立应用交付与本机改进)。
+
+维护者从具有完整接受和版本证据的任务导出：
+
+```bash
+agentstrata harness export-delivery repair-<task-id> --output /path/to/application-delivery
+agentstrata app inspect /path/to/application-delivery
+```
+
+需要选择控制仓库或 Harness 记录目录时，将 `--repository-root` 和 `--root` 放在 `harness`
+子命令之后、`export-delivery` 之前。没有完整版本事实的旧回执不能导出，需要重新验收。
+交付目录包括公开源码、安装入口和内容清单；用户的模型凭据、QQ 登录状态、会话与记忆不随包转移。
+
+接收方使用全新目录安装。入口沿用锁定运行环境安装脚本，首次需要联网获取依赖；不注册或启动机器人：
+
+```bash
+bash /path/to/application-delivery/install.sh --root "$HOME/AgentStrata-assistant"
+```
+
+安装结果 `needs_configuration` 表示运行依赖已准备，仍需按包内 BotSpec 与对应的 `local.env.example`
+配置 `bots/<应用 id>/local.env`，包括实际模型绑定、NapCat OneBot 地址与认证、QQ 身份及部署对应源码。
+凭据留在本机私有环境；NapCat 登录与连接准备沿用 [QQ 运维](qq.md)，不能把模板值当作真实配置。
+已有 `agentstrata` 命令时也可直接执行 `app install <交付目录> --root <安装目录>`；
+`--source-only` 只安装源码，适用于离线审查或已有依赖准备流程。
+
+配置完成后，在安装副本中预览并启动；`--with-console` 复用现有 Console 与 Evaluation 安装流程：
+
+```bash
+APP_ROOT="$HOME/AgentStrata-assistant"
+"$APP_ROOT/.venv/bin/agentstrata" app setup --root "$APP_ROOT" --dry-run
+"$APP_ROOT/.venv/bin/agentstrata" app setup --root "$APP_ROOT" --with-console
+"$APP_ROOT/.venv/bin/agentstrata" app status --root "$APP_ROOT"
+```
+
+在 Console 的机器人任务详情选择实际对话，补充问题或期望行为，使用原有 Harness 入口。
+开发 worker 和 Eval 评分模型仍按各自用途配置；不需要为独立应用反馈配置 GitHub 交付凭据。
+运行记录绑定具体应用版本，历史版本不一致时先在当前版本复测。
+
+验收通过后，可以在 Console 使用原版本启用入口，也可以显式调用：
+
+```bash
+"$APP_ROOT/.venv/bin/agentstrata" app update repair-<task-id> --root "$APP_ROOT"
+"$APP_ROOT/.venv/bin/agentstrata" app rollback repair-<task-id> --root "$APP_ROOT"
+```
+
+自定义 Harness 目录通过 `--harness-root` 指定。更新仍由 M5 准备、等待在途任务、切换和核对，
+失败时沿原机制恢复；新任务以已启用版本为基线。`app install` 不覆盖不同交付或已有普通目录，
+`setup` 不绕过受管版本；依赖升级与持久数据迁移不通过普通候选切换。
 
 ## 启用与撤回已验收版本
 

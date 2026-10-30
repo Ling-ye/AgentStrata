@@ -198,7 +198,9 @@ RULES = (
 # Same-area imports are always allowed. Cross-area imports must be listed here;
 # this declaration is itself checked for cycles before source edges are checked.
 AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
-    "harness": frozenset({"core", "contracts", "evals", "agent", "external_tools", "gateway", "plugins"}),
+    "harness": frozenset({"core", "contracts", "evals", "agent", "external_tools", "gateway", "plugins", "deployment"}),
+    "host": frozenset({"gateway", "application", "authorization", "botspec", "channels", "contracts", "core", "project", "schedules"}),
+    "deployment": frozenset({"contracts", "core", "gateway", "project"}),
     "schedules": frozenset({"core"}),
     "contracts": frozenset(),
     "project": frozenset(),
@@ -207,7 +209,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     "channels": frozenset({"contracts", "core", "project"}),
     "tool_packs": frozenset({"contracts"}),
     "component_catalog": frozenset({"contracts", "core", "tool_packs"}),
-    "plugins": frozenset({"core", "contracts", "project", "gateway"}),
+    "plugins": frozenset({"core", "contracts", "project", "deployment"}),
     "external_tools": frozenset({"contracts", "core", "project"}),
     "platforms": frozenset({"contracts", "core", "project"}),
     "agent": frozenset(
@@ -282,6 +284,7 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
             "core",
             "external_tools",
             "gateway",
+            "host",
             "middleware",
             "platforms",
             "project",
@@ -291,6 +294,8 @@ AREA_DEPENDENCIES: Mapping[str, frozenset[str]] = {
     ),
     "entrypoints": frozenset(
         {
+            "deployment",
+            "host",
             "plugins",
             "schedules",
             "harness",

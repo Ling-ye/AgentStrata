@@ -4,7 +4,7 @@
 # QQ/微信直接 exec Python Gateway host；本项目不再安装或启动 cc-connect。
 # 保持前台 MainPID，Ctrl+C 即停。
 #
-# 注意：日常起停推荐走运维控制台（systemd 托管）或 console/scripts/ctl.sh；
+# 注意：日常起停推荐走运维控制台（systemd 托管）或 deploy/wsl/instance_control.sh；
 # 本脚本是前台手动启动模式，也是 systemd 单元 chatcopilot@.service 的 ExecStart。
 #
 # 用法（在 WSL 终端里）：

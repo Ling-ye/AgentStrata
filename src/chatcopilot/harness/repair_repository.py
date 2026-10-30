@@ -57,12 +57,13 @@ class RepairArtifacts:
         governance = self.task["source"].get("kind") == "code_health"
         learning = bool(self.task["source"].get("skill_learning"))
         application = self.task["source"].get("kind") == "application"
+        local = (self.task.get("delivery") or {}).get("mode") == "local"
         changed = workspace.delta(self.worktree, baseline, self.task["source"].get("bot_id"),
                                   governance=governance, learning=learning, application=application,
                                   scope=tuple(self.task["source"].get("allowed_paths", ())),
-                                  frozen=self.directory / "source" if application else None)
+                                  frozen=self.directory / "source" if local else None)
         output = private_directory(self.directory / f"attempt-{number}")
-        if application:
+        if local:
             from chatcopilot.harness.patches import save_patch
             digest = save_patch(self.worktree, self.directory / "source", changed, output / "candidate.patch")
         else:

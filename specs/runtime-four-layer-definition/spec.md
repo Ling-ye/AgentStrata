@@ -9,7 +9,7 @@ created: 2026-09-08
 
 ## Summary
 
-AgentStrata 的产品主体是面向外部应用的 Agent 运行系统，按
+AgentStrata 面向外部应用提供 Agent 定制、运行与交付，其运行底座按
 **渠道适配（Channel）→ Gateway → Application → Agent** 四个职责层组织，各层通过结构化
 契约协作，由实例宿主管理生命周期。启动装配、Harness、Eval 和 Console 在消息链之外配套运行。
 AgentRuntime 指 Agent 层内的统一执行入口与共享能力装配；自有 LangGraph 图及能力实现可由 Harness 改进，
@@ -32,8 +32,8 @@ SDD 必须遵循并引用本规格；局部规格不能另行定义运行层级�
 | Application | actor 会话、工作区、资源与上下文准备、Agent 调用、交换提交或丢弃 | 实现具体平台传输、解释 Backend 私有协议 |
 | Agent | Backend、模型调用、工具执行、上下文窗口处理、搜索与子 Agent 委托 | 解释平台身份、拥有渠道连接或 Gateway 交付事实 |
 
-这里区分消息处理职责与文件位置：实例装配即使位于 gateway/runtime.py 或
-application/agent_runtime.py，仍属于分层之外的生命周期职责，不因此增加串行层或强制搬迁目录。
+这里区分消息处理职责与装配职责：整个实例及具体渠道由 `host` 装配，Application 保留其 Agent
+组件装配入口。实例生命周期不构成额外的串行层，分层也不要求把每个领域拆成固定数量的目录。
 
 ### 配套部分与支撑模块
 

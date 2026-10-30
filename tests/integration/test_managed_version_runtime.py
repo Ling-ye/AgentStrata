@@ -13,11 +13,11 @@ from types import SimpleNamespace
 
 from chatcopilot.core.release_identity import execution_identity
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, source_manifest
-from chatcopilot.plugins.activation_runtime import InstalledReleaseRuntime
-from chatcopilot.plugins.activation_service import ActivationService
-from chatcopilot.plugins.activation_types import ActivationTarget, ReleaseSource
+from chatcopilot.deployment.activation_runtime import InstalledReleaseRuntime
+from chatcopilot.deployment.activation_service import ActivationService
+from chatcopilot.contracts.deployment import ActivationTarget, ReleaseSource
 from chatcopilot.plugins.runtime import UserServices
-from chatcopilot.plugins.types import ServiceDefinition
+from chatcopilot.contracts.deployment import ServiceDefinition
 from tests.application_fixture import write_application
 from chatcopilot.protocols.gateway_client import GatewayClientConfig, GatewayWebSocketClient
 from chatcopilot.contracts.gateway_rpc import SessionsCreateParams, SessionsGetParams

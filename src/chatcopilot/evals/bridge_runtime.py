@@ -26,7 +26,7 @@ from chatcopilot.evals.image_delivery_fixture import OneBotFixtureConnection
 from chatcopilot.evals.isolated_executor import _isolated_subagents
 from chatcopilot.evals.models import TrialObservation
 from chatcopilot.evals.trial_capture import execution_phase, record_turn
-from chatcopilot.gateway.runtime import GatewayRuntimeConfigurationError, build_gateway_runtime_host
+from chatcopilot.host.runtime import GatewayRuntimeConfigurationError, build_gateway_runtime_host
 from chatcopilot.protocols.gateway_client import GatewayClientConfig, GatewayRemoteError, GatewayWebSocketClient
 
 

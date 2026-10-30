@@ -94,6 +94,9 @@ def main(argv: list[str] | None = None) -> int:
     preview.add_argument("--bot", required=True)
     preview.add_argument("--suite", default="agentstrata-application-bridges-v1")
     sub.add_parser("comparison", help="读取需求候选的基线、复测与独立确认").add_argument("task")
+    export = sub.add_parser("export-delivery", help="导出已独立验收的完整应用安装副本")
+    export.add_argument("task")
+    export.add_argument("--output", type=Path, required=True)
     for name in ("prepare-activation", "activate"):
         activation = sub.add_parser(name, help="准备或显式启用已独立验收的实例版本")
         activation.add_argument("task")
@@ -178,6 +181,8 @@ def main(argv: list[str] | None = None) -> int:
             value = controller.applications()
         elif args.command == "preview-improvement":
             value = controller.preview_improvement(args.bot, args.suite)
+        elif args.command == "export-delivery":
+            value = controller.export_delivery(args.task, args.output)
         elif args.command in {"prepare-activation", "activate"}:
             value = getattr(controller, args.command.replace("-", "_"))(args.task, target_id=args.target, timeout=args.timeout)
         else:

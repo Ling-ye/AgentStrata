@@ -7,8 +7,13 @@ from chatcopilot.harness.models import HarnessError
 
 def applications(repository):
     from chatcopilot.plugins.service import observable_agents
+    from chatcopilot.core.application_installation import application_source, installation
+    installed = installation(repository)
+    selected = application_source(repository) if installed else None
+    source_root = selected[0] if selected else repository
+    paths = (source_root / installed.bot_relative,) if installed else sorted((repository / "bots").glob("*/bot.yaml"))
     items, unavailable = [], []
-    for path in sorted((repository / "bots").glob("*/bot.yaml")):
+    for path in paths:
         try:
             app = load_application_spec(path)
             profile = app.agent_profile.raw
@@ -19,7 +24,7 @@ def applications(repository):
                 "bot_id": app.raw.get("deploy", {}).get("instance_id") or app.raw.get("id") or path.parent.name,
                 "display_name": app.raw.get("display_name") or path.parent.name,
                 "runtime_id": runtime,
-                "agent_profile": app.agent_profile.source_path.relative_to(repository).as_posix(),
+                "agent_profile": app.agent_profile.source_path.relative_to(source_root).as_posix(),
                 "channels": list(app.raw.get("channels", {})),
             })
         except (ValueError, OSError) as exc:

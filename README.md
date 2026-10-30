@@ -2,7 +2,7 @@
 
 # AgentStrata
 
-### 面向外部应用的可定制 Agent 运行系统
+### 面向外部应用的 Agent 定制、运行与交付系统
 
 **自有四层架构 · 可优化的 LangGraph Agent · 外部能力接入 · Harness 与 Eval**
 
@@ -14,7 +14,9 @@
 
 </div>
 
-AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以自有四层架构承载应用接入、会话、上下文和 Agent 能力。项目自行实现能力装配、上下文组织、工具使用，以及基于 LangGraph 的执行循环与协作策略；**这些自有实现都是 Harness 的主要优化对象**。
+AgentStrata 是面向外部应用的 Agent 定制、运行与交付系统。它提供自有基础 Agent 和运行底座，通过 Harness 根据应用需求，对 Agent 能力及接入组件进行针对性开发与验证，最终交付能够在目标环境运行的特化 Agent，以及配套的插件、适配器或其他接入组件。不同应用共享基础能力，保留各自的特化配置与必要实现。
+
+项目自行实现能力装配、上下文组织、工具使用，以及基于 LangGraph 的执行循环与协作策略；**这些自有实现都是 Harness 的主要优化对象**。独立应用可以复用 Console，并在本机将对话与执行记录交给 Harness 继续改进，经过原有验收和版本切换机制启用新版本。安装方式见[独立应用交付](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#独立应用交付与本机改进)。
 
 你可以把 Agent 连接到 Live2D、QQ / NapCat，或其他提供 API、工具接口和消息渠道的项目，为应用配置独立的模型、人格、工具与记忆。Harness 根据需求开发适配、能力模块和运行策略，通过 Eval 与独立验收验证改进，再在授权范围内启用到指定实例。Codex 通过公开接口作为可选执行器接入，当前也是 Harness 的开发 worker。
 
@@ -56,7 +58,7 @@ AgentStrata 是一个面向外部应用的可定制 Agent 运行系统。它以�
 
 ## 框架总览
 
-**Channel → Gateway → Application → Agent 四层共同构成产品主体。** Agent 层内的 `AgentRuntime` 是统一执行入口与共享能力装配；自有 LangGraph Agent 实现模型与工具循环。Harness 和 Eval 在消息链之外工作，生成并验证下一版 Agent、配置或桥接。
+**Channel → Gateway → Application → Agent 四层构成运行底座。** Agent 层内的 `AgentRuntime` 是统一执行入口与共享能力装配；自有 LangGraph Agent 实现模型与工具循环。Harness、Eval 和 Console 在消息链之外提供通用开发、验证与管理能力，生成并交付下一版 Agent 应用。
 
 ```mermaid
 flowchart TB
@@ -218,9 +220,11 @@ Console 是管理入口，应用运行与评测服务各自拥有生命周期。
 | --- | --- |
 | `src/chatcopilot/agent` | AgentRuntime、自有 LangGraph 循环、能力装配、上下文、工具、委托与 Codex 适配 |
 | `src/chatcopilot/gateway`、`application`、`channels` | 身份与准入、会话、消息运行、渠道及交付协调 |
+| `src/chatcopilot/host` | 整个实例与具体渠道的装配、启动和生命周期 |
+| `src/chatcopilot/deployment`、`deploy` | 通用应用交付、安装、版本切换与运维工具 |
 | `src/chatcopilot/harness` | 调查与开发编排、候选、独立验收、受控交付 |
 | `src/chatcopilot/evals` | 题目、执行对象、评测生命周期、评分、证据与比较 |
-| `src/chatcopilot/plugins`、`integrations` | 软件安装、版本管理、外部客户端与桥接 |
+| `src/chatcopilot/plugins`、`integrations` | 外部软件管理、插件目标适配、客户端与桥接 |
 | `bots`、`console`、`docs` | 应用与 Agent 配置、工作台、操作和领域文档 |
 
 Python 包命名空间保留为 `chatcopilot`，对外命令为 `agentstrata`。领域内部遵循 **Types → Config → Repo → Service → Runtime → UI** 的依赖约束；它描述源码依赖，与消息运行的四层架构是两个视角。

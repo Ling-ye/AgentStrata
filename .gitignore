@@ -38,6 +38,8 @@ node_modules/
 # 构建文件
 build/
 .agentstrata-versions/
+.agentstrata-application.json
+.agentstrata-data/
 dist/
 *.egg-info/
 pip-log.txt

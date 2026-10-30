@@ -3,10 +3,40 @@
 本页维护 code-worker 与 Harness 的发布、对账和清理契约。交互式 AI 协作者未经逐项明确授权，
 不得暂存、提交、推送、创建 PR、合并或发布；以下受控 worker 流程不授予交互式 AI 同等权限。
 
+## 独立应用交付与本机改进
+
+`HarnessController.export_delivery` 将完整验收且具有运行版本证据的应用候选导出为目录，
+包含 `application.json` 内容清单、`source` 完整公开源码和 `install.sh` 入口。
+交付保留原有配置、锁文件、Console、检查与部署工具；不携带原任务目录、Git 凭据或业务状态。
+候选接受与安装后的实际模型、运行环境和外部效果分别确认。
+
+`agentstrata app install` 校验交付内容，在全新目录建立安装副本与本地 Git 基线，
+宿主根据私有安装身份生成本机部署位置。BotSpec、Agent profile 和实现文件均保持交付内容。
+`.agentstrata-application.json` 记录唯一应用及交付来源；`.agentstrata-data`、私有环境及
+受管版本目录不进入后续候选。既有目录不覆盖，相同交付可继续安装依赖。
+依赖准备完成后仍需配置模型、NapCat 和来源信息；`setup` 沿用现有部署工具，不把源码安装报告为机器人就绪。
+
+Console 可通过 `CHATCOPILOT_SOURCE_ROOT` 显式选择安装副本，也可直接从副本启动。
+Console 与 Evaluation 仅发现该安装声明的应用；Harness 和 Eval 继续在本机按需启用。
+服务重启、模型设置、预算及权限遵循原有机制，不增加第二套控制或验收系统。
+
+Gateway 将实际加载的应用源码版本写入执行时观测。用户从任务记录发起修复时，Harness 核对
+应用和版本，以当前运行源码冻结本地候选；旧版本或缺少版本的记录需要先在当前版本复测。
+需求改进和测评修复同样绑定安装版本，不调用远端 main 或 GitHub 发布。
+Eval 从受管源码准备隔离执行，评分与检查仍由执行中的宿主提供。
+
+更新与撤回使用既有 `AcceptedCandidate` 和下节 M5 操作；源码启用后，下一次任务以该版本为基线。
+身份、权限、模型条件、在途任务及恢复边界保持。完整操作见
+[独立应用交付与本机改进](../guides/instances.md#独立应用交付与本机改进)。
+
+源码入口：[安装身份](../../src/chatcopilot/core/application_installation.py)、
+[交付内容](../../src/chatcopilot/deployment/application_bundle.py)、
+[安装与运行入口](../../src/chatcopilot/deployment/application_runtime.py)。
+
 ## 已验收版本启用与撤回
 
 M5 使用 `HarnessController` 的准备、启用、查询、撤回、取消和对账入口。来源必须是当前协议下
-已签发完整 `AcceptedCandidate` 的应用需求任务；实际候选快照、独立 Review、基线/候选/确认的
+已签发完整 `AcceptedCandidate` 的应用需求任务或绑定独立应用版本的本地反馈任务；实际候选快照、独立 Review、基线/候选/确认的
 版本证据均重新核验。修改、取消、缺少版本事实或运行条件不一致的候选不能启用。
 旧验收记录不会补造版本事实，需要重新验收后使用此入口。
 
@@ -40,9 +70,10 @@ M5 使用 `HarnessController` 的准备、启用、查询、撤回、取消和�
 不通过普通切换入口，需要单独的构建或迁移/恢复验收。撤回程序版本不会撤销已发生的外部动作，
 也不会覆盖后续业务数据。普通实例更新和插件重装须先撤回受管版本，避免两个更新路径同时生效。
 
-源码入口：[事务](../../src/chatcopilot/plugins/activation_service.py)、[安装适配](../../src/chatcopilot/plugins/activation_runtime.py)、
+源码入口：[事务](../../src/chatcopilot/deployment/activation_service.py)、[安装适配](../../src/chatcopilot/deployment/activation_runtime.py)、
 [启动与身份](../../src/chatcopilot/core/release_runtime.py)、[准入](../../src/chatcopilot/core/release_gate.py)。
 操作步骤见[启用与撤回](../guides/instances.md#启用与撤回已验收版本)。
+插件专属目标及归属检查仍由[插件适配](../../src/chatcopilot/plugins/activation_runtime.py)提供。
 
 凭据值不复制进版本，也不参与模型路由身份；保持同一认证引用的凭据轮换不改变代码版本。
 一次切换仍冻结环境文件，期间出现并发修改时停止并保留诊断。已启用版本的显式撤回保留当前凭据，

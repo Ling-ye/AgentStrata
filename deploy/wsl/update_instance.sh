@@ -17,6 +17,7 @@ BOT=""
 DRY_RUN=0
 ENABLE_SERVICE=0
 CHANGED_FILES=""
+IN_PLACE_APPLICATION=0
 
 usage() {
     sed -n '2,16p' "$0"
@@ -288,6 +289,14 @@ if [ -n "$CHANGED_FILES" ] && [ ! -f "$CHANGED_FILES" ]; then
 fi
 
 VENV_PY="$SRC/.venv/bin/python"
+if [ "$SRC" = "$DST" ]; then
+    if [ "$SYNC_SRC" != "$SRC" ] || [ -n "$CHANGED_FILES" ] \
+        || [ ! -f "$SRC/.agentstrata-application.json" ] || [ -L "$SRC/.agentstrata-application.json" ]; then
+        echo "[ERR] In-place setup requires an explicitly installed application; version updates use Harness activation." >&2
+        exit 1
+    fi
+    IN_PLACE_APPLICATION=1
+fi
 if [ -e "$DST/.agentstrata-versions/current.json" ] || [ -L "$DST/.agentstrata-versions/current.json" ]; then
     echo "[ERR] This instance has an active managed version. Withdraw it through Harness before updating the base installation." >&2
     exit 1
@@ -313,7 +322,9 @@ if [ "$DRY_RUN" = 1 ]; then
     echo "[DRY-RUN] would reconcile source CLI with uv sync --locked before executing '$VENV_PY'"
     echo "[DRY-RUN] would export: PYTHONPATH='$SRC/src\${PYTHONPATH:+:\$PYTHONPATH}'"
     echo "[DRY-RUN] would run: '$VENV_PY' -m chatcopilot bot provision-env --bot '$BOT_FOR_CMD'"
-    if [ -n "$CHANGED_FILES" ]; then
+    if [ "$IN_PLACE_APPLICATION" = 1 ]; then
+        echo "[DRY-RUN] would retain the installed application source; no source-to-runtime copy"
+    elif [ -n "$CHANGED_FILES" ]; then
         echo "[DRY-RUN] would run: bash '$SRC/deploy/wsl/sync_code.sh' --src '$SYNC_SRC' --dst '$DST' --files-from '$CHANGED_FILES'"
     else
         echo "[DRY-RUN] would run: bash '$SRC/deploy/wsl/sync_code.sh' --src '$SYNC_SRC' --dst '$DST'"
@@ -330,7 +341,7 @@ if [ "$DRY_RUN" = 1 ]; then
             echo "[DRY-RUN] would run legacy config render: CHATCOPILOT_BOT_SPEC='$INSTANCE_BOT' CHATCOPILOT_INSTANCE_ID='$INSTANCE' bash '$DST/deploy/wsl/_apply_config.sh'"
         fi
     fi
-    echo "[DRY-RUN] would run: bash '$SRC/console/scripts/ctl.sh' restart '$INSTANCE'"
+    echo "[DRY-RUN] would run: bash '$SRC/deploy/wsl/instance_control.sh' restart '$INSTANCE'"
     if [ "$ENABLE_SERVICE" = 1 ]; then
         echo "[DRY-RUN] after a successful restart, would run: systemctl --user enable 'chatcopilot@$INSTANCE.service'"
     fi
@@ -355,6 +366,20 @@ case "$REQUIRES_CODE_WORKER" in
 esac
 echo "[update] code worker required: $REQUIRES_CODE_WORKER"
 validate_provision_bot_consistency
+if [ "$IN_PLACE_APPLICATION" = 1 ]; then
+    PYTHONPATH="$SRC/src" "$PY" - "$SRC" "$INSTANCE" <<'PY'
+from pathlib import Path
+import sys
+from chatcopilot.core.application_installation import installation
+installed = installation(Path(sys.argv[1]))
+if installed is None or installed.bot_id != sys.argv[2]:
+    raise SystemExit("Installed application identity does not match the requested instance")
+PY
+    rc=$?
+    if [ "$rc" -ne 0 ]; then
+        fail_stage "validate installed application" "$rc"
+    fi
+fi
 (
     cd "$SRC" || exit 1
     export PYTHONPATH="$SRC/src${PYTHONPATH:+:$PYTHONPATH}"
@@ -366,7 +391,9 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 echo "[update] step 2/4: sync code to instance"
-if [ -n "$CHANGED_FILES" ]; then
+if [ "$IN_PLACE_APPLICATION" = 1 ]; then
+    echo "[update] independent application source already installed; retaining its Git and local data"
+elif [ -n "$CHANGED_FILES" ]; then
     bash "$SRC/deploy/wsl/sync_code.sh" --src "$SYNC_SRC" --dst "$DST" --files-from "$CHANGED_FILES"
 else
     bash "$SRC/deploy/wsl/sync_code.sh" --src "$SYNC_SRC" --dst "$DST"
@@ -420,7 +447,7 @@ else
 fi
 
 echo "[update] step 4/4: restart service"
-CTL="$SRC/console/scripts/ctl.sh"
+CTL="$SRC/deploy/wsl/instance_control.sh"
 if [ ! -f "$CTL" ]; then
     echo "[ERR] control script not found: $CTL" >&2
     fail_stage "restart service" 1
@@ -431,7 +458,7 @@ if ! command -v systemctl >/dev/null 2>&1; then
 fi
 UNIT="chatcopilot@${INSTANCE}.service"
 CODE_WORKER_UNIT="chatcopilot-code-worker@${INSTANCE}.service"
-REGISTER="$SRC/console/systemd/register.sh"
+REGISTER="$SRC/deploy/wsl/register_instance.sh"
 if [ ! -f "$REGISTER" ]; then
     echo "[ERR] service register script is missing: $REGISTER" >&2
     fail_stage "register service" 1

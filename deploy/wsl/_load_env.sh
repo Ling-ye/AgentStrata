@@ -146,6 +146,20 @@ ccp_bot_chat_env_prefix() {
 # ---------------------------------------------------------------------------
 ccp_apply_bot_deploy_config() {
     local _bot="${CHATCOPILOT_BOT_SPEC:-}"
+    local _python="${AGENTSTRATA_DEPLOY_PYTHON:-${CCP_HOME_DEFAULT}/.venv/bin/python}"
+    if [ -z "$_bot" ] && { [ -f "$_ccp_detected_home/.agentstrata-application.json" ] || [ -L "$_ccp_detected_home/.agentstrata-application.json" ]; }; then
+        _bot="$(PYTHONPATH="$_ccp_detected_home/src${PYTHONPATH:+:$PYTHONPATH}" "$_python" - "$_ccp_detected_home" <<'PY'
+from pathlib import Path
+import sys
+from chatcopilot.core.application_installation import installation
+root = Path(sys.argv[1])
+installed = installation(root)
+if installed is None:
+    raise SystemExit("Application installation record is missing")
+print(root / installed.bot_relative)
+PY
+        )" || return 1
+    fi
     if [ -z "$_bot" ]; then
         if [ -n "${CHATCOPILOT_INSTANCE_ID:-}" ] \
             && [ -f "$CCP_HOME_DEFAULT/bots/$CHATCOPILOT_INSTANCE_ID/bot.yaml" ]; then
@@ -160,7 +174,6 @@ ccp_apply_bot_deploy_config() {
 
     local _tmp
     _tmp="$(mktemp 2>/dev/null)" || return 0
-    local _python="${AGENTSTRATA_DEPLOY_PYTHON:-${CCP_HOME_DEFAULT}/.venv/bin/python}"
     case "$_python" in
         /*) ;;
         *) rm -f "$_tmp"; return 1 ;;
@@ -169,7 +182,7 @@ ccp_apply_bot_deploy_config() {
         rm -f "$_tmp"
         return 1
     fi
-    "$_python" - "$_bot" <<'PY' > "$_tmp" 2>/dev/null || true
+    "$_python" - "$_bot" "$_ccp_detected_home" <<'PY' > "$_tmp" 2>/dev/null || true
 import os
 import pwd
 import shlex
@@ -194,6 +207,15 @@ for raw in bot.read_text(encoding="utf-8", errors="replace").splitlines():
     if section == "deploy" and raw[:1].isspace() and ":" in line:
         key, value = line.split(":", 1)
         deploy[key.strip()] = value.strip().strip("\"'")
+
+root = Path(sys.argv[2])
+if (root / ".agentstrata-application.json").exists():
+    sys.path.insert(0, str(root / "src"))
+    from chatcopilot.core.application_installation import installation
+    installed = installation(root)
+    if (deploy.get("instance_id") or top.get("id")) != installed.bot_id:
+        raise SystemExit("BotSpec does not identify the installed application")
+    deploy.update(installed.deployment_overrides())
 
 # cc-connect intentionally starts with HOME set to its per-instance runtime
 # directory.  BotSpec ``~/...`` paths still belong to the deployment account,

@@ -19,7 +19,7 @@ def execution_scope(
     protected: list[Path] = []
     hidden: list[Path] = []
     for root in readable:
-        for name in (".git", ".conversation-state", ".runtime-sessions", ".agentstrata-versions"):
+        for name in (".git", ".conversation-state", ".runtime-sessions", ".agentstrata-versions", ".agentstrata-application.json"):
             path = root / name
             (protected if owner and name == ".git" else hidden).append(path)
     for key in ("AGENTSTRATA_RELEASE_CONTROL", "AGENTSTRATA_RELEASE_GATE_ROOT"):
@@ -27,6 +27,8 @@ def execution_scope(
             path = Path(os.environ[key]).resolve()
             if any(path.is_relative_to(root) or root.is_relative_to(path) for root in readable):
                 hidden.append(path)
+                if key == "AGENTSTRATA_RELEASE_CONTROL":
+                    hidden.append(path.parent / ".agentstrata-application.json")
     hidden.extend(
         workspace.resolve() / name
         for name in ("jobs", "tasks", "transcripts", "IDENTITY.json", "MEMORY.md", "PERSONA.md")

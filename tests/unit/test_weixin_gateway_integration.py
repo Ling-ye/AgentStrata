@@ -13,7 +13,7 @@ from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.runtime import assemble_runtime_context
 from chatcopilot.contracts.gateway import ChannelAccountRef, ConversationRef
 from chatcopilot.core.config import ChatConfig, LLMConfig
-from chatcopilot.gateway import runtime as module
+from chatcopilot.host import runtime as module
 
 
 PNG = base64.b64decode(

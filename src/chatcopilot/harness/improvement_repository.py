@@ -11,8 +11,11 @@ from chatcopilot.harness.workspace import prepare
 
 
 def baseline(repository: Path) -> dict:
+    from chatcopilot.core.application_installation import application_source
+    selected = application_source(repository)
+    source, manifest = selected if selected else (repository, source_manifest(repository))
     return {"mode": "local", "state": "local", "base_sha": git_output(repository, "rev-parse", "HEAD"),
-            "source_digest": manifest_digest(source_manifest(repository))}
+            "source_digest": manifest_digest(manifest), **({"source_root": str(source)} if selected else {})}
 
 
 def initialize(store, task_id):
@@ -23,13 +26,21 @@ def initialize(store, task_id):
     state = task["delivery"]
     directory = private_directory(store.root / "jobs" / task_id)
     frozen = directory / "source"
-    manifest = source_manifest(repository)
+    source = repository
+    if state.get("source_root"):
+        from chatcopilot.core.application_installation import application_source
+        selected = application_source(repository, task["source"].get("bot_id"))
+        if selected is None or str(selected[0]) != state["source_root"]:
+            raise HarnessError("workspace_changed", "应用运行版本在提交后发生变化，请重新发起任务")
+        source, manifest = selected
+    else:
+        manifest = source_manifest(repository)
     if manifest_digest(manifest) != state["source_digest"]:
         raise HarnessError("workspace_changed", "提交后源码发生变化；请重新发起需求任务")
     if frozen.exists():
         verify_copy(frozen, manifest)
     else:
-        copy_sources(repository, frozen, manifest)
+        copy_sources(source, frozen, manifest)
     root = prepare(repository, store.root, task_id, state["base_sha"])
     repair_owned_private_directory(root)
     # Only this task's freshly allocated worktree is replaced. The operator's

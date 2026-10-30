@@ -59,6 +59,23 @@ def test_reader_never_initializes_missing_database(tmp_path):
     assert not root.exists()
 
 
+def test_application_version_failure_preserves_existing_task_observation(state, monkeypatch):
+    store, generation, run = state
+    def fail(*args):
+        raise ValueError("synthetic unavailable version")
+    monkeypatch.setattr("chatcopilot.core.application_installation.running_application_identity", fail)
+    recorder = ObservationRecorder(store, generation)
+    before = store.get_run(run)
+    recorder.accepted(run, "input still recorded", "owner")
+    assert recorder.application_version is None
+    assert recorder.store.configuration(recorder.config_id).get("application_version") is None
+    assert store.get_run(run) == before
+    from chatcopilot.gateway.observation_queries import detail
+    observed = detail(recorder.store, run)
+    body = recorder.store.body(run, observed["run"]["input_ref"])
+    assert "input still recorded" in json.dumps(body)
+
+
 @pytest.mark.parametrize("failure,code", [
     (PackageNotFoundError("deepeval"), "trace_dependency_missing"),
     (ValueError("invalid synthetic trace"), "trace_archive_failed"),

@@ -73,7 +73,7 @@ src_real="$(realpath -m "$SRC")"
 dst_real="$(realpath -m "$DST")"
 if [ "$src_real" = "$dst_real" ]; then
     echo "[ERR] 目标等于源（控制仓库）目录，拒绝同步以防覆盖控制台：$dst_real" >&2
-    echo "      请把该实例 bot.yaml 的 deploy.wsl_home 设为独立目录，再重跑 console/systemd/register.sh <id>。" >&2
+    echo "      请把该实例 bot.yaml 的 deploy.wsl_home 设为独立目录，再重跑 deploy/wsl/register_instance.sh <id>。" >&2
     exit 1
 fi
 

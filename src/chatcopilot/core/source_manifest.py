@@ -12,6 +12,7 @@ IGNORED_PARTS = frozenset(
     {
         ".git",
         ".agentstrata-versions",
+        ".agentstrata-data",
         ".mypy_cache",
         ".pytest_cache",
         ".ruff_cache",
@@ -48,6 +49,8 @@ def is_private_environment_path(rel: str) -> bool:
 
 def is_deployable_source_path(rel: str) -> bool:
     path = PurePosixPath(str(rel).replace("\\", "/"))
+    if str(path) == ".agentstrata-application.json":
+        return False
     if not path.parts or path.is_absolute():
         return False
     if any(part in {"", ".", ".."} for part in path.parts):

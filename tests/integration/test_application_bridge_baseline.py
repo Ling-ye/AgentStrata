@@ -19,7 +19,7 @@ from chatcopilot.botspec.loader import load_botspec
 from chatcopilot.botspec.runtime import assemble_runtime_context
 from chatcopilot.contracts.gateway_rpc import RunsGetParams
 from chatcopilot.core.llm_client import ChatResult, LLMClient
-from chatcopilot.gateway.runtime import build_gateway_runtime_host
+from chatcopilot.host.runtime import build_gateway_runtime_host
 from chatcopilot.protocols.gateway_client import GatewayClientConfig, GatewayClientError, GatewayWebSocketClient
 from integrations.open_llm_vtuber.agentstrata_vtuber.bridge import ConversationBridge
 from tests.application_fixture import write_application
