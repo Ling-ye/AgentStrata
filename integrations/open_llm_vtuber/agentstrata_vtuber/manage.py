@@ -47,7 +47,12 @@ def installation_checks(request: dict) -> dict:
 
     environment = load_local_env_values(root / "config/runtime.env", expand_home=True)
     AdapterConfig.load(root / "config/adapter.json", environment)
-    load_botspec(root / "config/bot.yaml")
+    if request["host"].get("application") is not None:
+        from .application_binding import application_binding
+        installed, _, _ = application_binding(request)
+        load_botspec(installed.root / installed.bot_relative)
+    else:
+        load_botspec(root / "config/bot.yaml")
     checks["configuration"] = bool(environment.get("CHATCOPILOT_SOURCE_URL"))
     from .assets import runtime_assets
     runtime_assets(root)
@@ -84,8 +89,10 @@ async def connection_checks(request: dict) -> dict:
                 async with ClientSession(read, write) as session:
                     await session.initialize()
                     tools = await session.list_tools()
-                    checks["avatar_mcp"] = {t.name for t in tools.tools} == {
-                        "list_actions", "set_expression", "play_motion", "apply_pose"}
+                    expected = {"list_actions", "set_expression", "play_motion", "apply_pose"}
+                    if request["host"].get("application") is not None:
+                        expected.add("observe_desktop")
+                    checks["avatar_mcp"] = {t.name for t in tools.tools} == expected
     except Exception as exc:
         checks["avatar_mcp"] = type(exc).__name__
     return checks

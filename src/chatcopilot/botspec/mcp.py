@@ -216,7 +216,7 @@ def validate_mcp_servers(spec: BotSpec) -> list[ValidationIssue]:
             )
         if transport in {"sse", "streamable_http"}:
             url = str(check_item.get("url", "")).strip()
-            if not (url.startswith("http://") or url.startswith("https://")):
+            if not (url.startswith("http://") or url.startswith("https://") or _is_env_ref(url)):
                 issues.append(
                     ValidationIssue("error", "HTTP MCP server url 必须是 http/https", f"{field}.url")
                 )
@@ -259,6 +259,13 @@ def _parse_server(
         return None
     env = _mapping_from_env_refs(raw.get("env", {}), resolve_env=resolve_env)
     headers = _mapping_from_env_refs(raw.get("headers", {}), resolve_env=resolve_env)
+    url = _optional_str(raw.get("url"))
+    if url and _is_env_ref(url) and resolve_env:
+        url = _mapping_from_env_refs({"url": url}, resolve_env=True).get("url")
+        if not url:
+            return None
+        if not url.startswith(("http://", "https://")):
+            raise ValueError("Resolved MCP URL must use HTTP or HTTPS")
     return McpServerConfig(
         id=server_id,
         catalog_ref=catalog_ref,
@@ -266,7 +273,7 @@ def _parse_server(
         enabled=enabled,
         command=_optional_str(raw.get("command")),
         args=tuple(str(value) for value in _list(raw.get("args", []))),
-        url=_optional_str(raw.get("url")),
+        url=url,
         env=env,
         headers=headers,
         cwd=_optional_str(raw.get("cwd")),

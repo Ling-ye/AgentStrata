@@ -137,27 +137,36 @@ def _systemd_quote(value: str, *, executable_argument: bool = False) -> str:
 
 
 class UserServices(systemd.UserSystemd):
-    def __init__(self, directory: Path | None = None):
+    def __init__(self, directory: Path | None = None, *, application_root: Path | None = None):
         self.directory = directory or Path(os.environ.get("XDG_CONFIG_HOME", Path.home() / ".config")) / "systemd/user"
+        self.application_root = application_root
+        self.application_id = ""
+        if application_root is not None:
+            from chatcopilot.core.application_installation import installation
+            installed = installation(application_root)
+            if installed is None:
+                raise InstallError("Plugin application scope requires an explicit installation")
+            self.application_id = installed.bot_id
 
-    @staticmethod
-    def name(plugin_id: str, service: ServiceDefinition) -> str:
-        return f"agentstrata-plugin-{plugin_id}-{service.name}.service"
+    def name(self, plugin_id: str, service: ServiceDefinition) -> str:
+        prefix = f"agentstrata-app-{self.application_id}" if self.application_id else "agentstrata-plugin"
+        return f"{prefix}-{plugin_id}-{service.name}.service"
 
 
 
     def active(self, plugin_id: str, service: ServiceDefinition) -> bool:
         return self.command("is-active", "--quiet", self.name(plugin_id, service)).returncode == 0
 
-    @staticmethod
-    def version_command(service: ServiceDefinition, root: Path) -> tuple[str, ...]:
+    def version_command(self, service: ServiceDefinition, root: Path) -> tuple[str, ...]:
         command = service.command
         if not service.versioned:
             return command
         if len(command) < 3 or command[1] != "-m":
             raise InstallError("Managed plugin versions require an explicit Python module service")
-        wrapped = [command[0], "-m", "chatcopilot.core.release_runtime", "--control", str(root / ".agentstrata-versions"),
-                   "--service", service.name, "--component", "chatcopilot"]
+        control_root = self.application_root or root
+        name = f"{root.name}-{service.name}" if self.application_root else service.name
+        wrapped = [command[0], "-m", "chatcopilot.core.release_runtime", "--control", str(control_root / ".agentstrata-versions"),
+                   "--service", name, "--component", "chatcopilot"]
         package = command[2].split(".")[0]
         if package != "chatcopilot":
             wrapped += ["--component", package]
@@ -246,9 +255,12 @@ class UserServices(systemd.UserSystemd):
 
 
 
-def create_manager(root: Path):
+def create_manager(root: Path, *, application_root: Path | None = None):
     from chatcopilot.plugins.catalog import PLUGINS
     from chatcopilot.plugins.service import PluginManager
 
-    return PluginManager(root, PLUGINS, services=UserServices(), driver=call_driver,
-                         bootstrap=bootstrap, artifacts=release_artifacts, toolchain=ensure_uv)
+    if application_root is not None and root.absolute() != application_root.absolute() / ".agentstrata-data/plugins":
+        raise InstallError("Application plugins must use their installation's private component directory")
+    return PluginManager(root, PLUGINS, services=UserServices(application_root=application_root), driver=call_driver,
+                         bootstrap=bootstrap, artifacts=release_artifacts, toolchain=ensure_uv,
+                         application_root=application_root)

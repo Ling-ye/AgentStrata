@@ -8,7 +8,7 @@ import urllib.request
 from typing import Any, Dict
 
 from chatcopilot.contracts.runtime import McpServerConfig
-from chatcopilot.agent.mcp.serialization import _compact_mcp_response
+from chatcopilot.agent.mcp.serialization import McpCallResult, _serialize_call_result
 
 def _stateless_list_tools(config: McpServerConfig) -> list[Any]:
     payload = _stateless_rpc(
@@ -35,7 +35,7 @@ def _stateless_list_tools(config: McpServerConfig) -> list[Any]:
     return out
 
 
-def _stateless_call_tool(config: McpServerConfig, name: str, arguments: Dict[str, Any]) -> str:
+def _stateless_call_tool(config: McpServerConfig, name: str, arguments: Dict[str, Any]) -> McpCallResult:
     payload = _stateless_rpc(
         config,
         {
@@ -105,28 +105,12 @@ def _parse_stateless_response(raw: str) -> dict[str, Any]:
     return parsed
 
 
-def _serialize_stateless_result(result: dict[str, Any], *, max_chars: int) -> str:
-    payload: dict[str, Any] = {
-        "is_error": bool(result.get("isError") or result.get("is_error")),
-    }
-    structured = result.get("structuredContent")
-    if structured is not None:
-        payload["structured"] = structured
-    content_items: list[dict[str, Any]] = []
-    for item in result.get("content") or []:
-        if not isinstance(item, dict):
-            continue
-        item_type = str(item.get("type") or "")
-        if item_type == "text":
-            content_items.append({"type": "text", "text": str(item.get("text") or "")})
-        else:
-            content_items.append({"type": item_type or "unknown"})
-    if content_items:
-        payload["content"] = content_items
-    text = json.dumps(payload, ensure_ascii=False)
-    if len(text) > max_chars:
-        text = _compact_mcp_response(payload, max_chars)
-    return text
+def _serialize_stateless_result(result: dict[str, Any], *, max_chars: int) -> McpCallResult:
+    return _serialize_call_result(types.SimpleNamespace(
+        isError=bool(result.get("isError") or result.get("is_error")),
+        structuredContent=result.get("structuredContent"),
+        content=[types.SimpleNamespace(**item) for item in result.get("content", []) if isinstance(item, dict)],
+    ), max_chars=max_chars)
 
 
 __all__ = [

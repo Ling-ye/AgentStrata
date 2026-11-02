@@ -265,6 +265,7 @@ def vtuber_target(root, monkeypatch):
                                            "status": "stopped", "services": [{"name": "client", "port": 19893},
                                               {"name": "gateway", "port": 19894}]})
     write_json(root / "data/live2d/model_dict.json", [{"name": "mao_pro"}])
+    write_json(root / "config/configured.json", {"port": 19893, "gateway_port": 19894})
     write_json(root / "config/adapter.json", {"model_name": "mao_pro", "gateway_token_env": "KEEP_ME"})
     write_json(root / "config/upstream.yaml", {"character_config": {"character_name": "Mao",
                                                                    "live2d_model_name": "mao_pro"}})

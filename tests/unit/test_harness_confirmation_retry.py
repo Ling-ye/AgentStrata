@@ -195,7 +195,7 @@ def test_regression_budget_stop_resumes_verified_candidate_without_another_code_
     assert result["verification_retries"][0]["stage"] == "regressions"
 
 
-def _reviewed_pytest_gap(repair):
+def _reviewed_pytest_gap(repair, *, gap_code="fixture_missing"):
     import hashlib
     from chatcopilot.core.private_sqlite import json_text
 
@@ -208,7 +208,7 @@ def _reviewed_pytest_gap(repair):
     path.chmod(0o600)
     store.update(ident, source={**store.get(ident)["source"], "test_sha256": sha, "test_path": str(path),
                                "test_relative_path": f"tests/unit/harness_regressions/test_{sha}.py"})
-    gap = {"requirement": "expected_behavior", "code": "fixture_missing", "message": "independent pytest draft unavailable"}
+    gap = {"requirement": "expected_behavior", "code": gap_code, "message": "independent pytest draft unavailable"}
     verifier = EnvironmentConfirmation()
     verifier.fail_confirmation = False
     coder = Coder(proposed=proposal(gaps=[gap]))
@@ -217,10 +217,11 @@ def _reviewed_pytest_gap(repair):
     return store, ident, repo, verifier, coder, path, hashlib.sha256(json_text(gap).encode()).hexdigest()
 
 
-def test_verified_pytest_material_closes_only_selected_claim_without_changing_grades(repair):
+@pytest.mark.parametrize("gap_code", ["fixture_missing", "material_missing"])
+def test_verified_pytest_material_closes_only_selected_claim_without_changing_grades(repair, gap_code):
     from chatcopilot.harness.artifact_repository import ArtifactRepository
 
-    store, ident, repo, verifier, coder, path, gap_digest = _reviewed_pytest_gap(repair)
+    store, ident, repo, verifier, coder, path, gap_digest = _reviewed_pytest_gap(repair, gap_code=gap_code)
     before = store.attempts(ident)[-1]
     controller_for(store, repo).reconcile_pytest_gap(ident, gap_digest)
     result = run_task(store, ident, verifier, coder)
@@ -234,8 +235,9 @@ def test_verified_pytest_material_closes_only_selected_claim_without_changing_gr
 
 
 @pytest.mark.parametrize("drift", ["test_file", "goal", "review", "binding"])
-def test_pytest_material_resolution_rejects_missing_or_changed_frozen_evidence(repair, drift):
-    store, ident, repo, _, _, path, gap_digest = _reviewed_pytest_gap(repair)
+@pytest.mark.parametrize("gap_code", ["fixture_missing", "material_missing"])
+def test_pytest_material_resolution_rejects_missing_or_changed_frozen_evidence(repair, drift, gap_code):
+    store, ident, repo, _, _, path, gap_digest = _reviewed_pytest_gap(repair, gap_code=gap_code)
     task = store.get(ident)
     if drift == "test_file":
         path.write_text("changed")
@@ -247,6 +249,14 @@ def test_pytest_material_resolution_rejects_missing_or_changed_frozen_evidence(r
         attempt = store.attempts(ident)[-1]
         attempt["review"] = {**attempt["review"], "decision": "inconclusive"}
         store.save_attempt(ident, attempt["number"], attempt)
+    with pytest.raises(HarnessError, match="pytest"):
+        controller_for(store, repo).reconcile_pytest_gap(ident, gap_digest)
+    assert store.get(ident)["status"] == "needs_review"
+    assert not store.attempts(ident)[-1].get("material_resolutions")
+
+
+def test_pytest_material_resolution_does_not_waive_permission_claim(repair):
+    store, ident, repo, _, _, _, gap_digest = _reviewed_pytest_gap(repair, gap_code="permission_missing")
     with pytest.raises(HarnessError, match="pytest"):
         controller_for(store, repo).reconcile_pytest_gap(ident, gap_digest)
     assert store.get(ident)["status"] == "needs_review"

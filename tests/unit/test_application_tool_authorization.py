@@ -68,6 +68,16 @@ def test_owner_can_use_tools_in_groups() -> None:
     assert permission(_tool("owner_private", category="runtime", private=True)) is None
 
 
+def test_client_allowlist_is_enforced_even_for_owner_and_cannot_be_replaced_by_data():
+    observed = []
+    permission = build_tool_permission_filter(_principal(role=Role.OWNER), policy_version="policy-v1",
+        allowed_tools=frozenset({"desktop_ObservePrimary"}), on_decision=observed.append)
+    assert permission(_tool("desktop_ObservePrimary", category="mcp")) is None
+    for name in ("desktop_Click", "write_workspace_file", "append_memory", "persona_manage"):
+        assert permission(_tool(name, category="mcp")) is not None
+    assert all(item.code == "client-tool-scope" for item in observed[1:])
+
+
 def test_payload_filter_uses_principal_role_and_workspace(tmp_path: Path) -> None:
     workspace = WorkspaceView(
         root=tmp_path,

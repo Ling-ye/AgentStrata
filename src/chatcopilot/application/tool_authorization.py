@@ -35,6 +35,7 @@ def build_tool_permission_filter(
     policy_version: str,
     on_decision: DecisionSink | None = None,
     research_only: bool = False,
+    allowed_tools: frozenset[str] | None = None,
 ) -> PermissionFilter:
     """Bind one trusted Principal to schema projection and executor rechecks."""
 
@@ -62,6 +63,11 @@ def build_tool_permission_filter(
             request,
             tool=tool,
         )
+        if allowed_tools is not None and decision.allowed and tool_name not in allowed_tools | {
+            "tool_search", "tool_describe", "tool_call", "read_tool_result",
+        }:
+            decision = make_authorization_decision(request, allowed=False,
+                code="client-tool-scope", policy_version=policy_version)
         if research_only and decision.allowed and tool_name not in {
             "search_information", "web_fetch_page", "read_tool_result",
             "tool_search", "tool_describe", "tool_call",

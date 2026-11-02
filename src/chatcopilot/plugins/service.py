@@ -44,6 +44,7 @@ def observable_agents(root: Path | None = None, *, definitions: dict[str, Plugin
 class PluginManager:
     def __init__(self, root: Path, definitions: dict[str, PluginDefinition], *,
                  services, driver, bootstrap, artifacts, toolchain,
+                 application_root: Path | None = None,
                  progress: Callable[[str], None] | None = None):
         self.root = root.expanduser().absolute()
         self.definitions = definitions
@@ -52,6 +53,7 @@ class PluginManager:
         self.bootstrap = bootstrap
         self.artifacts = artifacts
         self.toolchain = toolchain
+        self.application_root = application_root
         self.progress = progress or (lambda stage: print(f"[plugin] {stage}", file=sys.stderr))
 
     def _entry(self, plugin_id: str) -> PluginDefinition:
@@ -63,6 +65,12 @@ class PluginManager:
     def _repository(self, plugin_id: str) -> InstallRepository:
         self._entry(plugin_id)
         return InstallRepository(self.root, plugin_id)
+
+    def _require_component_mutable(self) -> None:
+        if self.application_root is not None:
+            pointer = self.application_root / ".agentstrata-versions/current.json"
+            if pointer.exists() or pointer.is_symlink():
+                raise InstallError("Withdraw the application's active managed version before changing its components")
 
     @staticmethod
     def _services(record: dict, root: Path) -> list[ServiceDefinition]:
@@ -95,6 +103,7 @@ class PluginManager:
                 return self._doctor(entry, repository, record, online=False)
             if (repository.root / ".agentstrata-versions/current.json").exists():
                 raise InstallError("Withdraw the active managed version before reinstalling this plugin")
+            self._require_component_mutable()
             if record and any(self.services.active(plugin_id, s) for s in self._services(record, repository.root)):
                 raise InstallError("Stop the plugin before reinstalling or changing its version")
             if record and record.get("version") != entry.version:
@@ -177,11 +186,11 @@ class PluginManager:
             return {"id": plugin_id, "status": "not_installed", "ok": False}
         return self._doctor(self._entry(plugin_id), repository, record)
 
-    def _start(self, entry, repository, record) -> dict:
+    def _start(self, entry, repository, record, *, check_connections=True) -> dict:
         services = self._services(record, repository.root)
         self.services.start(entry.id, services, repository.root)
         try:
-            health = self._doctor(entry, repository, record)
+            health = self._doctor(entry, repository, record, online=check_connections)
             if not health.get("ok"):
                 raise InstallError("Plugin connection check failed: " + str(health.get("checks", {})))
             return health
@@ -189,14 +198,14 @@ class PluginManager:
             self.services.stop(entry.id, services, repository.root)
             raise
 
-    def start(self, plugin_id: str) -> dict:
+    def start(self, plugin_id: str, *, check_connections: bool = True) -> dict:
         repository = self._repository(plugin_id)
         with repository.lock():
             record = repository.read()
             if not record or record.get("status") != "ready":
                 raise InstallError("Install the plugin successfully before starting it")
             self.services.preflight()
-            return self._start(self._entry(plugin_id), repository, record)
+            return self._start(self._entry(plugin_id), repository, record, check_connections=check_connections)
 
     def stop(self, plugin_id: str) -> dict:
         repository = self._repository(plugin_id)
@@ -212,6 +221,7 @@ class PluginManager:
             record = repository.read()
             if not record:
                 return {"id": plugin_id, "status": "not_installed"}
+            self._require_component_mutable()
             self.services.remove(plugin_id, self._services(record, repository.root), repository.root)
             control = repository.root / ".agentstrata-versions"
             if control.exists():

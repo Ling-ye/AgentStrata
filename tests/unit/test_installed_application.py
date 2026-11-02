@@ -311,3 +311,23 @@ def test_local_feedback_uses_existing_acceptance_and_can_prepare_a_release(insta
     assert released.bot_id == "fixture"
     assert (released.candidate / "src/chatcopilot/core/probe.py").read_text() == "VALUE = 1\n"
     assert (root / "src/chatcopilot/core/probe.py").read_text() == "VALUE = 0\n"
+
+
+def test_live2d_source_archive_excludes_private_state_and_uses_selected_version(installed, tmp_path):
+    import zipfile
+    from integrations.open_llm_vtuber.agentstrata_vtuber.source_delivery import source_archive
+    root, _, _ = installed
+    private_json(root / '.agentstrata-data/private.json', {'secret': 'must-not-ship'})
+    private_json(root / 'bots/fixture/local.env', {'secret': 'must-not-ship'})
+    archive = source_archive(root)
+    with zipfile.ZipFile(archive) as content:
+        assert set(content.namelist()) == {'source/' + name for name in source_manifest(root)}
+        assert b'must-not-ship' not in b''.join(content.read(name) for name in content.namelist())
+    candidate = tmp_path / 'candidate'
+    copy_sources(root, candidate, source_manifest(root))
+    (candidate / 'src/chatcopilot/core/probe.py').write_text('VALUE = 9\n')
+    select_candidate(root, candidate)
+    selected = source_archive(root)
+    assert selected != archive
+    with zipfile.ZipFile(selected) as content:
+        assert content.read('source/src/chatcopilot/core/probe.py') == b'VALUE = 9\n'

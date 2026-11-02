@@ -116,7 +116,9 @@ Plan 用 `proceed/blocked` 区分待验证假设与必要条件缺失。Coding/T
 检查通过也不能抹去明确的证据或外部交付缺口。Verifier 产出验证定义与结果，不替 Plan 提出根因。
 
 若 Coding 仍声明缺少 pytest 草案，而宿主已收录并执行该草案，可由宿主明确选择声明摘要，调用
-`HarnessController.reconcile_pytest_gap` 核对。该入口只处理已独立审核的 `needs_review` 候选：
+`HarnessController.reconcile_pytest_gap` 核对。操作者选择的是关于 pytest 草案的声明摘要；
+声明可采用 `fixture_missing` 或 `material_missing`，不能用此入口豁免权限或其他材料缺口。
+该入口只处理已独立审核的 `needs_review` 候选：
 必须匹配冻结普通文件的哈希、同一测试的基线/候选/完整确认回执、目标覆盖、仓库保护集及原 Review 绑定。
 宿主保留原始 `submission.gaps` 和声明，将材料核对证明纳入接受摘要，再由原 LangGraph 签发节点重新判断；
 不重跑 Coding、不改评分或 Review，也不豁免其他 fixture、图像、权限及外部交付缺口。该操作不作为模型工具开放。

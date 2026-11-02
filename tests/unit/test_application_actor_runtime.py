@@ -812,3 +812,65 @@ def test_exchange_cleanup_can_retry_after_transient_backend_failure(tmp_path: Pa
     assert len(attempts) == 2
     assert session.discard_count == 1
     assert factory.session_manager.get_actor(ActorSessionKey("session-1", request.principal.actor_ref)) is None
+
+
+def test_restricted_client_cannot_inherit_owner_native_or_persistent_capabilities(tmp_path):
+    factory, agent, _ = _factory(tmp_path)
+    principal = _principal('20002', role=Role.OWNER)
+    factory._principal_tool_allowlists[(principal.channel, principal.account_id)] = frozenset({'desktop_ObservePrimary'})
+    request = _turn(session_id='session-1', principal=principal, canonical_text='Observe', message_id='observe')
+    executor = ActorTurnExecutor(factory)
+    async def scenario():
+        result = await executor.execute(request, on_event=lambda event: None)
+        created = agent.creations[-1]
+        policy = created['host_policy']
+        assert not policy.native_capabilities and not policy.extension_grants
+        assert not policy.scope.native_write and not policy.scope.writable_roots
+        assert created['file_sender'] is None and created['background_submitter'] is None
+        tool = ToolDef(name='desktop_Click', summary='click', input_schema=object_schema(), output_schema=object_schema(), handler=lambda *args: ToolResult(ok=True))
+        assert created['permission_filter'](tool) is not None
+        executor.discard_exchange(request, result)
+        assert agent.sessions[-1].discard_count == 1
+        assert factory.session_manager.get_actor(ActorSessionKey('session-1', principal.actor_ref)) is None
+    try:
+        asyncio.run(scenario())
+    finally:
+        factory.close()
+
+
+@pytest.mark.parametrize('first', ['owner', 'observer'])
+def test_restricted_gateway_client_has_its_own_workspace_owner_in_either_start_order(tmp_path, first):
+    manager = SessionManager(writer_generation=9)
+    factory, agent, root = _factory(tmp_path, manager=manager)
+    from chatcopilot.application.workspaces import WorkspaceAssemblyError
+    subjects = {}
+    for name in ('owner', 'observer'):
+        client = 'avatar-' + name
+        conversation = ConversationIdentity('gateway', 'p2p', 'conversation-' + name)
+        subjects[name] = Principal(channel='gateway', account_id=client, conversation=conversation,
+            user_id=client, role=Role.OWNER, evidence_digest=stable_payload_digest({'client':client}))
+        manager.create_session(session_id='session-' + name, account=ChannelAccountRef('gateway', client),
+            conversation=ConversationRef('p2p', conversation.chat_id), generation=9)
+    factory._principal_tool_allowlists[('gateway', 'avatar-observer')] = frozenset({'desktop_ObservePrimary'})
+    executor = ActorTurnExecutor(factory)
+    async def scenario():
+        for name in (first, 'observer' if first == 'owner' else 'owner'):
+            await executor.execute(_turn(session_id='session-' + name, principal=subjects[name],
+                canonical_text='observe', message_id=name), on_event=lambda event:None)
+        states = {name:manager.get_actor(ActorSessionKey('session-' + name, principal.actor_ref))
+                  for name,principal in subjects.items()}
+        owner = states['owner'].workspace.root
+        observer = states['observer'].workspace.root
+        assert owner == root / 'p2p_avatar-owner'
+        assert not observer.is_relative_to(root)
+        assert (root / '.workspace-owner').is_file()
+        marker = (root / '.workspace-owner').read_bytes()
+        with pytest.raises(WorkspaceAssemblyError, match='another platform account'):
+            build_actor_workspace(workspace_root=observer.parent, principal=subjects['owner'])
+        assert (root / '.workspace-owner').read_bytes() == marker
+        policy = next(row['host_policy'] for row in agent.creations if row['caller_identity'].user_id == 'avatar-observer')
+        assert not policy.native_capabilities and not policy.scope.writable_roots
+    try:
+        asyncio.run(scenario())
+    finally:
+        factory.close()

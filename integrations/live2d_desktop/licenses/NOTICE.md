@@ -12,3 +12,8 @@ commercial-use conditions. The upstream backend uses MIT. Their license texts
 are included here for reference. This shell does not relicense either project,
 Cubism SDK, user models or character artwork. No private characters or credentials
 are distributed with this package.
+
+Windows-MCP is prepared separately at the revision in windows-mcp.lock.json,
+under its MIT license, Copyright (c) 2025 JEOMON GEORGE. The preparation retains
+its LICENSE.md and locked source. Its Python dependencies are not bundled into
+the Electron installer.

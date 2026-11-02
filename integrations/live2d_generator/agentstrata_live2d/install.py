@@ -23,6 +23,18 @@ CHARACTER_CONFIG_FILES = (*CONFIG_FILES, "config/identity.md", "config/response-
 DEFAULT_RESPONSE_STYLE = "用自然、清晰的语言交流，语气与当前身份和对话情境一致。"
 
 
+def _application(root: Path):
+    configured = json.loads(relative_file(root, "config/configured.json").read_text())
+    application_root = configured.get("application_root")
+    if application_root is None:
+        return None
+    from chatcopilot.core.application_installation import installation
+    installed = installation(Path(application_root))
+    if installed is None or root != installed.root / ".agentstrata-data/plugins/open-llm-vtuber":
+        raise GenerationError("客户端应用绑定无效")
+    return installed
+
+
 def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> dict:
     if root.resolve() != root or not root.is_dir():
         raise GenerationError("目标必须是现有插件安装的绝对路径，不得包含符号链接")
@@ -34,8 +46,9 @@ def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> d
     if record.get("status") in {"installing", "failed", "uninstalled"}:
         raise GenerationError("客户端安装尚未就绪")
     services = record.get("services", [])
-    if (not isinstance(services, list) or len(services) != 2
-            or {s.get("name") for s in services if isinstance(s, dict)} != {"client", "gateway"}
+    expected = {"client"} if _application(root) else {"client", "gateway"}
+    if (not isinstance(services, list) or len(services) != len(expected)
+            or {s.get("name") for s in services if isinstance(s, dict)} != expected
             or any(type(s.get("port")) is not int or not 1 <= s["port"] <= 65535 for s in services)):
         raise GenerationError("客户端服务登记不完整")
     for relative in config_files:
@@ -47,12 +60,14 @@ def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> d
 
 
 def require_stopped(root: Path, record: dict) -> None:
+    installed = _application(root)
+    prefix = f"agentstrata-app-{installed.bot_id}" if installed else "agentstrata-plugin"
     for service in record.get("services", []):
         name = service["name"]
         if name not in {"client", "gateway"}:
             raise GenerationError("客户端服务清单无法识别")
         result = subprocess.run(["systemctl", "--user", "show", "--property=ActiveState", "--value",
-                                 f"agentstrata-plugin-open-llm-vtuber-{name}.service"],
+                                 f"{prefix}-open-llm-vtuber-{name}.service"],
                                 capture_output=True, text=True, timeout=10, check=False)
         if result.returncode or result.stdout.strip() not in {"inactive", "failed"}:
             raise GenerationError("导入前请先停止 open-llm-vtuber；无法确认 systemd 服务已停止")
@@ -81,22 +96,27 @@ def install_bundle(bundle: Path, root: Path) -> dict:
     return _install(bundle, root)
 
 
-def install_character(bundle: Path, details: dict, root: Path, *, identifier: str, version: int) -> dict:
+def install_character(bundle: Path, details: dict, root: Path, *, identifier: str, version: int,
+                      presentation_only: bool = False) -> dict:
     from .character_types import character_id, profile, revision_number
     identifier, version = character_id(identifier), revision_number(version)
-    result = _install(bundle, root, details=profile(details))
+    result = _install(bundle, root, details=profile(details), presentation_only=presentation_only)
     return result | {"character_id": identifier, "version": version}
 
 
-def _install(bundle: Path, root: Path, *, details: dict | None = None) -> dict:
+def _install(bundle: Path, root: Path, *, details: dict | None = None, presentation_only: bool = False) -> dict:
     root = root.expanduser().absolute()
     with target_lock(root):
-        config_files = CHARACTER_CONFIG_FILES if details is not None else CONFIG_FILES
+        persona = details is not None and not presentation_only
+        if _application(root) and persona:
+            raise GenerationError("应用的 Agent profile 由应用管理；导入角色请显式选择 --presentation-only（外观与声音）")
+        config_files = CHARACTER_CONFIG_FILES if persona else CONFIG_FILES
         record = _check_target(root, config_files)
         require_stopped(root, record)
-        if details is not None:
-            bot = yaml.safe_load(relative_file(root, "config/bot.yaml").read_text())
-            prompts = bot.get("prompts", {}) if isinstance(bot, dict) else {}
+        if persona:
+            from chatcopilot.core.application_configuration import load_application_spec
+            application = load_application_spec(relative_file(root, "config/bot.yaml"))
+            prompts = application.agent_profile.raw.get("prompts", {})
             if (prompts.get("schema_version") != 2 or prompts.get("identity") != "identity.md"
                     or prompts.get("response_style") != "response-style.md"):
                 raise GenerationError("客户端人设文件绑定已修改，请先恢复标准 identity/style 绑定")
@@ -153,7 +173,7 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None) -> dict:
             values = [json.dumps(dictionary, ensure_ascii=False, indent=2).encode(),
                       json.dumps(adapter, ensure_ascii=False, indent=2).encode(),
                       yaml.safe_dump(upstream, allow_unicode=True, sort_keys=False).encode()]
-            if details is not None:
+            if persona:
                 # Style is optional in a character preset, but a Bot prompt layer must be nonempty.
                 # Resolve that omission at handoff; keep the immutable preset and its hashes intact.
                 style = details["response_style"] if details["response_style"].strip() else DEFAULT_RESPONSE_STYLE
@@ -186,7 +206,8 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None) -> dict:
                     shutil.rmtree(target)
                 raise
             return {"model": name, "name": display_name, "backup": backup_id,
-                    "next": "agentstrata plugin start open-llm-vtuber"}
+                    "applied": "presentation" if presentation_only else "character" if details else "model",
+                    "next": "Start the owning application" if _application(root) else "agentstrata plugin start open-llm-vtuber"}
 
 
 def restore_bundle(root: Path, identifier: str) -> dict:

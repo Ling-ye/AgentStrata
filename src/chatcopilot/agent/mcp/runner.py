@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator, Dict
 
 from chatcopilot.contracts.runtime import McpServerConfig
-from chatcopilot.agent.mcp.serialization import _serialize_call_result
+from chatcopilot.agent.mcp.serialization import McpCallResult, _serialize_call_result
 from chatcopilot.agent.mcp.stateless import _stateless_call_tool, _stateless_list_tools
 
 _LOGGER = logging.getLogger("chatcopilot.agent.mcp.client")
@@ -95,7 +95,7 @@ class _McpServerRunner:
             return []
         return list(self._tools)
 
-    def call_tool(self, name: str, arguments: Dict[str, Any]) -> str:
+    def call_tool(self, name: str, arguments: Dict[str, Any]) -> McpCallResult:
         if self.config.stateless_http:
             return _stateless_call_tool(self.config, name, arguments)
         if not self.is_running():
@@ -184,7 +184,7 @@ class _McpServerRunner:
                 self._ready.set()
                 await self._stop_event.wait()
 
-    async def _call_tool_async(self, name: str, arguments: Dict[str, Any]) -> str:
+    async def _call_tool_async(self, name: str, arguments: Dict[str, Any]) -> McpCallResult:
         result = await self._session.call_tool(
             name,
             arguments or {},

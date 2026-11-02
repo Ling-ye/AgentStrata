@@ -407,7 +407,7 @@ def test_service_definition_rejects_external_state(tmp_path):
 def test_cli_passes_only_explicit_software_options(harness, monkeypatch, capsys):
     from chatcopilot.plugins import cli
     monkeypatch.setattr(cli, "PLUGINS", harness.manager.definitions)
-    monkeypatch.setattr(cli, "create_manager", lambda _: harness.manager)
+    monkeypatch.setattr(cli, "create_manager", lambda _, application_root=None: harness.manager)
     assert cli.main(["install", "fixture", "--root", str(harness.manager.root),
                      "--option", "custom=42", "--no-start"]) == 0
     request = json.loads((harness.root / "config/request.json").read_text())
@@ -420,7 +420,7 @@ def test_agent_install_does_not_copy_terminal_only_credentials(harness, monkeypa
     from tests.model_settings_fixture import test_model_document
     harness.manager.definitions["fixture"] = replace(harness.entry, requires_agent=True)
     monkeypatch.setattr(cli, "PLUGINS", harness.manager.definitions)
-    monkeypatch.setattr(cli, "create_manager", lambda _: harness.manager)
+    monkeypatch.setattr(cli, "create_manager", lambda _, application_root=None: harness.manager)
     monkeypatch.setattr(cli, "read_settings", test_model_document)
     monkeypatch.setenv("CHATCOPILOT_CHAT_API_KEY", "terminal-only-fixture")
     assert cli.main(["install", "fixture", "--root", str(harness.manager.root),
@@ -451,3 +451,18 @@ def test_release_checksums_and_wheel_identity_both_required(tmp_path, monkeypatc
     (bundle / names[1]).write_bytes(b"corrupt archive")
     with pytest.raises(InstallError, match="checksum"):
         runtime.release_artifacts(entry, tmp_path / "cache", bundle)
+
+
+def test_application_component_mutation_preserves_managed_version(harness, tmp_path):
+    h = harness
+    h.manager.application_root = tmp_path / 'application'
+    h.manager.install('fixture', options={}, host={}, start=False)
+    write_private(h.manager.application_root / '.agentstrata-versions/current.json', '{}')
+    before = list(h.calls)
+    with pytest.raises(InstallError, match="application's active"):
+        h.manager.uninstall('fixture')
+    assert h.calls == before
+    h.manager.definitions['fixture'] = replace(h.entry, version='2.0.0')
+    with pytest.raises(InstallError, match="application's active"):
+        h.manager.install('fixture', options={}, host={}, start=False)
+    assert 'remove' not in h.calls and (h.root / 'runtime/program').exists()

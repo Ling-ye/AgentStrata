@@ -13,12 +13,7 @@ import yaml
 from chatcopilot.core.install_artifacts import InstallError, private_directory, write_private
 from chatcopilot.core.model_settings import read_settings, resolve_binding
 from .resources import resource
-
-
-def _environment_file(path: Path, values: dict[str, str]) -> None:
-    # systemd EnvironmentFile and the runtime loader both accept quoted assignments.
-    write_private(path, "\n".join(key + "=" + json.dumps(str(value), ensure_ascii=False)
-                                 for key, value in values.items()) + "\n")
+from .configuration_files import environment_file as _environment_file, persistent_link as _persistent_link
 
 
 def _native_codex(executable: str) -> str:
@@ -41,19 +36,6 @@ def _native_codex(executable: str) -> str:
     raise InstallError("Codex requires its native Linux executable; configure the binding's codex_bin_env")
 
 
-def _persistent_link(path: Path, target: Path) -> None:
-    private_directory(target)
-    if path.is_symlink():
-        if path.resolve() != target.resolve():
-            raise InstallError("Unexpected persistent-data link")
-        return
-    if path.exists():
-        if not path.is_dir() or any(path.iterdir()):
-            raise InstallError("Refusing to replace existing upstream data")
-        path.rmdir()
-    path.symlink_to(target, target_is_directory=True)
-
-
 def configure(request: dict, sources: dict[str, Path]) -> dict:
     root = Path(request["root"])
     from .assets import prepare_assets
@@ -67,6 +49,10 @@ def configure(request: dict, sources: dict[str, Path]) -> dict:
     source = urlsplit(host["source_url"])
     if source.scheme not in {"http", "https"} or not source.hostname or source.username or source.password:
         raise InstallError("A credential-free corresponding-source URL is required")
+    if host.get("application") is not None:
+        from .application_binding import configure_application_client
+        configure_application_client(request, sources)
+        return service_definitions(request)
     configured = config / "configured.json"
     if not configured.exists():
         model_env = {"AGENTSTRATA_LLM_CONFIG": host["model_config"]}
@@ -149,6 +135,13 @@ def service_definitions(request: dict) -> dict:
     settings = json.loads((root / "config/configured.json").read_text())
     port, gateway_port = settings["port"], settings["gateway_port"]
     env = str(root / "config/runtime.env")
+    if request["host"].get("application") is not None:
+        return {"url": f"http://localhost:{port}", "observable_agents": [], "services": [
+            {"name": "client", "versioned": True, "command": [str(root / "runtime/venv/bin/python"), "-m", "agentstrata_vtuber.manage",
+                 "run", "--request", str(root / "config/request.json")],
+             "cwd": str(root / "runtime/apps/backend"), "environment_file": env,
+             "port": port, "ready_url": f"http://127.0.0.1:{port}/"},
+        ]}
     return {"url": f"http://localhost:{port}", "observable_agents": [
         {"id": "main", "display_name": "Live2D Assistant", "bot_spec": "config/bot.yaml",
          "env_file": "config/runtime.env"},

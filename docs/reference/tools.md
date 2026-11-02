@@ -2,6 +2,12 @@
 
 新增工具或修改发现、权限和投影时阅读。模型发现与实际执行使用同一 ToolRegistry；域工具通过明确 provider catalog 装配。
 
+MCP `ImageContent` 经过现有图像解码、大小和内容校验，保存为当前 actor 工作区的临时
+`ResourceRef`，由 `ToolResult.images` 传递。文字回执只包含图片摘要与媒体信息，模型适配器
+在请求边界读取并投影图片；Chat Completions/Responses 在完整工具回执批次之后附加不可信
+图像资料，Codex 动态工具使用 `inputImage`。会话结束清理未改动的临时图片。交互式 MCP
+操作传输失败返回结果未知，不能自动重放鼠标点击、输入等副作用。
+
 ## Agent 能力装配与应用边界
 
 工具装配、呈现、发现和使用是项目自有 Agent 能力，可以成为 Harness 候选的修改对象。

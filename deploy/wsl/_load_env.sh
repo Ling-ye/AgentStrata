@@ -275,12 +275,12 @@ PY
 }
 
 # ---------------------------------------------------------------------------
-# ccp_load_env <egrep_pattern>
+# ccp_load_env <egrep_pattern> [bot-spec]
 #   用非执行 parser 读取运行时 env，只将匹配 pattern 的 key 以
 #   shell-quoted 形式投影到当前 shell。
 # ---------------------------------------------------------------------------
 ccp_load_env() {
-    local pattern="${1:-}"
+    local pattern="${1:-}" bot_spec="${2:-}"
     if [ -z "$pattern" ]; then
         return 0
     fi
@@ -298,6 +298,7 @@ ccp_load_env() {
     fi
     CHATCOPILOT_ENV_LOAD_FILE="$CCP_ENV_FILE" \
         CHATCOPILOT_ENV_LOAD_PATTERN="$pattern" \
+        CHATCOPILOT_ENV_LOAD_BOT="$bot_spec" \
         PYTHONPATH="$CCP_HOME_DEFAULT/src${PYTHONPATH:+:$PYTHONPATH}" \
         "$_python" - <<'PY' > "$_tmp" 2>/dev/null || true
 import os
@@ -318,8 +319,14 @@ if (
 ):
     raise SystemExit("unsafe runtime env")
 matcher = re.compile(rf"^(?:{os.environ['CHATCOPILOT_ENV_LOAD_PATTERN']})")
-for key, value in load_local_env_values(path, expand_home=True).items():
-    if matcher.search(key):
+values = load_local_env_values(path, expand_home=True)
+declared = set()
+if os.environ.get("CHATCOPILOT_ENV_LOAD_BOT"):
+    from chatcopilot.botspec.loader import load_botspec
+    from chatcopilot.botspec.deployment_env import runtime_environment_keys
+    declared.update(runtime_environment_keys(load_botspec(os.environ["CHATCOPILOT_ENV_LOAD_BOT"]), environment=values))
+for key, value in values.items():
+    if key in declared or matcher.search(key):
         print(f"export {key}={shlex.quote(value)}")
 PY
     if [ -s "$_tmp" ]; then

@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import subprocess
+import time
 
 from chatcopilot.contracts.model_runtime import digest
 from chatcopilot.core.application_configuration import load_application_spec
@@ -101,11 +102,16 @@ class InstalledReleaseRuntime:
             fields = dict(line.split("=", 1) for line in status.stdout.splitlines() if "=" in line)
             if status.returncode or fields.get("ActiveState") not in {"active", "activating", "inactive", "failed"}:
                 raise RuntimeError("Managed service start state is unknown: " + service.name)
-            if fields["ActiveState"] in {"active", "activating"}:
-                continue  # The caller verifies its identity instead of starting a second process.
-            require_free_port(service.port)
-            if self.services.command("start", self.target.units[service.name]).returncode:
-                raise RuntimeError("Could not start managed service: " + service.name)
+            if fields["ActiveState"] not in {"active", "activating"}:
+                require_free_port(service.port)
+                if self.services.command("start", self.target.units[service.name]).returncode:
+                    raise RuntimeError("Could not start managed service: " + service.name)
+            # Ordered components may provide tools needed during Gateway assembly.
+            deadline = time.monotonic() + 60
+            while not self.services.ready(service):
+                if time.monotonic() >= deadline:
+                    raise RuntimeError("Managed service did not become ready: " + service.name)
+                time.sleep(0.25)
 
     def compile(self, source: Path, component_paths: dict, output: Path):
         private_directory(output)
@@ -153,8 +159,11 @@ def source_target(repository: Path, bot_relative: str, bot_id: str):
     python = values.get("CHATCOPILOT_ACP_PY", str(root / ".venv/bin/python"))
     service = ServiceDefinition("gateway", (python, "-m", "chatcopilot", "run", "--bot", str(bot)),
         str(root), str(env_file), int(values.get(gateway.get("port_env", "CHATCOPILOT_GATEWAY_PORT"), "18789")), versioned=True)
-    target = ActivationTarget("instance:" + instance, root, bot, env_file, state, (service,),
-        {"chatcopilot": "src/chatcopilot"}, {"gateway": "chatcopilot@" + instance + ".service"})
+    from chatcopilot.deployment.component_repository import load_components
+    component_services, component_units, component_paths, _ = load_components(root)
+    target = ActivationTarget("instance:" + instance, root, bot, env_file, state, (*component_services, service),
+        {"chatcopilot": "src/chatcopilot", **component_paths},
+        {**component_units, "gateway": "chatcopilot@" + instance + ".service"})
     return InstalledReleaseRuntime(target)
 
 

@@ -1,12 +1,13 @@
-import {app, BrowserWindow, ipcMain, Menu, nativeImage, screen, session, Tray} from 'electron';
+import {app, BrowserWindow, desktopCapturer, ipcMain, Menu, nativeImage, powerMonitor, screen, session, Tray} from 'electron';
 import {readFile, mkdir, writeFile, rename} from 'node:fs/promises';
 import {join, basename} from 'node:path';
 import {pathToFileURL} from 'node:url';
-import {randomUUID} from 'node:crypto';
+import {createHash, randomUUID} from 'node:crypto';
 import {ApplyInput, Connection, Mode, Plugin, Settings, applyInput, connection, identifier, settings, visibleBounds} from './contracts';
 import {Backend, WslBackend, distributions} from './wsl';
 import {Controller} from './controller';
 import {allowed, sameHttpOrigin, WindowGrant, WindowRole} from './security';
+import {Perception} from './perception';
 
 export interface DesktopOptions {
   // Injection is only used by the separate, unpackaged smoke harness.
@@ -14,16 +15,31 @@ export interface DesktopOptions {
   distributions?: () => Promise<string[]>;
   initial?: Settings;
   settingsFile?: string;
+  selectionFile?: string;
+  connection?: Connection;
+  capturePrimary?: () => Promise<string>;
 }
 export async function startDesktop(options: DesktopOptions = {}): Promise<void> {
   if (!app.requestSingleInstanceLock()) { app.quit(); return; }
   let client: BrowserWindow | undefined, manager: BrowserWindow | undefined, setup: BrowserWindow | undefined;
   let tray: Tray | undefined, quitting = false, forceIgnore = false;
-  let prefs: Settings = {mode: 'window', topmost: false};
+  let prefs: Settings = {mode: 'pet', topmost: false};
   let plugins: Plugin[] = [], controller: Controller | undefined;
   let connectionPromise: Promise<void> | undefined;
   let changing = false;
   let lastResult: unknown = null;
+  let backend: Backend | undefined;
+  const perception = new Perception(options.capturePrimary ?? (async () => {
+    const primary = screen.getPrimaryDisplay();
+    const sources = await desktopCapturer.getSources({types: ['screen'],
+      thumbnailSize: {width: 1280, height: 720}, fetchWindowIcons: false});
+    const source = sources.find(value => value.display_id === String(primary.id));
+    if (!source || source.thumbnail.isEmpty()) throw new Error('无法读取当前主屏幕');
+    return createHash('sha256').update(source.thumbnail.toPNG()).digest('hex');
+  }), async (enabled, hash) => {
+    if (!backend) { if (enabled) throw new Error('应用尚未连接'); return; }
+    await backend.perception(enabled, hash);
+  }, error => { lastResult = {ok: false, message: error instanceof Error ? error.message : '持续感知已停止'}; rebuildTray(); });
   let pending: {nonce: string; resolve: (idle: boolean) => void} | undefined;
   let reloaded: (() => void) | undefined;
   const hovering = new Set<string>();
@@ -55,11 +71,11 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
   function listen(name: string, fn: (...args: any[]) => void) {
     ipcMain.on(name, (event, ...args) => { if (trusted(event, ['client'])) fn(...args); });
   }
-  function hide() { send('desktop-visibility', false); client?.hide(); }
+  function hide() { perception.visible = false; void perception.suspend().catch(showError); send('desktop-visibility', false); client?.hide(); }
   function recover() {
     forceIgnore = false; hovering.clear();
     send('force-ignore-mouse-changed', false);
-    client?.setIgnoreMouseEvents(false);
+    mouse();
     if (client) { client.show(); client.focus(); send('desktop-visibility', true); }
     else void connect().catch(showError);
   }
@@ -100,23 +116,34 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
         forceIgnore = !forceIgnore; send('force-ignore-mouse-changed', forceIgnore); mouse(); rebuildTray();
       }},
       {label: '输入框与字幕', click: () => send('toggle-input-subtitle')},
+      {label: '持续感知主屏', type: 'checkbox', checked: perception.enabled, enabled: !!client,
+        click: () => void perception.setEnabled(!perception.enabled).then(() => {
+          send('desktop-perception', perception.enabled); rebuildTray();
+        }).catch(showError)},
       {label: '停止对话', click: () => send('interrupt')},
       {type: 'separator'},
-      {label: '我的角色 / 生成工作台', click: () => void openManager().catch(showError)},
+      {label: '我的角色 / 生成工作台', enabled: plugins.some(p => p.id === 'live2d-generator'),
+        click: () => void openManager().catch(showError)},
       {label: '连接设置', click: openSettings},
       {label: '隐藏角色', click: hide},
-      {label: '退出桌面（后台继续运行）', click: () => { quitting = true; app.quit(); }},
+      {label: '退出桌面（后台继续运行）', click: () => app.quit()},
     ]);
   }
   function rebuildTray() { tray?.setContextMenu(menu()); }
   function create(role: WindowRole, url: string): BrowserWindow {
+    const area = screen.getPrimaryDisplay().workArea;
+    const pet = role === 'client' && prefs.mode === 'pet';
     const win = new BrowserWindow({width: role === 'settings' ? 640 : 1100, height: 780,
       minWidth: 560, minHeight: 480, show: false, autoHideMenuBar: true,
       title: 'AgentStrata Live2D', icon: join(__dirname, '../ui/icon.ico'),
-      transparent: role === 'client', frame: role !== 'client', backgroundColor: '#18202b',
+      ...(pet ? area : {}), transparent: role === 'client', frame: role !== 'client',
+      alwaysOnTop: pet || role === 'client' && prefs.topmost, skipTaskbar: pet,
+      backgroundColor: pet ? '#00000000' : '#18202b',
       webPreferences: {preload: join(__dirname, 'preload.js'), nodeIntegration: false,
-        contextIsolation: true, sandbox: true, webSecurity: true, partition: 'agentstrata-desktop'},
+        contextIsolation: true, sandbox: true, webSecurity: true, partition: 'agentstrata-desktop',
+        additionalArguments: ['--agentstrata-mode=' + prefs.mode]},
     });
+    if (role === 'client') { win.setContentProtection(true); if (pet) win.setIgnoreMouseEvents(true, {forward: true}); }
     grants.set(win.webContents.id, {id: win.webContents.id, role, url});
     const samePage = (target: string) => {
       try { return role === 'settings' ? target === url : new URL(target).origin === new URL(url).origin; }
@@ -140,8 +167,11 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
   async function openManager() {
     if (!plugins.length) await connect();
     if (!plugins.length) throw new Error('请先在连接设置中配置 WSL 后台');
+    const generator = plugins.find(p => p.id === 'live2d-generator');
+    if (!generator) throw new Error('角色生成器尚未安装；它是可选组件。');
+    await backend!.start('live2d-generator'); await reachable(generator);
     if (manager && !manager.isDestroyed()) { manager.show(); manager.focus(); return; }
-    manager = create('manager', plugins.find(p => p.id === 'live2d-generator')!.url);
+    manager = create('manager', generator.url);
     manager.on('closed', () => { manager = undefined; });
   }
   async function reachable(plugin: Plugin) {
@@ -156,7 +186,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     if (connectionPromise) return connectionPromise;
     if (!prefs.connection) { openSettings(); return; }
     connectionPromise = (async () => {
-      const backend = (options.backend ?? (c => new WslBackend(c)))(prefs.connection!);
+      backend = (options.backend ?? (c => new WslBackend(c)))(prefs.connection!);
       const next = new Controller(backend, {
         prepare: async () => {
           if (!client || client.webContents.isLoading()) return false;
@@ -184,10 +214,10 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
       if (!client || client.isDestroyed()) {
         client = create('client', plugins.find(p => p.id === 'open-llm-vtuber')!.url);
         client.on('close', e => { if (!quitting) { e.preventDefault(); hide(); } });
-        client.on('hide', () => send('desktop-visibility', false));
-        client.on('show', () => send('desktop-visibility', true));
-        client.on('minimize', () => send('desktop-visibility', false));
-        client.on('restore', () => send('desktop-visibility', true));
+        client.on('hide', () => {perception.visible = false; void perception.suspend().catch(showError); send('desktop-visibility', false);});
+        client.on('show', () => {perception.visible = true; send('desktop-visibility', true);});
+        client.on('minimize', () => {perception.visible = false; void perception.suspend().catch(showError); send('desktop-visibility', false);});
+        client.on('restore', () => {perception.visible = true; send('desktop-visibility', true);});
         client.on('maximize', () => send('window-maximized-change', true));
         client.on('unmaximize', () => send('window-maximized-change', false));
         const remember = () => { if (prefs.mode === 'window' && client && !client.isMinimized()) {
@@ -219,11 +249,34 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
         send('desktop-visibility', false); client.destroy(); client = undefined;
         manager?.destroy(); manager = undefined; plugins = []; controller = undefined;
       }
-      prefs.connection = config; await save(); return {ok: true};
+      await perception.setEnabled(false);
+      prefs.connection = config; await save();
+      if (options.selectionFile && options.selectionFile !== configFile) {
+        await mkdir(join(options.selectionFile, '..'), {recursive: true});
+        await writeFile(options.selectionFile + '.tmp', JSON.stringify({connection: config, mode: 'pet', topmost: false}));
+        await rename(options.selectionFile + '.tmp', options.selectionFile);
+      }
+      if (!options.backend && JSON.stringify(config) !== JSON.stringify(options.connection)) {
+        app.relaunch({args: [...process.argv.slice(1).filter((v, i, all) =>
+          !['--application-root', '--distro'].includes(v) && !['--application-root', '--distro'].includes(all[i - 1])),
+          '--application-root', config.root, '--distro', config.distro]});
+        app.quit();
+        return {ok: true, relaunch: true};
+      }
+      return {ok: true};
     } finally { changing = false; }
   });
   handle('settings-connect', ['settings'], async () => { await connect(); return {ok: true}; });
-  handle('desktop-status', ['client', 'manager'], () => ({plugins, lastResult, mode: prefs.mode}));
+  handle('desktop-status', ['client', 'manager'], () => ({plugins, lastResult, mode: prefs.mode, perception: perception.enabled}));
+  handle('desktop-perception-set', ['client'], async value => {
+    if (typeof value !== 'boolean') throw new Error('感知状态必须是开关');
+    await perception.setEnabled(value); send('desktop-perception', value); rebuildTray(); return {enabled: value};
+  });
+  listen('desktop-activity', busy => {
+    if (typeof busy !== 'boolean') return;
+    perception.busy = busy;
+    if (busy) void perception.suspend().catch(showError);
+  });
   handle('desktop-manager', ['client', 'manager'], openManager);
   const change = async (value: ApplyInput | {backup: string}) => {
     if (changing || connectionPromise) throw new Error('另一个后台操作正在进行');
@@ -240,7 +293,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
   listen('desktop-ready', () => { reloaded?.(); requestMode(prefs.mode); send('desktop-visibility', client?.isVisible() ?? false); });
   listen('desktop-mode', mode => { if (mode === 'pet' || mode === 'window') requestMode(mode); });
   listen('desktop-hover', (id, hoveringNow) => {
-    if (!['live2d-model', 'input-subtitle', 'characters'].includes(id) || typeof hoveringNow !== 'boolean') return;
+    if (!['live2d-model', 'input-subtitle', 'characters', 'perception'].includes(id) || typeof hoveringNow !== 'boolean') return;
     if (hoveringNow) hovering.add(id); else hovering.delete(id); mouse();
   });
   listen('desktop-force-ignore', () => { forceIgnore = !forceIgnore; mouse(); send('force-ignore-mouse-changed', forceIgnore); rebuildTray(); });
@@ -256,10 +309,19 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
   });
   app.on('second-instance', () => client ? recover() : openSettings());
   app.on('window-all-closed', () => { /* Tray owns the application lifetime. */ });
-  app.on('before-quit', () => { quitting = true; send('desktop-visibility', false); });
+  app.on('before-quit', event => {
+    if (quitting) return;
+    event.preventDefault(); quitting = true;
+    send('desktop-visibility', false);
+    void perception.close().catch(showError).finally(() => app.quit());
+  });
   await app.whenReady();
   try { prefs = options.initial ?? settings(JSON.parse(await readFile(configFile, 'utf8'))); }
   catch (error: any) { if (error.code !== 'ENOENT') lastResult = {ok: false, message: '桌面设置无法读取，请重新设置连接'}; }
+  if (options.connection) prefs.connection = options.connection;
+  powerMonitor.on('lock-screen', () => {perception.locked = true; void perception.suspend().catch(showError);});
+  powerMonitor.on('unlock-screen', () => {perception.locked = false;});
+  perception.start();
   Menu.setApplicationMenu(null);
   const desktopSession = session.fromPartition('agentstrata-desktop');
   const mediaAllowed = (contents: Electron.WebContents | null, permission: string, origin: string, mediaTypes?: string[]) =>

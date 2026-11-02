@@ -1,0 +1,14 @@
+{
+  "repository": "https://github.com/CursorTouch/Windows-MCP",
+  "revision": "66690fdbccc08d9688a430d4a84be75349eacd33",
+  "archive_url": "https://codeload.github.com/CursorTouch/Windows-MCP/tar.gz/66690fdbccc08d9688a430d4a84be75349eacd33",
+  "archive_sha256": "6e7d54a3b1aa283b3a0f9995c22d97faf5bffef3db95ada44cbf6878564da976",
+  "package_version": "0.8.8",
+  "python": "3.14.7",
+  "uv": {
+    "version": "0.12.5",
+    "url": "https://github.com/astral-sh/uv/releases/download/0.12.5/uv-x86_64-pc-windows-msvc.zip",
+    "sha256": "4c4d49d8738847d9b71ba319e49a5688c93eac0fe6204b1df24e98528dddf39a",
+    "binary_sha256": "8da6cedef60c27ac997ebf400fbfc6d373c5b0a7ae6a299b9d52be7fe63723fb"
+  }
+}

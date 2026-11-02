@@ -14,6 +14,7 @@ from pathlib import Path
 
 from chatcopilot.agent.mcp import client as mcp_client
 from chatcopilot.agent.mcp.client import McpToolProvider, _stream_read_timeout
+from chatcopilot.agent.mcp.serialization import McpCallResult
 from chatcopilot.agent.mcp.runner import _resolve_stdio_args, _resolve_stdio_command
 from chatcopilot.botspec.mcp import McpServerConfig
 from chatcopilot.contracts.tools import (
@@ -488,7 +489,7 @@ class McpClientProviderTests(unittest.TestCase):
                 self.calls += 1
                 if self is FakeRunner.instances[0]:
                     raise RuntimeError("Event loop is closed")
-                return f"recovered {name} for {arguments['query']}"
+                return McpCallResult(f"recovered {name} for {arguments['query']}")
 
             def stop(self) -> None:
                 self.stopped = True
@@ -635,7 +636,7 @@ class McpClientProviderTests(unittest.TestCase):
 
             def call_tool(self, name: str, arguments: dict[str, object]) -> str:
                 self.seen_arguments = dict(arguments)
-                return '{"is_error": false, "content": [{"type": "text", "text": "ok"}]}'
+                return McpCallResult('{"is_error": false, "content": [{"type": "text", "text": "ok"}]}')
 
             def stop(self) -> None:
                 self.stopped = True
@@ -698,7 +699,7 @@ class McpClientProviderTests(unittest.TestCase):
                 return [FakeRemoteTool()]
 
             def call_tool(self, name: str, arguments: dict[str, object]) -> str:
-                return json.dumps(
+                return McpCallResult(json.dumps(
                     {
                         "is_error": True,
                         "content": [
@@ -711,7 +712,7 @@ class McpClientProviderTests(unittest.TestCase):
                             }
                         ],
                     }
-                )
+                ))
 
             def stop(self) -> None:
                 self.stopped = True
@@ -776,7 +777,7 @@ class McpClientProviderTests(unittest.TestCase):
                 start = _time.monotonic()
                 _time.sleep(0.3)
                 call_log.append((str(arguments.get("keyword", "")), start))
-                return '{"is_error": false, "content": [{"type": "text", "text": "ok"}]}'
+                return McpCallResult('{"is_error": false, "content": [{"type": "text", "text": "ok"}]}')
 
             def stop(self) -> None:
                 self.stopped = True
@@ -860,7 +861,7 @@ class McpClientProviderTests(unittest.TestCase):
                 start = _time.monotonic()
                 _time.sleep(0.3)
                 call_log.append((str(arguments.get("q", "")), start))
-                return '{"is_error": false, "content": [{"type": "text", "text": "ok"}]}'
+                return McpCallResult('{"is_error": false, "content": [{"type": "text", "text": "ok"}]}')
 
             def stop(self) -> None:
                 self.stopped = True

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 from chatcopilot.contracts.execution_scope import ExecutionScope
+from chatcopilot.contracts.agent import ResourceRef
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Mapping, Optional, Tuple
@@ -50,6 +51,7 @@ class ToolResult:
     stage: str = ""
     data: Dict[str, Any] = field(default_factory=dict)
     file_type_hint: Optional[str] = None
+    images: Tuple[ResourceRef, ...] = ()
 
     def to_llm_payload(self) -> Dict[str, Any]:
         """Return the bounded structured payload projected back to the model."""
@@ -66,6 +68,12 @@ class ToolResult:
                 payload["console_tail"] = self.console[-2000:]
             if self.doc_links:
                 payload["doc_links"] = self.doc_links
+            if self.images:
+                payload["images"] = [
+                    {"name": image.name, "media_type": image.media_type,
+                     "size_bytes": image.size_bytes, "sha256": image.sha256}
+                    for image in self.images
+                ]
             return payload
         payload = {
             "ok": False,

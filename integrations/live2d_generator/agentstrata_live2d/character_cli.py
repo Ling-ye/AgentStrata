@@ -39,6 +39,7 @@ def add_commands(commands):
             command.add_argument("--source", type=Path, required=True)
         if action == "apply":
             command.add_argument("--vtuber-root", type=Path, required=True)
+            command.add_argument("--presentation-only", action="store_true", help="只应用外观与声音，保留应用 Agent profile")
         if action == "release-entry":
             command.add_argument("--release", type=Path, required=True)
             command.add_argument("--asset-id", type=int, required=True)
@@ -77,7 +78,7 @@ def run(args):
     if action == "restore":
         return characters.restore(args.source)
     if action == "apply":
-        return characters.apply(args.id, args.version, args.vtuber_root)
+        return characters.apply(args.id, args.version, args.vtuber_root, presentation_only=args.presentation_only)
     if action == "catalog":
         return presets.list()
     if action == "refresh":

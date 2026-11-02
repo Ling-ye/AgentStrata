@@ -45,7 +45,8 @@ ccp_prepend_user_bins
 ccp_apply_bot_deploy_config
 # 实例 runtime env 是权威配置源；每次启动都重新加载。Gateway QQ 直接使用
 # OneBot/Gateway 配置，legacy Feishu edge 才由 cc-connect 消费平台凭据。
-ccp_load_env "AGENTSTRATA_LLM_CONFIG$|FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT"
+ccp_load_env "AGENTSTRATA_LLM_CONFIG$|FEISHU_APP_ID|FEISHU_APP_SECRET|TAVILY_API_KEY|QQ_|CHATCOPILOT_|WORKSPACE_ROOT" \
+    "${CHATCOPILOT_BOT_SPEC:-$CCP_HOME_DEFAULT/bots/${CHATCOPILOT_INSTANCE_ID:-lingye-copilot-qq}/bot.yaml}"
 ccp_apply_bot_deploy_config
 
 MT_HOME="${CHATCOPILOT_HOME:-$CCP_HOME_DEFAULT}"
@@ -65,7 +66,7 @@ fi
 
 if ccp_bot_uses_gateway "$BOT_SPEC"; then
     if [ "$APPLY_CONFIG" = "1" ]; then
-        step "Gateway QQ 使用已 provision 的实例 env；不渲染 cc-connect 配置"
+        step "Gateway 使用已 provision 的实例 env；不渲染 cc-connect 配置"
     fi
     mkdir -p "$LOG_DIR" || {
         err "无法创建日志目录：$LOG_DIR"
@@ -91,7 +92,6 @@ if ccp_bot_uses_gateway "$BOT_SPEC"; then
     echo "    instance:  ${CHATCOPILOT_INSTANCE_ID:-default}"
     echo "    bot spec:  $BOT_SPEC"
     echo "    gateway:   ws://127.0.0.1:${CHATCOPILOT_GATEWAY_PORT:-18789}"
-    echo "    provider:  ${CHATCOPILOT_QQ_ONEBOT_WS_URL:-ws://127.0.0.1:3001} (external NapCat/OneBot)"
     exec "$PY" -m chatcopilot.core.release_runtime \
         --control "$MT_HOME/.agentstrata-versions" --service gateway \
         --component chatcopilot --bot "$BOT_SPEC" -- \

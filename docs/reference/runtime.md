@@ -104,6 +104,11 @@ AgentResult、Gateway 最终回复或原生 Channel 的交付契约。操作见[
 VTuber 客户端，模型和动作白名单保存在客户端持久数据目录；导入不修改 Agent 身份或
 模型连接。职责与交付边界见[生成规格](../../specs/live2d-generation/spec.md)。
 
+独立桌宠应用 `bots/live2d-desktop` 用应用专属服务和私有组件目录绑定 VTuber，呈现组件
+不再创建第二份 Agent profile 或 Gateway。桌面只调用通用应用 CLI；主屏采样、变化检测
+和通知呈现属于接入组件，模型选择与任务循环继续使用自有 Agent。后台观察用单独受限
+客户端，Windows 句柄、主屏物理坐标和采样由 Windows-MCP 适配器处理。
+
 ## 外部桥接基线
 
 Live2D 和 QQ/NapCat 使用现有接口连接 Agent，不增加统一 Bridge 驱动或第二套会话管理。

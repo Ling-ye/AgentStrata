@@ -13,7 +13,7 @@ from open_llm_vtuber.utils.tts_preprocessor import tts_filter
 
 from chatcopilot.protocols.gateway_client import GatewayClientError, GatewayWebSocketClient
 from .bridge import ConversationBridge
-from .runtime import services
+from .runtime import services, observer
 
 _LOG = logging.getLogger(__name__)
 
@@ -34,6 +34,9 @@ class AgentStrataAgent(AgentInterface):
         if not text:
             return
         try:
+            watcher = observer()
+            if watcher is not None:
+                await watcher.begin_interaction()
             if text == "/resume":
                 reply = await self.bridge.resume()
             elif text == "/stop":
@@ -61,6 +64,9 @@ class AgentStrataAgent(AgentInterface):
             _LOG.warning("avatar dialogue unavailable | code=%s", code)
             yield SentenceOutput(DisplayText(
                 "AgentStrata 暂未完成本轮请求。请检查后端连接；使用 /resume 查询原请求，或停止后再发送。"), "", Actions())
+        finally:
+            if observer() is not None:
+                observer().end_interaction()
 
     def handle_interrupt(self, heard_response: str) -> None:
         # Heard text is presentation evidence, never a replacement for the native transcript.
@@ -71,6 +77,8 @@ class AgentStrataAgent(AgentInterface):
 
     async def _stop(self):
         try:
+            if observer() is not None:
+                await observer().cancel()
             await self.bridge.cancel()
         except (GatewayClientError, RuntimeError):
             _LOG.warning("avatar stop outcome unknown; original run was not replayed")

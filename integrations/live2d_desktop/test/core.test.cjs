@@ -1,18 +1,30 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
-const {connection, identifier, applyInput, localUrl, settings, visibleBounds} = require('../dist/contracts');
+const {connection, launchConnection, identifier, applyInput, localUrl, settings, visibleBounds} = require('../dist/contracts');
 const {WslBackend, distributions} = require('../dist/wsl');
 const {Controller} = require('../dist/controller');
 const {allowed, sameHttpOrigin} = require('../dist/security');
-const config = {distro: 'Ubuntu-22.04', command: '/opt/agentstrata/bin/agentstrata', root: '/srv/fixture/plugins'};
+const config = {distro: 'Ubuntu-22.04', root: '/srv/fixture/application'};
 const id = 'a'.repeat(32), backup = 'b'.repeat(32);
 const installed = [
   {id: 'open-llm-vtuber', status: 'ready', url: 'http://localhost:12493', installed_version: '0.4.0'},
   {id: 'live2d-generator', status: 'ready', url: 'http://127.0.0.1:19594', installed_version: '0.3.0'},
 ];
+test('a shortcut and explicit launch resolve the same installed application before locking', () => {
+  assert.deepEqual(launchConnection(['desktop.exe'], {connection: config, mode: 'pet', topmost: false}), config);
+  assert.deepEqual(launchConnection(['desktop.exe', '--application-root', config.root, '--distro', config.distro]), config);
+  assert.equal(launchConnection(['desktop.exe']), undefined);
+});
+test('an explicit target overrides the remembered app; incomplete targets fail', () => {
+  const other = {...config, root: '/srv/fixture/other'};
+  assert.deepEqual(launchConnection(['desktop.exe', '--application-root', other.root],
+    {connection: config, mode: 'pet', topmost: false}), other);
+  assert.throws(() => launchConnection(['desktop.exe', '--application-root'],
+    {connection: config, mode: 'pet', topmost: false}));
+});
 test('connection stores only nonsecret fields; commands are absolute WSL paths', () => {
   assert.deepEqual(connection({...config, token: 'never persist'}), config);
-  for (const value of [{...config, command: 'bash'}, {...config, distro: '--exec'}, {...config, root: '/tmp\ncommand'}])
+  for (const value of [{...config, root: 'relative'}, {...config, distro: '--exec'}, {...config, root: '/tmp\ncommand'}])
     assert.throws(() => connection(value));
   assert.deepEqual(settings({connection: {...config, token: 'x'}, mode: 'pet', topmost: true, token: 'x'}),
     {connection: config, mode: 'pet', topmost: true});
@@ -46,7 +58,7 @@ test('WSL discovery reads UTF-16 and installed backend versions', async () => {
   assert.deepEqual(await distributions(async (args, utf16) => {
     assert.deepEqual(args, ['--list', '--quiet']); assert.equal(utf16, true); return 'Ubuntu-22.04\r\nOther\r\n';
   }), ['Ubuntu-22.04', 'Other']);
-  assert.equal((await new WslBackend(config, async () => JSON.stringify(installed)).list()).length, 2);
+  assert.equal((await new WslBackend(config, async args => JSON.stringify(args.includes('app') ? {bot_id:'fixture',plugins:installed} : installed)).list()).length, 2);
 });
 test('native media origins with trailing slashes retain strict scheme, host and port checks', () => {
   assert.equal(sameHttpOrigin('http://localhost:12493/', 'http://localhost:12493'), true);
@@ -58,7 +70,7 @@ test('missing WSL, missing plugins, incompatible versions and malformed results 
   await assert.rejects(distributions(async () => {throw Error('WSL unavailable');}));
   for (const result of [[], installed.map(x => ({...x, status: 'uninstalled'})),
     installed.map(x => ({...x, installed_version: '0.1.0'})), {}, 'malformed']) {
-    await assert.rejects(new WslBackend(config, async () => JSON.stringify(result)).list());
+    await assert.rejects(new WslBackend(config, async args => JSON.stringify(args.includes('app') ? {bot_id:'fixture',plugins:installed} : result)).list());
   }
 });
 test('CLI uses argv without shell expansion and role operations cannot choose executable', async () => {
@@ -66,9 +78,9 @@ test('CLI uses argv without shell expansion and role operations cannot choose ex
     calls.push(args); return JSON.stringify({ok: true, backup});
   });
   await backend.start('open-llm-vtuber'); await backend.apply(id, 2); await backend.restore(backup);
-  assert.deepEqual(calls[0], ['--distribution', config.distro, '--exec', config.command,
-    'plugin', 'start', 'open-llm-vtuber', '--root', '/srv/fixture/a b;literal']);
-  assert.equal(calls[1][3], '/srv/fixture/a b;literal/live2d-generator/runtime/venv/bin/agentstrata-live2d');
+  assert.deepEqual(calls[0], ['--distribution', config.distro, '--exec', '/srv/fixture/a b;literal/.venv/bin/agentstrata',
+    'app', 'start', '--root', '/srv/fixture/a b;literal']);
+  assert.equal(calls[1][3], '/srv/fixture/a b;literal/.agentstrata-data/plugins/live2d-generator/runtime/venv/bin/agentstrata-live2d');
   assert(calls[1].includes(id)); assert(calls[2].includes(backup));
 });
 test('port conflicts and failed doctor are not accepted as ready', async () => {
@@ -85,9 +97,9 @@ function fixture(fail = {}) {
   const renderer = {prepare: async () => {call('prepare'); return !fail.busy;}, resume: async reload => call('resume:' + reload)};
   return {calls, backend, renderer, controller: new Controller(backend, renderer, async () => call('reachable'))};
 }
-test('startup verifies both services and Windows localhost forwarding', async () => {
+test('startup verifies the application and Windows localhost forwarding without requiring generator', async () => {
   const f = fixture(); await f.controller.connect();
-  assert.deepEqual(f.calls, ['list', 'start:open-llm-vtuber', 'reachable', 'start:live2d-generator', 'reachable']);
+  assert.deepEqual(f.calls, ['list', 'start:open-llm-vtuber', 'reachable']);
   await assert.rejects(fixture({reachable: true}).controller.connect());
 });
 test('busy dialogue prevents backend mutations and releases renderer lock', async () => {
@@ -125,4 +137,22 @@ test('concurrent apply or startup cannot stop the client twice', async () => {
   assert.equal((await f.controller.change({id, version: 1})).ok, false);
   await assert.rejects(f.controller.connect()); release(true); await first;
   assert.equal(f.calls.filter(x => x === 'stop').length, 1);
+});
+
+const {Perception}=require('../dist/perception');
+test('generator is optional for the independent desktop application',async()=>{
+  const client=installed.slice(0,1);
+  const backend=new WslBackend(config,async args=>JSON.stringify(args.includes('app')?{bot_id:'fixture',plugins:client}:client));
+  assert.equal((await backend.list()).length,1);
+  assert.equal(settings({}).mode,'pet');
+});
+test('perception never captures before opt-in or while hidden; delayed capture cannot re-enable after stop',async()=>{
+  const published=[];let captureCount=0,finish;
+  const sampler=new Perception(async()=>{captureCount++;return new Promise(resolve=>finish=resolve);},async(...args)=>published.push(args),error=>{throw error;});
+  await sampler.tick();assert.equal(captureCount,0);
+  await sampler.setEnabled(true);await sampler.tick();assert.equal(captureCount,0);
+  sampler.visible=true;const pending=sampler.tick();assert.equal(captureCount,1);
+  await sampler.setEnabled(false);finish('a'.repeat(64));await pending;
+  assert(published.every(([enabled])=>enabled===false));
+  await sampler.close();
 });

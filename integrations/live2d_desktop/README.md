@@ -1,7 +1,7 @@
 # AgentStrata Live2D Windows 客户端
 
-版本 `0.1.0`，固定 Electron `45.0.0`。桌面端只管理窗口与本机 WSL 插件生命周期，
-交互页面来自 `open-llm-vtuber 0.4.0`，角色管理来自 `live2d-generator 0.3.0`。
+版本 `0.2.0`，固定 Electron `45.0.0`。桌面端只管理窗口与本机 WSL 独立应用生命周期，
+交互页面来自 `open-llm-vtuber 0.5.0`，可选角色管理来自 `live2d-generator 0.4.0`。
 数据与凭据继续保存在 WSL。设计见[桌面规格](../../specs/live2d-desktop/spec.md)，
 安装和使用见[Live2D 指南](../../docs/guides/live2d.md#windows-桌面客户端)。
 
@@ -15,7 +15,7 @@ npm test
 ```
 
 在 Windows PowerShell 中运行下列脚本。源码可以位于 WSL，但 npm、Electron 和打包器
-始终在 Windows 原生目录运行。`BuildRoot` 默认为当前用户 LocalAppData 下的构建缓存。
+始终在 Windows 原生目录运行。`BuildRoot` 默认为`%USERPROFILE%\.agentstrata\applications\live2d-desktop\build`。
 
 ```powershell
 .\scripts\build-windows.ps1
@@ -26,7 +26,7 @@ PowerShell 执行策略，也不会把 UNC 路径作为 npm 的工作目录。�
 
 ```powershell
 $desktopSource = '\\wsl.localhost\Ubuntu-22.04\path\to\AgentStrata\integrations\live2d_desktop'
-$desktopBuild = Join-Path $env:LOCALAPPDATA 'AgentStrata\build'
+$desktopBuild = Join-Path $env:USERPROFILE '.agentstrata\applications\live2d-desktop\build'
 New-Item -ItemType Directory -Path $desktopBuild -Force | Out-Null
 Copy-Item "$desktopSource\scripts\build-windows.ps1" "$desktopBuild\build-windows.ps1" -Force
 & "$desktopBuild\build-windows.ps1" -SourceRoot $desktopSource
@@ -40,6 +40,13 @@ NSIS/ZIP 构建，结果在 `BuildRoot\release`。smoke 使用 Chromium 合成�
 日常 CI 在相关变更时使用该模式；手动完整 CI 和现有本地默认命令仍完整打包。
 安装包使用显式文件清单，排除源码测试、后台、私有角色和配置。发布或本地交付需同时
 提供匹配的完整 AgentStrata 源码快照及依赖锁文件；未经签名的本地测试包不代表商业发行。
+
+## Windows 桌面工具
+
+`./scripts/prepare-windows-mcp.ps1` 在独立目录准备固定 Windows-MCP 源码、Python 3.14.7
+与锁定依赖，复用上游 stdio，不创建控制网络服务。脚本核对下载摘要、拒绝接管不明目录，
+关闭遥测和自动界面监听。安装输出的原生 Python 路径填入应用 `local.env`。
+主屏读取扩展位于 `src/chatcopilot/external_tools/windows_desktop`，截图走统一 MCP 图片通路。
 
 ## 实现入口
 

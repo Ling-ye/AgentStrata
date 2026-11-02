@@ -7,7 +7,7 @@ from chatcopilot.application.execution_scope import execution_scope
 from chatcopilot.contracts.execution_scope import CommandTimeouts
 
 import asyncio
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 import hashlib
 import logging
@@ -157,6 +157,7 @@ class ActorSessionFactory:
         file_sender_factory: FileSenderFactory | None = None,
         background_submitter_factory: BackgroundSubmitterFactory | None = None,
         on_authorization_decision: DecisionSink | None = None,
+        principal_tool_allowlists: Mapping[tuple[str, str], frozenset[str]] | None = None,
     ) -> None:
         if not str(policy_version or "").strip():
             raise ValueError("policy_version must not be empty")
@@ -169,8 +170,18 @@ class ActorSessionFactory:
         self._file_sender_factory = file_sender_factory
         self._background_submitter_factory = background_submitter_factory
         self._decision_sink = on_authorization_decision
+        self._principal_tool_allowlists = dict(principal_tool_allowlists or {})
         self._journals: dict[tuple[str, str, str], GroupConversationJournal] = {}
         self._journal_lock = threading.RLock()
+
+    def tool_allowlist(self, principal: Principal) -> frozenset[str] | None:
+        return self._principal_tool_allowlists.get((principal.channel, principal.account_id))
+
+    def bind_workspace(self, principal: Principal) -> ActorWorkspaceBinding:
+        # Restricted clients have separate platform accounts and cannot claim
+        # the dialogue account's root. The workspace domain validates before mkdir.
+        return build_actor_workspace(workspace_root=self.workspace_root, principal=principal,
+                                     account_scoped=self.tool_allowlist(principal) is not None)
 
     def materialize(
         self,
@@ -184,6 +195,11 @@ class ActorSessionFactory:
 
         key = ActorSessionKey(session_id, principal.actor_ref)
         current = self.session_manager.get_actor(key)
+        allowed_tools = self.tool_allowlist(principal)
+        if current is not None and allowed_tools is not None:
+            # Observation clients do not retain previous screenshots in model context.
+            self._evict_key(key)
+            current = None
         _assert_principal_session_binding(
             self.session_manager,
             session_id=session_id,
@@ -193,16 +209,13 @@ class ActorSessionFactory:
         if current is not None:
             _assert_actor_authority(current, principal)
         try:
-            binding = build_actor_workspace(
-                workspace_root=self.workspace_root,
-                principal=principal,
-            )
+            binding = self.bind_workspace(principal)
             history = self._conversation_context(
                 binding=binding,
                 principal=principal,
                 cursor=current.journal_cursor if current is not None else 0,
                 turn_identity=turn_identity,
-            )
+            ) if allowed_tools is None else ""
             prompt_input = self._build_prompt_input(
                 session_id=session_id,
                 principal=principal,
@@ -254,17 +267,18 @@ class ActorSessionFactory:
             command_timeouts=getattr(self.agent_runtime, "command_timeouts", CommandTimeouts()),
         readonly_roots=getattr(self.agent_runtime, "readonly_roots", ()),
         )
-        if research_only:
+        restricted = research_only or allowed_tools is not None
+        if restricted:
             binding.service.execution_scope = replace(binding.service.execution_scope, writable_roots=(), native_write=False)
         try:
             file_sender = (
                 self._file_sender_factory(principal, binding.workspace, session_id)
-                if self._file_sender_factory is not None and not research_only
+                if self._file_sender_factory is not None and not restricted
                 else None
             )
             background_submitter = (
                 self._background_submitter_factory(principal, binding.workspace)
-                if self._background_submitter_factory is not None and not research_only
+                if self._background_submitter_factory is not None and not restricted
                 else None
             )
             agent_session = self.agent_runtime.open_session(
@@ -281,14 +295,16 @@ class ActorSessionFactory:
                     policy_version=RUNTIME_ACCESS_POLICY_VERSION,
                     on_decision=self._decision_sink,
                     research_only=research_only,
+                    allowed_tools=allowed_tools,
                 ),
                 background_submitter=background_submitter,
                 file_sender=file_sender,
                 workspace_service=binding.service,
                 host_policy=HostRuntimePolicy(scope=binding.service.execution_scope, network_access=True,
-                    native_capabilities=(frozenset({"web_search"}) if research_only else
+                    native_capabilities=(frozenset() if allowed_tools is not None else
+                        frozenset({"web_search"}) if research_only else
                         frozenset({"files", "shell", "web_search", "image", "image_generation", "subagents"})),
-                    extension_grants=("apps",) if (principal.role is Role.OWNER and self.runtime.runtime_id == "codex"
+                    extension_grants=("apps",) if (not restricted and principal.role is Role.OWNER and self.runtime.runtime_id == "codex"
                                                    and self.runtime.subagents.codex_extensions) else ()),
                 caller_role_hint=role_value(principal.role),
                 caller_identity=SessionIdentity(
@@ -333,10 +349,7 @@ class ActorSessionFactory:
                 "actor_session_unavailable",
                 "The actor Agent session is unavailable",
             )
-        binding = build_actor_workspace(
-            workspace_root=self.workspace_root,
-            principal=current.principal,
-        )
+        binding = self.bind_workspace(current.principal)
         prompt_input = self._build_prompt_input(
             session_id=key.gateway_session_id,
             principal=current.principal,
@@ -613,6 +626,7 @@ class ActorTurnExecutor:
                 agent_session = cast(AgentSessionProtocol, state.agent_session)
                 if (
                     not request.resource_refs
+                    and self.factory.tool_allowlist(request.principal) is None
                     and not (request.metadata or {}).get("scheduled_research")
                     and "memory.chat" in tuple(self.factory.runtime.tool_packs)
                 ):
@@ -621,10 +635,7 @@ class ActorTurnExecutor:
 
                         model = self.factory.agent_runtime.subagent_default_model_client
                         if model is not None:
-                            memory_binding = build_actor_workspace(
-                                workspace_root=self.factory.workspace_root,
-                                principal=request.principal,
-                            )
+                            memory_binding = self.factory.bind_workspace(request.principal)
                             await asyncio.to_thread(
                                 MemoryCurator(model).process,
                                 state=memory_binding.service.resolve_persistent_state(),
@@ -659,9 +670,7 @@ class ActorTurnExecutor:
                     agent_session.record_exchange(request.canonical_text, command_result.final_text)
                 capabilities = getattr(agent_session, "capabilities", None)
                 selected_model = state.one_shot_model_selection or state.model_selection
-                binding = build_actor_workspace(
-                    workspace_root=self.factory.workspace_root, principal=request.principal
-                )
+                binding = self.factory.bind_workspace(request.principal)
                 selected_prompt = self.factory._build_prompt_input(
                     session_id=request.session_id,
                     principal=request.principal,
@@ -776,7 +785,8 @@ class ActorTurnExecutor:
             state = pending.state
             if state is not None:
                 workspace = state.workspace
-                if workspace is not None and workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED:
+                if (workspace is not None and workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED
+                        or self.factory.tool_allowlist(request.principal) is not None):
                     self.factory.evict(state.key)
                 pending.state = None
             stage.complete({"action": "discarded" if state is not None and state.workspace is not None and state.workspace.scope == WORKSPACE_SCOPE_GROUP_SHARED else "not_applicable"})

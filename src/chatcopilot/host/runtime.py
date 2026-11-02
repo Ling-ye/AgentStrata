@@ -122,6 +122,7 @@ class GatewayRuntimeConfig:
     policy_version: str
     credentials: tuple[GatewayCredentialBinding, ...] = field(default=(), repr=False)
     client_roles: Mapping[str, Role] = field(default_factory=dict)
+    client_tool_allowlists: Mapping[str, frozenset[str]] = field(default_factory=dict)
     max_concurrent_turns: int = 8
     max_pending_ingress: int = 1024
 
@@ -502,6 +503,7 @@ def parse_gateway_runtime_config(
         )
     credentials = []
     client_roles = {}
+    client_tool_allowlists = {}
     try:
         if gateway_token is not None:
             credentials.append(GatewayCredentialBinding(token=gateway_token,
@@ -518,6 +520,8 @@ def parse_gateway_runtime_config(
             credentials.append(GatewayCredentialBinding(token=token, client_id=client.id,
                 client_mode="interactive", scopes=_ACP_SCOPES))
             client_roles[client.id] = Role(client.role)
+            if client.allowed_tools is not None:
+                client_tool_allowlists[client.id] = frozenset(client.allowed_tools)
         StaticGatewayCredentialAuthority(credentials)
     except ValueError as exc:
         raise GatewayRuntimeConfigurationError(
@@ -614,6 +618,7 @@ def parse_gateway_runtime_config(
         policy_version=f"gateway-v{gateway.protocol_version}",
         credentials=tuple(credentials),
         client_roles=client_roles,
+        client_tool_allowlists=client_tool_allowlists,
         max_concurrent_turns=gateway.max_concurrent_turns,
         max_pending_ingress=gateway.max_pending_ingress,
     )
@@ -750,6 +755,9 @@ def build_gateway_runtime_host(
             policy_version=config.policy_version,
             on_authorization_decision=record_authorization_decision,
             file_sender_factory=file_sender_factory,
+            principal_tool_allowlists={
+                ("gateway", client_id): tools for client_id, tools in config.client_tool_allowlists.items()
+            },
         )
         fetcher = resource_fetcher if resource_fetcher is not None else (
             channel_assembly.resource_fetcher if channel_assembly is not None else None)

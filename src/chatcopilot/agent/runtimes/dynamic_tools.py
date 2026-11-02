@@ -134,6 +134,7 @@ class DynamicToolBridge:
             )
         )
         captured = None
+        images = ()
         try:
             result = self.executor.execute(name, args, request_text=binding["request_text"])
             payload = result.to_llm_payload()
@@ -142,6 +143,9 @@ class DynamicToolBridge:
                 payload = self.payload_filter(payload)
             payload = self.executor.project_result(name, payload)
             json.dumps(payload, allow_nan=False)
+            if result.ok and payload.get("ok") is True:
+                images = result.images
+            response = self._response(payload, images=images)
         except Exception:
             payload = {
                 "ok": False,
@@ -150,6 +154,7 @@ class DynamicToolBridge:
                 "outcome": "unknown",
                 "retry_safe": False,
             }
+            response = self._response(payload)
         finally:
             reset_trace(token)
         with self.lock:
@@ -183,14 +188,19 @@ class DynamicToolBridge:
                         "finished_at": time.time(),
                     }
                 )
-        return self._response(payload)
+        return response
 
     @staticmethod
-    def _response(payload):
+    def _response(payload, *, images=()):
+        from chatcopilot.core.image_content import validate_image_file
         return {
             "success": payload.get("ok") is True,
             "contentItems": [
-                {"type": "inputText", "text": json.dumps(payload, ensure_ascii=False)}
+                {"type": "inputText", "text": json.dumps(payload, ensure_ascii=False)},
+                *[{"type": "inputImage", "imageUrl": validate_image_file(
+                    image.path, declared_media_type=image.media_type,
+                    expected_size_bytes=image.size_bytes, expected_sha256=image.sha256,
+                ).data_url()} for image in images],
             ],
         }
 

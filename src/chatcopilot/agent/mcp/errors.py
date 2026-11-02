@@ -31,6 +31,10 @@ class McpToolBusyError(RuntimeError):
         self.tool_name = tool_name
 
 
+class McpToolOutcomeUnknown(RuntimeError):
+    """A dispatched interactive call lost its receipt and must not be replayed."""
+
+
 def _is_timeout_error(exc: BaseException | None) -> bool:
     if exc is None:
         return False
@@ -40,4 +44,4 @@ def _is_timeout_error(exc: BaseException | None) -> bool:
     return any(kw in msg for kw in _TIMEOUT_KEYWORDS)
 
 
-__all__ = ["McpToolBusyError", "McpToolTimeoutError", "_is_timeout_error"]
+__all__ = ["McpToolBusyError", "McpToolTimeoutError", "McpToolOutcomeUnknown", "_is_timeout_error"]

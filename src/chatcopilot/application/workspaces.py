@@ -60,6 +60,7 @@ def build_actor_workspace(
     *,
     workspace_root: Path,
     principal: Principal,
+    account_scoped: bool = False,
 ) -> ActorWorkspaceBinding:
     """Construct one workspace without consulting cwd or process identity variables."""
 
@@ -80,6 +81,10 @@ def build_actor_workspace(
             "workspace_conversation_kind_unsupported",
             "Actor workspaces support only p2p and group conversations",
         )
+    if account_scoped:
+        namespace = hashlib.sha256(f"{platform}\0{account_id}".encode()).hexdigest()
+        parent = _ensure_private_directory(root.parent, root.name + "-clients")
+        root = _ensure_private_directory(parent, namespace)
     _bind_workspace_owner(root, platform, account_id)
 
     runtime_state_root: Path | None = None

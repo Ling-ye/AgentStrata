@@ -27,6 +27,7 @@ PROBE = r'''
 from pathlib import Path
 import json, os, sys, threading, time
 area = Path(sys.argv[1])
+bridge = sys.argv[3]
 root = area / "installed"
 hidden = [Path(path) for path in json.loads(sys.argv[2])]
 sys.path[:] = [str(root), str(root / "src"), str(area / "dependencies"), *[
@@ -74,10 +75,10 @@ generation = store.acquire_writer_generation()
 recorder = ObservationRecorder(store, generation)
 assert recorder.application_version == {"bot_id": identity["bot_id"], "source_digest": identity["source_digest"]}
 import pytest
-code = pytest.main([str(root / "tests/integration/test_application_bridge_baseline.py"), "-q", "-k", "each_bridge and qq",
+code = pytest.main([str(root / "tests/integration/test_application_bridge_baseline.py"), "-q", "-k", "each_bridge and " + bridge,
                    "-p", "no:cacheprovider", "--basetemp", str(area / "state/bridge-tests")])
 origins = [Path(module.__file__).resolve() for name, module in sys.modules.items()
-           if (name == "chatcopilot" or name.startswith("chatcopilot.") or name == "console" or name.startswith("console."))
+           if (name == "chatcopilot" or name.startswith("chatcopilot.") or name == "console" or name.startswith("console.") or name == "agentstrata_vtuber" or name.startswith("agentstrata_vtuber."))
            and getattr(module, "__file__", None)]
 assert origins and all(path.is_relative_to(root) for path in origins)
 print(json.dumps({"source_digest": identity["source_digest"], "installed_modules": len(origins),
@@ -87,9 +88,10 @@ raise SystemExit(code)
 
 
 @pytest.mark.skipif(sys.platform != "linux" or shutil.which("bwrap") is None, reason="Linux Bubblewrap installation boundary")
-def test_application_runs_without_producer_checkout_or_delivery_directory():
+@pytest.mark.parametrize("bot_id,bridge", [("lingye-copilot-qq", "qq"), ("live2d-desktop", "live2d")])
+def test_application_runs_without_producer_checkout_or_delivery_directory(bot_id, bridge):
     manifest = source_manifest(ROOT)
-    relative = "bots/lingye-copilot-qq/bot.yaml"
+    relative = f"bots/{bot_id}/bot.yaml"
     app = load_application_spec(ROOT / relative)
     bot_id = app.raw.get("deploy", {}).get("instance_id") or app.raw["id"]
     receipt = {"candidate_digest": manifest_digest(manifest), "goal_digest": "synthetic-distribution-fixture",
@@ -110,7 +112,7 @@ def test_application_runs_without_producer_checkout_or_delivery_directory():
         for path in hidden:
             command.extend(("--tmpfs", str(path)))
         command.extend(("--bind", str(area / "state"), str(area / "state"), "--chdir", str(area / "installed"),
-            str(Path(sys.base_prefix) / "bin/python3"), "-I", "-B", "-c", PROBE, str(area), json.dumps(list(map(str, hidden)))))
+            str(Path(sys.base_prefix) / "bin/python3"), "-I", "-B", "-c", PROBE, str(area), json.dumps(list(map(str, hidden))), bridge))
         completed = subprocess.run(command, env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
             capture_output=True, text=True, timeout=180)
         assert completed.returncode == 0, completed.stdout + "\n" + completed.stderr

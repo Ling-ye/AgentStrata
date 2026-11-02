@@ -33,19 +33,32 @@ diff --git a/src/renderer/src/App.tsx b/src/renderer/src/App.tsx
                                  <AppContent />
                                </WebSocketHandler>
                              </BrowserProvider>
+diff --git a/src/renderer/src/components/canvas/live2d.tsx b/src/renderer/src/components/canvas/live2d.tsx
+--- a/src/renderer/src/components/canvas/live2d.tsx
++++ b/src/renderer/src/components/canvas/live2d.tsx
+@@ -107,6 +107,7 @@
+         }}
+         onPointerDown={handlePointerDown}
+         onContextMenu={handleContextMenu}
++        onDoubleClick={() => { if (isPet) (window as any).inputSubtitle?.open(); }}
+         {...handlers}
+       >
+         <canvas
 diff --git a/src/renderer/src/components/electron/agentstrata-desktop.tsx b/src/renderer/src/components/electron/agentstrata-desktop.tsx
 new file mode 100644
 --- /dev/null
 +++ b/src/renderer/src/components/electron/agentstrata-desktop.tsx
-@@ -0,0 +1,45 @@
+@@ -0,0 +1,49 @@
 +import { useEffect, useRef, useState } from 'react';
 +import { useAiState } from '@/context/ai-state-context';
 +import { useVAD } from '@/context/vad-context';
 +import { useWebSocket } from '@/context/websocket-context';
++import { useMode } from '@/context/mode-context';
 +import { desktop, lockDesktop, setDesktopVisible } from '@/services/desktop-state';
 +
 +export default function AgentStrataDesktop() {
 +  const { aiState } = useAiState();
++  const { mode } = useMode();
 +  const { stopMic, micOn, setAutoStartMicOn, setAutoStartMicOnConvEnd, setAutoStopMic } = useVAD();
 +  const { wsState, reconnect } = useWebSocket();
 +  const state = useRef({ aiState, micOn, wsState });
@@ -75,14 +88,130 @@ new file mode 100644
 +    const timer = setTimeout(reconnect, 3000);
 +    return () => clearTimeout(timer);
 +  }, [locked, wsState, reconnect]);
++  useEffect(() => { desktop?.activity(micOn || !['idle', 'interrupted', 'waiting'].includes(aiState)); }, [aiState, micOn]);
 +  if (!desktop) return null;
 +  if (locked) return <div role="status" style={{ position: 'fixed', inset: 0, zIndex: 2147483647,
 +    background: '#18202bee', color: 'white', display: 'grid', placeItems: 'center' }}>正在切换角色，请稍候…</div>;
++  if (mode === 'pet') return null;
 +  return <button type="button" onClick={() => desktop.openManager()} style={{ position: 'fixed', top: 38,
 +    right: 12, zIndex: 1000, borderRadius: 8, padding: '6px 12px', color: '#ecf0f6', background: '#28394d',
 +    WebkitAppRegion: 'no-drag' } as React.CSSProperties} onMouseEnter={() => (window.api as any)?.updateComponentHover('characters', true)}
 +    onMouseLeave={() => (window.api as any)?.updateComponentHover('characters', false)}>我的角色</button>;
 +}
+diff --git a/src/renderer/src/components/electron/desktop-bubble.tsx b/src/renderer/src/components/electron/desktop-bubble.tsx
+new file mode 100644
+--- /dev/null
++++ b/src/renderer/src/components/electron/desktop-bubble.tsx
+@@ -0,0 +1,72 @@
++import { useEffect, useState } from 'react';
++import { LAppDelegate } from '../../../WebSDK/src/lappdelegate';
++import { desktop } from '@/services/desktop-state';
++
++type Anchor = {x: number; y: number};
++const placed = new WeakSet<object>();
++function bounds() {
++  const adapter = (window as any).getLAppAdapter?.();
++  const model = adapter?.getModel();
++  const canvas = document.getElementById('canvas') as HTMLCanvasElement | null;
++  const view = LAppDelegate.getInstance()?.getView() as any;
++  if (!model?._model || !model._modelMatrix || !canvas || !view?._deviceToScreen) return null;
++  const rect = canvas.getBoundingClientRect();
++  let left = Infinity, top = Infinity, right = -Infinity, bottom = -Infinity;
++  for (let i=0; i<model._model.getDrawableCount(); i++) {
++    if (!model._model.getDrawableDynamicFlagIsVisible(i)) continue;
++    const vertices = model._model.getDrawableVertices(i);
++    for (let j=0; j<vertices.length; j+=2) {
++      const x = rect.left + view._deviceToScreen.invertTransformX(model._modelMatrix.transformX(vertices[j])) * rect.width / canvas.width;
++      const y = rect.top + view._deviceToScreen.invertTransformY(model._modelMatrix.transformY(vertices[j+1])) * rect.height / canvas.height;
++      left=Math.min(left,x); right=Math.max(right,x); top=Math.min(top,y); bottom=Math.max(bottom,y);
++    }
++  }
++  return Number.isFinite(top) && bottom-top>1 ? {adapter,model,canvas,view,left,right,top,bottom} : null;
++}
++export function usePetAnchor(): Anchor {
++  const [anchor,setAnchor]=useState<Anchor>({x:window.innerWidth/2,y:window.innerHeight/2});
++  useEffect(()=>{
++    const tick=()=>{
++      let b=bounds(); if (!b) return;
++      if (desktop && !placed.has(b.model)) {
++        const ratio=Math.min(1,400/(b.bottom-b.top));
++        const scale=b.model._modelMatrix.getScaleX()*ratio;
++        window.dispatchEvent(new CustomEvent('desktop-model-scale',{detail:scale}));
++        b=bounds(); if (!b) return;
++        const rect=b.canvas.getBoundingClientRect(), factor=b.canvas.width/rect.width;
++        const dx=window.innerWidth-64-b.right,dy=window.innerHeight-24-b.bottom;
++        const position=b.adapter.getModelPosition();
++        b.adapter.setModelPosition(position.x+b.view._deviceToScreen.transformX(dx*factor)-b.view._deviceToScreen.transformX(0),
++          position.y+b.view._deviceToScreen.transformY(dy*factor)-b.view._deviceToScreen.transformY(0));
++        placed.add(b.model);
++      }
++      setAnchor({x:Math.max(180,Math.min(window.innerWidth-180,(b.left+b.right)/2)),y:Math.max(100,b.top-12)});
++    };
++    const timer=setInterval(tick,100);return()=>clearInterval(timer);
++  },[]);
++  return anchor;
++}
++export function DesktopBubble({anchor,text,aiState}:{anchor:Anchor;text:string;aiState:string}) {
++  const [notice,setNotice]=useState('');
++  const [visible,setVisible]=useState(false);
++  const [watching,setWatching]=useState(false);
++  useEffect(()=>{if(text){setNotice(text);setVisible(true);}},[text]);
++  useEffect(()=>{
++    const receive=(event:Event)=>{setNotice((event as CustomEvent<string>).detail);setVisible(true);};
++    window.addEventListener('desktop-notice',receive);
++    const unsubscribe=desktop?.onPerception(setWatching);
++    return()=>{window.removeEventListener('desktop-notice',receive);unsubscribe?.();};
++  },[]);
++  useEffect(()=>{
++    if (!visible || !['idle','interrupted','waiting'].includes(aiState)) return undefined;
++    const timer=setTimeout(()=>setVisible(false),6000); return()=>clearTimeout(timer);
++  },[visible,notice,aiState]);
++  if(!visible&&!watching)return null;
++  return <div style={{position:'fixed',left:anchor.x,top:anchor.y,transform:'translate(-50%,-100%)',zIndex:1000,
++    maxWidth:320,color:'#f8fafc',fontSize:14,lineHeight:1.5,pointerEvents:'auto'}}
++    onMouseEnter={()=>window.api?.updateComponentHover?.('perception',true)}
++    onMouseLeave={()=>window.api?.updateComponentHover?.('perception',false)}>
++    {visible&&<div style={{padding:'12px 16px',borderRadius:18,background:'rgba(24,32,43,.9)',maxHeight:180,overflowY:'auto',whiteSpace:'pre-wrap'}}>{notice}</div>}
++    {watching&&<button onClick={()=>desktop.setPerception(false)} style={{display:'block',margin:'6px auto 0',padding:'3px 10px',borderRadius:12,background:'#245449',color:'white',fontSize:12}}>正在观察主屏 · 暂停</button>}
++  </div>;
++}
+diff --git a/src/renderer/src/components/electron/input-subtitle.tsx b/src/renderer/src/components/electron/input-subtitle.tsx
+--- a/src/renderer/src/components/electron/input-subtitle.tsx
++++ b/src/renderer/src/components/electron/input-subtitle.tsx
+@@ -15,6 +15,7 @@
+ import { useInputSubtitle } from '@/hooks/electron/use-input-subtitle';
+ import { useDraggable } from '@/hooks/electron/use-draggable';
+ import { inputSubtitleStyles } from './electron-style';
++import { DesktopBubble, usePetAnchor } from './desktop-bubble';
+ import { useMode } from '@/context/mode-context';
+ 
+ export function InputSubtitle() {
+@@ -46,7 +47,8 @@
+     componentId: 'input-subtitle',
+   });
+ 
+-  const [isVisible, setIsVisible] = useState(true);
++  const anchor = usePetAnchor();
++  const [isVisible, setIsVisible] = useState(!(window as any).agentstrataDesktop);
+ 
+   const handleClose = useCallback(() => {
+     if (isPet) {
+@@ -84,13 +86,14 @@
+     };
+   }, [isPet, handleClose]);
+ 
+-  if (!isVisible) return null;
++  if (!isVisible) return <DesktopBubble anchor={anchor} text={lastAIMessage || ''} aiState={aiState} />;
+ 
+   return (
+     <Box
+       ref={elementRef}
+       {...inputSubtitleStyles.container}
+       {...inputSubtitleStyles.draggableContainer(isDragging)}
++      style={(window as any).agentstrataDesktop ? {left: anchor.x, top: Math.max(16, Math.min(window.innerHeight - 240, anchor.y)), bottom: 'auto'} : undefined}
+       onMouseDown={handleMouseDown}
+       onMouseEnter={handleMouseEnter}
+       onMouseLeave={handleMouseLeave}
 diff --git a/src/renderer/src/components/footer/footer.tsx b/src/renderer/src/components/footer/footer.tsx
 --- a/src/renderer/src/components/footer/footer.tsx
 +++ b/src/renderer/src/components/footer/footer.tsx
@@ -166,6 +295,18 @@ diff --git a/src/renderer/src/context/chat-history-context.tsx b/src/renderer/sr
    );
    const [fullResponse, setFullResponse] = useState(DEFAULT_HISTORY.fullResponse);
    const [forceNewMessage, setForceNewMessage] = useState<boolean>(false);
+diff --git a/src/renderer/src/context/mode-context.tsx b/src/renderer/src/context/mode-context.tsx
+--- a/src/renderer/src/context/mode-context.tsx
++++ b/src/renderer/src/context/mode-context.tsx
+@@ -12,7 +12,7 @@
+ const ModeContext = createContext<ModeContextType | undefined>(undefined);
+ 
+ export const ModeProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+-  const [mode, setModeState] = useState<ModeType>('window');
++  const [mode, setModeState] = useState<ModeType>((window as any).agentstrataDesktop?.initialMode ?? 'window');
+   const isElectron = window.api !== undefined;
+ 
+   const setMode = (newMode: ModeType) => {
 diff --git a/src/renderer/src/context/proactive-speak-context.tsx b/src/renderer/src/context/proactive-speak-context.tsx
 --- a/src/renderer/src/context/proactive-speak-context.tsx
 +++ b/src/renderer/src/context/proactive-speak-context.tsx
@@ -234,6 +375,36 @@ diff --git a/src/renderer/src/context/websocket-context.tsx b/src/renderer/src/c
  
  export interface HistoryInfo {
    uid: string;
+diff --git a/src/renderer/src/env.d.ts b/src/renderer/src/env.d.ts
+--- a/src/renderer/src/env.d.ts
++++ b/src/renderer/src/env.d.ts
+@@ -2,6 +2,7 @@
+   api?: {
+     setIgnoreMouseEvents: (ignore: boolean) => void
+     showContextMenu?: () => void
++    updateComponentHover?: (id: string, hovering: boolean) => void
+     onModeChanged: (callback: (mode: string) => void) => void
+   }
+ }
+diff --git a/src/renderer/src/hooks/canvas/use-live2d-resize.ts b/src/renderer/src/hooks/canvas/use-live2d-resize.ts
+--- a/src/renderer/src/hooks/canvas/use-live2d-resize.ts
++++ b/src/renderer/src/hooks/canvas/use-live2d-resize.ts
+@@ -236,6 +236,15 @@
+     return undefined;
+   }, [handleWheel, canvasRef]);
+ 
++  useEffect(() => {
++    const sync = (event: Event) => {
++      const scale = (event as CustomEvent<number>).detail;
++      lastScaleRef.current = scale; targetScaleRef.current = scale; applyScale(scale);
++    };
++    window.addEventListener('desktop-model-scale', sync);
++    return () => window.removeEventListener('desktop-model-scale', sync);
++  }, []);
++
+   // Clean up animations on unmount
+   useEffect(() => () => {
+     if (animationFrameRef.current) {
 diff --git a/src/renderer/src/hooks/utils/use-audio-task.ts b/src/renderer/src/hooks/utils/use-audio-task.ts
 --- a/src/renderer/src/hooks/utils/use-audio-task.ts
 +++ b/src/renderer/src/hooks/utils/use-audio-task.ts
@@ -471,9 +642,12 @@ diff --git a/src/renderer/src/services/websocket-handler.tsx b/src/renderer/src/
  
    useEffect(() => {
      autoStartMicOnConvEndRef.current = autoStartMicOnConvEnd;
-@@ -94,6 +98,18 @@
+@@ -92,8 +96,23 @@
+   }, [setAiState, clearResponse, setForceNewMessage, startMic, stopMic]);
+ 
    const handleWebSocketMessage = useCallback((message: MessageEvent) => {
-     console.log('Received message from server:', message);
+-    console.log('Received message from server:', message);
++    console.debug('Received message type:', message.type);
      switch (message.type) {
 +      case 'agentstrata-mode':
 +        stopMic();
@@ -484,13 +658,16 @@ diff --git a/src/renderer/src/services/websocket-handler.tsx b/src/renderer/src/
 +      case 'agentstrata-avatar-action':
 +        handleAvatarAction(message, avatarModelNameRef.current);
 +        break;
++      case 'desktop-notice':
++        if (message.text) window.dispatchEvent(new CustomEvent('desktop-notice', {detail: message.text}));
++        break;
 +      case 'agentstrata-reply':
 +        setAgentStrataRun(message.run_id);
 +        break;
        case 'control':
          if (message.text) {
            handleControlMessage(message.text);
-@@ -183,6 +199,7 @@
+@@ -183,6 +202,7 @@
          // No need to open mic here
          if (message.history_uid) {
            setCurrentHistoryUid(message.history_uid);

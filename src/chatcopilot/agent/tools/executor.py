@@ -13,6 +13,7 @@ import io
 import json
 import os
 import sys
+import threading
 from chatcopilot.core.observation_context import permission_phase
 
 import traceback
@@ -127,6 +128,9 @@ class ToolExecutor:
         self._caller_role_hint = caller_role_hint or "unknown"
         self._job_context = job_context
         self._result_store = result_store
+        self._images = {}
+        self._images_lock = threading.Lock()
+        self._closed = False
 
     def project_result(self, tool_name: str, payload: dict[str, Any]) -> dict[str, Any]:
         """Project only an already-filtered result for this live session."""
@@ -144,6 +148,11 @@ class ToolExecutor:
         return self._result_store.project(tool, payload)
 
     def close(self) -> None:
+        from chatcopilot.core.tool_images import dispose_tool_images
+        with self._images_lock:
+            self._closed = True
+            images, self._images = tuple(self._images.values()), {}
+        dispose_tool_images(images)
         if self._result_store is not None:
             self._result_store.close()
 
@@ -278,6 +287,14 @@ class ToolExecutor:
                         )
                     console_text = buf.getvalue()
                     if handler_result.ok:
+                        from chatcopilot.core.tool_images import validate_tool_images
+                        validate_tool_images(handler_result.images, tool_context.workspace_root)
+                        with self._images_lock:
+                            if self._closed:
+                                from chatcopilot.core.tool_images import dispose_tool_images
+                                dispose_tool_images(handler_result.images)
+                                return ToolResult(ok=False, error="Tool session closed", error_code="tool_session_closed")
+                            self._images.update({image.path: image for image in handler_result.images})
                         try:
                             json.dumps(handler_result.data, ensure_ascii=False)
                         except (TypeError, ValueError) as exc:
@@ -329,6 +346,7 @@ class ToolExecutor:
                         stage=handler_result.stage,
                         data=dict(handler_result.data),
                         file_type_hint=handler_result.file_type_hint,
+                        images=tuple(handler_result.images),
                     )
                 except Exception as exc:
                     console_text = buf.getvalue()

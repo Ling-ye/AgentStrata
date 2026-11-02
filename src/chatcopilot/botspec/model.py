@@ -48,6 +48,7 @@ class GatewayClientSpec:
     id: str
     token_env: str
     role: str = "user"
+    allowed_tools: tuple[str, ...] | None = None
 
 
 @dataclass(frozen=True)

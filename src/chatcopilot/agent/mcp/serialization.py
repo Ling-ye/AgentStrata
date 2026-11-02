@@ -3,9 +3,18 @@ from __future__ import annotations
 
 import json
 import re
+from dataclasses import dataclass
 from typing import Any
+from chatcopilot.core.image_content import ValidatedImage, decode_base64_image
+from chatcopilot.contracts.resources import INBOUND_FILE_MAX_BYTES
 
-def _serialize_call_result(result: Any, *, max_chars: int) -> str:
+
+@dataclass(frozen=True)
+class McpCallResult:
+    text: str
+    images: tuple[ValidatedImage, ...] = ()
+
+def _serialize_call_result(result: Any, *, max_chars: int) -> McpCallResult:
     payload: dict[str, Any] = {
         "is_error": bool(getattr(result, "isError", False)),
     }
@@ -13,10 +22,20 @@ def _serialize_call_result(result: Any, *, max_chars: int) -> str:
     if structured is not None:
         payload["structured"] = structured
     content_items: list[dict[str, Any]] = []
+    images: list[ValidatedImage] = []
     for item in getattr(result, "content", []) or []:
         item_type = getattr(item, "type", "")
         if item_type == "text":
             content_items.append({"type": "text", "text": getattr(item, "text", "")})
+        elif item_type == "image":
+            image = decode_base64_image(getattr(item, "data", ""),
+                                        declared_media_type=getattr(item, "mimeType", ""))
+            images.append(image)
+            if sum(value.size_bytes for value in images) > INBOUND_FILE_MAX_BYTES:
+                raise ValueError("MCP images exceed the resource input byte limit")
+            content_items.append({"type": "image", "index": len(images) - 1,
+                                  "media_type": image.media_type, "sha256": image.sha256,
+                                  "size_bytes": image.size_bytes})
         else:
             content_items.append({"type": item_type or type(item).__name__})
     if content_items:
@@ -24,7 +43,7 @@ def _serialize_call_result(result: Any, *, max_chars: int) -> str:
     text = json.dumps(payload, ensure_ascii=False)
     if len(text) > max_chars:
         text = _compact_mcp_response(payload, max_chars)
-    return text
+    return McpCallResult(text, tuple(images))
 
 
 def _compact_mcp_response(payload: dict[str, Any], max_chars: int) -> str:

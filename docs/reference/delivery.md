@@ -14,7 +14,13 @@
 宿主根据私有安装身份生成本机部署位置。BotSpec、Agent profile 和实现文件均保持交付内容。
 `.agentstrata-application.json` 记录唯一应用及交付来源；`.agentstrata-data`、私有环境及
 受管版本目录不进入后续候选。既有目录不覆盖，相同交付可继续安装依赖。
-依赖准备完成后仍需配置模型、NapCat 和来源信息；`setup` 沿用现有部署工具，不把源码安装报告为机器人就绪。
+依赖准备完成后仍需配置模型和目标应用的连接；`setup` 沿用现有部署工具，不把源码安装报告为机器人就绪。
+应用同目录可用 `components.yaml` 声明插件及公开选项，入口调用 Plugins 完成软件准备，
+再把组件服务登记到 `.agentstrata-versions/components.json`。Deployment 通过通用服务声明
+按顺序启停并核对运行回执，不导入 Plugins。`app start/stop/status` 提供应用作用域的薄控制；
+WSL 启动环境读取应用声明的客户端凭据及 MCP 环境引用，不依赖特定插件的变量名前缀。
+桌面通过仅本机 CLI 的 `desktop-info` 取得呈现地址与控制凭据，不能将其输出公开。
+Windows 包、Windows-MCP 环境和上游前端构建须随对应源码分别核验，M5 不回滚这些构建产物。
 
 Console 可通过 `CHATCOPILOT_SOURCE_ROOT` 显式选择安装副本，也可直接从副本启动。
 Console 与 Evaluation 仅发现该安装声明的应用；Harness 和 Eval 继续在本机按需启用。

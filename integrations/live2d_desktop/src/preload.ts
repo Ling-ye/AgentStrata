@@ -45,7 +45,8 @@ contextBridge.exposeInMainWorld('api', {
   onToggleInputSubtitle: (fn: Function) => subscribe('toggle-input-subtitle', fn),
 });
 contextBridge.exposeInMainWorld('agentstrataDesktop', {
-  version: '0.1.0',
+  version: '0.2.0',
+  initialMode: process.argv.includes('--agentstrata-mode=window') ? 'window' : 'pet',
   status: () => ipcRenderer.invoke('desktop-status'),
   openManager: () => ipcRenderer.invoke('desktop-manager'),
   apply: (id: unknown, version: unknown) => ipcRenderer.invoke('desktop-apply', {id, version}),
@@ -57,6 +58,9 @@ contextBridge.exposeInMainWorld('agentstrataDesktop', {
     try { idle = (await fn()) === true; } finally { ipcRenderer.send('desktop-prepared', {nonce, idle}); }
   }),
   ready: () => ipcRenderer.send('desktop-ready'),
+  activity: (busy: unknown) => ipcRenderer.send('desktop-activity', busy),
+  setPerception: (enabled: unknown) => ipcRenderer.invoke('desktop-perception-set', enabled),
+  onPerception: (fn: Function) => subscribe('desktop-perception', fn),
 });
 // These operations are accepted only from the packaged settings page, never from a backend page.
 contextBridge.exposeInMainWorld('desktopSettings', {

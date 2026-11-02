@@ -16,7 +16,7 @@ export class Controller {
     try {
       const plugins = await this.backend.list();
       // systemd start is idempotent and doctor checks the actual service, not just an open port.
-      for (const plugin of plugins) {
+      for (const plugin of plugins.filter(value => value.id === 'open-llm-vtuber')) {
         await this.backend.start(plugin.id);
         await this.reachable(plugin);
       }

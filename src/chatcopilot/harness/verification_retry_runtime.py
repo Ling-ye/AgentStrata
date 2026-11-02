@@ -100,7 +100,7 @@ def reconcile_pytest_gap(store, task_id, gap_digest):
     reported = attempt.get("reported_gaps", attempt.get("gaps", []))
     matches = [gap for gap in reported
                if hashlib.sha256(json_text(gap).encode()).hexdigest() == gap_digest]
-    if not matches or matches[0].get("code") != "fixture_missing":
+    if not matches or matches[0].get("code") not in {"fixture_missing", "material_missing"}:
         raise HarnessError("verification_evidence", "必须明确选择一条 pytest 草案缺失声明")
     gap = matches[0]
     source = task["source"]

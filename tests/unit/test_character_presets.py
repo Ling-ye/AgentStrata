@@ -211,7 +211,8 @@ def character_target(root, monkeypatch):
     target = vtuber_target(root, monkeypatch)
     write_bytes(target / "config/identity.md", b"original identity")
     write_bytes(target / "config/response-style.md", b"original style")
-    write_json(target / "config/bot.yaml", {"prompts": {"schema_version": 2, "identity": "identity.md",
+    write_json(target / "config/bot.yaml", {"id": "fixture", "agent_profile": "agent.yaml"})
+    write_json(target / "config/agent.yaml", {"prompts": {"schema_version": 2, "identity": "identity.md",
                                                         "response_style": "response-style.md"}, "llm": "keep"})
     return target
 
@@ -283,7 +284,7 @@ def test_restore_does_not_overwrite_user_persona_edits(tmp_path, monkeypatch):
 def test_custom_bot_prompt_binding_is_not_silently_overwritten(tmp_path, monkeypatch):
     service, saved = saved_model(tmp_path)
     target = character_target(tmp_path / "client", monkeypatch)
-    write_json(target / "config/bot.yaml", {"prompts": {"schema_version": 2, "identity": "custom.md"}})
+    write_json(target / "config/agent.yaml", {"prompts": {"schema_version": 2, "identity": "custom.md"}})
     with pytest.raises(GenerationError, match="绑定"):
         service.apply(saved["id"], 1, target)
     assert (target / "config/identity.md").read_bytes() == b"original identity"
@@ -491,3 +492,25 @@ def test_runtime_does_not_start_provider_if_original_input_cannot_be_saved(tmp_p
             runtime.start(GenerationRequest("role"), source)
         assert runtime._process is None
         assert runtime.list()[0]["status"] == "failed"
+
+
+def test_application_role_import_changes_presentation_without_replacing_agent(tmp_path, monkeypatch):
+    from tests.unit.test_live2d_application import app as application_fixture
+    from integrations.live2d_generator.agentstrata_live2d.install import CONFIG_FILES
+    application = application_fixture.__wrapped__(tmp_path)
+    target = vtuber_target(application / '.agentstrata-data/plugins/open-llm-vtuber', monkeypatch)
+    write_json(target / 'config/configured.json', {'application_root': str(application), 'port':19893})
+    record = read_json(target / 'installation.json')
+    record['services'] = record['services'][:1]
+    write_json(target / 'installation.json', record)
+    service, saved = saved_model(tmp_path)
+    profile = (application / 'bots/desktop-fixture/agent.yaml').read_bytes()
+    before = {name: (target / name).read_bytes() for name in CONFIG_FILES}
+    with pytest.raises(GenerationError, match='presentation-only'):
+        service.apply(saved['id'], 1, target)
+    applied = service.apply(saved['id'], 1, target, presentation_only=True)
+    assert applied['applied'] == 'presentation'
+    assert not (target / 'config/identity.md').exists()
+    assert (application / 'bots/desktop-fixture/agent.yaml').read_bytes() == profile
+    service.restore_application(target, applied['backup'])
+    assert before == {name: (target / name).read_bytes() for name in CONFIG_FILES}

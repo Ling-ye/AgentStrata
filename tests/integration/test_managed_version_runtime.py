@@ -28,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[2]
 class LocalServices(UserServices):
     """Replace only systemd transport; the normal service command runs in a child."""
     def __init__(self, service, root, environment):
+        super().__init__()
         self.service, self.root, self.environment = service, root, environment
         self.process = None
         self.log = (root / "process.log").open("wb")

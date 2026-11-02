@@ -140,6 +140,7 @@ PUBLIC_CODE_REPOSITORIES = frozenset(
         "github.com/brave/brave-search-mcp-server",
         "github.com/btbn/ffmpeg-builds",
         "github.com/confident-ai/deepeval",
+        "github.com/cursortouch/windows-mcp",
         "github.com/example/docs",
         "github.com/example/sample",
         "github.com/github/github-mcp-server",

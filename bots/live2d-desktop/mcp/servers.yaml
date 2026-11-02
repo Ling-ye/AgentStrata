@@ -1,0 +1,22 @@
+servers:
+  - id: local-avatar
+    transport: streamable_http
+    url: "${AGENTSTRATA_AVATAR_MCP_URL}"
+    headers:
+      Authorization: "${AGENTSTRATA_AVATAR_CONTROL_AUTH}"
+    exposure: main
+    risk: interactive
+    tool_prefix: avatar_
+    allowed_tools: [list_actions, set_expression, play_motion, apply_pose]
+    retry_on_timeout: false
+    stateless_http: true
+  - id: windows-desktop
+    transport: stdio
+    command: python
+    args: ["-m", "chatcopilot.external_tools.windows_desktop.launcher", "--python", "${AGENTSTRATA_WINDOWS_MCP_PYTHON}"]
+    exposure: main
+    risk: interactive
+    tool_prefix: desktop_
+    allowed_tools: [ObservePrimary, Snapshot, Screenshot, DisplayInventory, App, Click, Type, Scroll, Move, Shortcut, WaitFor, ControlStatus]
+    max_concurrency: 1
+    retry_on_timeout: false

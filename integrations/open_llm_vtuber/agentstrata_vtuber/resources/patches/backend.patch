@@ -154,7 +154,7 @@ diff --git a/src/open_llm_vtuber/websocket_handler.py b/src/open_llm_vtuber/webs
 +        if session_service_context.character_config.agent_config.conversation_agent_choice == "agentstrata":
 +            from agentstrata_vtuber.runtime import attach
 +            attach(client_uid, session_service_context.character_config.live2d_model_name,
-+                   websocket.send_text)
++                   websocket.send_text, session_service_context)
 +            await websocket.send_text(json.dumps({"type": "agentstrata-mode"}))
 +        else:
 +            await websocket.send_text(json.dumps({"type": "control", "text": "start-mic"}))

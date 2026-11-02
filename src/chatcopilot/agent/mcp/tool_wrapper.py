@@ -9,7 +9,8 @@ from typing import Any, Dict
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.contracts.tools import ToolContext, ToolDef, ToolResult, object_schema
 from chatcopilot.agent.mcp.arguments import _normalize_mcp_tool_arguments
-from chatcopilot.agent.mcp.errors import McpToolBusyError, McpToolTimeoutError
+from chatcopilot.agent.mcp.errors import McpToolBusyError, McpToolTimeoutError, McpToolOutcomeUnknown
+from chatcopilot.core.tool_images import store_tool_images
 from chatcopilot.agent.mcp.health import (
     _classify_mcp_error,
     _mcp_health_payload,
@@ -49,10 +50,9 @@ def _wrap_remote_tool(
         )
 
     def _handler(args: Dict[str, Any], ctx: ToolContext) -> ToolResult:
-        del ctx
         try:
             normalized_args = _normalize_mcp_tool_arguments(config, remote_name, args or {})
-            text = provider.call_tool(config, remote_name, normalized_args)
+            response = provider.call_tool(config, remote_name, normalized_args)
         except ValueError as exc:
             return _error_result(
                 _mcp_health_payload(
@@ -63,6 +63,11 @@ def _wrap_remote_tool(
                     retryable=False,
                 )
             )
+        except McpToolOutcomeUnknown:
+            return ToolResult(ok=False, error="操作回执丢失，结果未知；未重新发送操作。",
+                              error_code="mcp_outcome_unknown", stage="remote_call",
+                              data={"server_id": config.id, "tool_name": remote_name,
+                                    "outcome": "unknown", "retryable": False})
         except McpToolTimeoutError as exc:
             _LOGGER.warning("MCP tool handler timeout | %s/%s", config.id, remote_name)
             return _error_result(
@@ -103,6 +108,7 @@ def _wrap_remote_tool(
                     retryable=False,
                 )
             )
+        text = response.text
         feedback = _maybe_mcp_health_feedback(config, remote_name, text)
         if feedback is not None:
             return _error_result(feedback)
@@ -111,9 +117,11 @@ def _wrap_remote_tool(
             content = json.loads(text)
         except (TypeError, ValueError):
             content = text
+        images = store_tool_images(response.images, ctx.workspace_root)
         return ToolResult(
             ok=True,
             summary=summary,
+            images=images,
             data={
                 "server_id": config.id,
                 "tool_name": remote_name,

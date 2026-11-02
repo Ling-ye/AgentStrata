@@ -41,7 +41,7 @@ class LocalBoundary:
         await self.app(scope, receive, send)
 
 
-def install_control(app, config: AdapterConfig, controller: AvatarController) -> None:
+def install_control(app, config: AdapterConfig, controller: AvatarController, *, observer=None) -> None:
     app.add_middleware(LocalBoundary, config=config)
     if config.mcp_token is None:
         return
@@ -55,6 +55,12 @@ def install_control(app, config: AdapterConfig, controller: AvatarController) ->
     def action_result(result: dict):
         return CallToolResult(content=[TextContent(type="text", text=json.dumps(result))],
                               structuredContent=result, isError=result["status"] != "executed")
+
+    if observer is not None:
+        @mcp.tool()
+        async def observe_desktop(enabled: bool, screen_hash: str = "") -> dict:
+            """Native desktop perception control; uses the host-restricted observer identity."""
+            return await observer.update(enabled, screen_hash)
 
     @mcp.tool()
     def list_actions() -> dict:
@@ -90,7 +96,11 @@ def install_control(app, config: AdapterConfig, controller: AvatarController) ->
     async def lifespan(application):
         async with previous_lifespan(application):
             async with mcp.session_manager.run():
-                yield
+                try:
+                    yield
+                finally:
+                    if observer is not None:
+                        await observer.close()
 
     app.router.lifespan_context = lifespan
     # This is installed before the upstream catch-all static frontend mount.

@@ -15,10 +15,11 @@ from chatcopilot.agent.mcp.arguments import _normalize_mcp_tool_arguments
 from chatcopilot.agent.mcp.errors import (
     McpToolBusyError,
     McpToolTimeoutError,
+    McpToolOutcomeUnknown,
     _is_timeout_error,
 )
 from chatcopilot.agent.mcp.runner import _McpServerRunner, _stream_read_timeout
-from chatcopilot.agent.mcp.serialization import _compact_mcp_response
+from chatcopilot.agent.mcp.serialization import McpCallResult, _compact_mcp_response
 from chatcopilot.agent.mcp.stateless import _parse_stateless_response
 from chatcopilot.agent.mcp.tool_wrapper import _safe_tool_name, _wrap_remote_tool
 
@@ -115,7 +116,7 @@ class McpToolProvider:
                 })
         return out
 
-    def call_tool(self, config: McpServerConfig, name: str, arguments: Dict[str, Any]) -> str:
+    def call_tool(self, config: McpServerConfig, name: str, arguments: Dict[str, Any]) -> McpCallResult:
         """Call a remote tool, reconnecting once if the transport died after startup.
 
         Timeout errors are distinguished from connection failures: a timeout
@@ -134,7 +135,7 @@ class McpToolProvider:
 
     def _call_tool_inner(
         self, config: McpServerConfig, name: str, arguments: Dict[str, Any]
-    ) -> str:
+    ) -> McpCallResult:
         last_error: Exception | None = None
         for attempt in range(2):
             runner = self._ensure_runner(config)
@@ -153,7 +154,11 @@ class McpToolProvider:
                     exc,
                 )
                 self._discard_runner(config, runner)
-                if is_timeout and not config.retry_on_timeout:
+                if config.risk not in {"search", "readonly"} and not is_timeout:
+                    raise McpToolOutcomeUnknown(
+                        f"MCP operation outcome is unknown; the input was not replayed: {config.id}/{name}"
+                    ) from exc
+                if is_timeout and (not config.retry_on_timeout or config.risk not in {"search", "readonly"}):
                     break
 
         timeout_s = config.timeout_seconds

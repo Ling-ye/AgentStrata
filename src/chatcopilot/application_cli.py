@@ -7,7 +7,7 @@ from pathlib import Path
 import subprocess
 import sys
 
-from chatcopilot.core.application_installation import application_identity, installation
+from chatcopilot.core.application_installation import installation
 from chatcopilot.deployment.application_bundle import read_bundle
 from chatcopilot.deployment.application_runtime import install_bundle, prepare_runtime, setup_application
 
@@ -25,8 +25,14 @@ def main(argv=None) -> int:
     setup.add_argument("--root", type=Path, required=True)
     setup.add_argument("--with-console", action="store_true")
     setup.add_argument("--dry-run", action="store_true")
+    setup.add_argument("--artifacts", type=Path, help="Verified local host/plugin wheels for application components")
     status = commands.add_parser("status", help="Read the installed application and selected source version")
     status.add_argument("--root", type=Path, required=True)
+    desktop = commands.add_parser("desktop-info", help="Private connection handoff to the local native desktop process")
+    desktop.add_argument("--root", type=Path, required=True)
+    for name in ("start", "stop"):
+        action = commands.add_parser(name, help="Control the registered services of this installation")
+        action.add_argument("--root", type=Path, required=True)
     for name in ("update", "rollback"):
         action = commands.add_parser(name, help="Use the existing accepted-candidate activation controls")
         action.add_argument("task")
@@ -47,11 +53,30 @@ def main(argv=None) -> int:
                     return code
                 value["state"] = "needs_configuration"
         elif args.command == "setup":
+            installed = installation(args.root)
+            if installed is None:
+                raise ValueError("An explicit application installation is required")
+            if (installed.control / "current.json").exists() or (installed.control / "current.json").is_symlink():
+                raise ValueError("Withdraw the managed application version before setup")
+            if not args.dry_run:
+                from chatcopilot.plugins.application_components import prepare_configuration, prepare_components
+                requirements = prepare_configuration(args.root)
+                if requirements:
+                    code = subprocess.run([str(args.root / ".venv/bin/python"), "-m", "chatcopilot", "bot", "provision-env",
+                        "--bot", str(args.root / installed.bot_relative)], cwd=args.root, check=False).returncode
+                    if code:
+                        return code
+                    prepare_components(args.root, requirements, artifacts=args.artifacts)
             return setup_application(args.root, with_console=args.with_console, dry_run=args.dry_run)
         elif args.command == "status":
-            value = application_identity(args.root)
-            if value is None:
-                raise ValueError("No independent application is installed here")
+            from chatcopilot.deployment.application_services import status as application_status
+            value = application_status(args.root)
+        elif args.command == "desktop-info":
+            from chatcopilot.deployment.application_services import desktop_info
+            value = desktop_info(args.root)
+        elif args.command in {"start", "stop"}:
+            from chatcopilot.deployment.application_services import control
+            value = control(args.root, args.command)
         else:
             if installation(args.root) is None:
                 raise ValueError("No independent application is installed here")
@@ -61,6 +86,8 @@ def main(argv=None) -> int:
         print(json.dumps(value, ensure_ascii=False, indent=2))
         if args.command in {"update", "rollback"}:
             return 0 if value.get("state") == ("active" if args.command == "update" else "rolled_back") else 1
+        if args.command in {"start", "stop"}:
+            return 0 if value.get("ok") is True else 1
         return 0
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"Application operation failed: {exc}", file=sys.stderr)

@@ -572,12 +572,18 @@ def _parse_gateway_clients(value: Any) -> tuple[GatewayClientSpec, ...]:
     clients = []
     for index, item in enumerate(value):
         field = f"gateway.clients[{index}]"
-        if not isinstance(item, dict) or set(item) - {"id", "token_env", "role"}:
-            raise ValueError(f"{field} 只接受 id/token_env/role")
+        if not isinstance(item, dict) or set(item) - {"id", "token_env", "role", "allowed_tools"}:
+            raise ValueError(f"{field} 只接受 id/token_env/role/allowed_tools")
+        allowed = item.get("allowed_tools")
+        if allowed is not None and (not isinstance(allowed, list)
+                or any(not isinstance(name, str) or not name.strip() for name in allowed)
+                or len(set(allowed)) != len(allowed)):
+            raise ValueError(f"{field}.allowed_tools 必须是不重复的工具名称列表")
         clients.append(GatewayClientSpec(
             id=_strict_string(item.get("id", ""), field + ".id"),
             token_env=_strict_string(item.get("token_env", ""), field + ".token_env"),
             role=_strict_string(item.get("role", "user"), field + ".role"),
+            allowed_tools=tuple(allowed) if allowed is not None else None,
         ))
     return tuple(clients)
 

@@ -20,6 +20,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("operation", choices=("list", "install", "doctor", "start", "stop", "uninstall"))
     parser.add_argument("plugin", nargs="?")
     parser.add_argument("--root", type=Path, default=default_root())
+    parser.add_argument("--application-root", type=Path, help="Explicit independent application owning this plugin directory")
     parser.add_argument("--version")
     parser.add_argument("--artifacts", type=Path, help="Local verified release bundle (development/offline distribution)")
     parser.add_argument("--source-url", default=os.environ.get("CHATCOPILOT_SOURCE_URL", ""))
@@ -30,8 +31,8 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
     if args.operation != "list" and not args.plugin:
         parser.error("a plugin id is required")
-    manager = create_manager(args.root)
     try:
+        manager = create_manager(args.root, application_root=args.application_root)
         if args.operation == "list":
             result = manager.list()
         elif args.operation == "install":

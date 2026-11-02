@@ -48,6 +48,11 @@ class ConversationBridge:
         self._closing = False
         self._stop_generation = 0
 
+    @property
+    def has_pending_turn(self) -> bool:
+        """Whether an original Gateway input still needs reconciliation."""
+        return self._turn is not None
+
     def select_history(self, configuration_id: str, history_id: str) -> None:
         if self._lock.locked():
             raise RuntimeError("Stop the current turn before changing history")

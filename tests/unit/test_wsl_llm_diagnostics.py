@@ -313,3 +313,33 @@ def test_runtime_entrypoints_pass_the_shared_model_config_path(tmp_path, entrypo
             'CHATCOPILOT_ENV_FILE': str(runtime_env), 'AGENTSTRATA_DEPLOY_PYTHON': sys.executable,
             'AGENTSTRATA_LLM_CONFIG': ''}, capture_output=True, text=True, timeout=10, check=True)
     assert completed.stdout == model_path
+
+
+def test_startup_env_includes_declared_gateway_and_mcp_refs_without_unrelated_secrets(tmp_path, model_settings):
+    import json
+    bot = tmp_path / 'application/bot.yaml'
+    bot.parent.mkdir()
+    write_application(bot, {'id':'client-fixture','gateway':{'clients':[
+        {'id':'desktop','role':'owner','token_env':'CUSTOM_CLIENT_TOKEN'}]},
+        'agents':{'runtime':'langgraph'},'llm':{'chat':{'binding':'chat'}},
+        'tools':{'mcp':{'servers':'mcp.yaml'}}})
+    (bot.parent/'mcp.yaml').write_text('''servers:
+  - id: desktop
+    transport: streamable_http
+    url: "${CUSTOM_DESKTOP_URL}"
+    headers:
+      Authorization: "${CUSTOM_DESKTOP_AUTH}"
+''')
+    runtime = tmp_path/'runtime.env'
+    values={'AGENTSTRATA_LLM_CONFIG':str(model_settings),'CUSTOM_CLIENT_TOKEN':'fixture-token',
+            'CUSTOM_DESKTOP_URL':'http://127.0.0.1:12345/mcp','CUSTOM_DESKTOP_AUTH':'Bearer fixture',
+            'UNRELATED_PRIVATE_VALUE':'must-not-export'}
+    runtime.write_text(''.join(k+'='+json.dumps(v)+'\n' for k,v in values.items()))
+    runtime.chmod(0o600)
+    command=f'source "{LOAD_ENV_SCRIPT}"; '+'''ccp_load_env "CHATCOPILOT_" "$1";
+      printf '%s,%s,%s,%s' "${CUSTOM_CLIENT_TOKEN:+client}" "${CUSTOM_DESKTOP_URL:+url}" \
+        "${CUSTOM_DESKTOP_AUTH:+auth}" "${UNRELATED_PRIVATE_VALUE:-unset}"'''
+    result=subprocess.run(['bash','-c',command,'test-declared-runtime',str(bot)],cwd=REPO_ROOT,
+        env={**os.environ,'CHATCOPILOT_HOME':str(REPO_ROOT),'CHATCOPILOT_ENV_FILE':str(runtime),
+             'AGENTSTRATA_DEPLOY_PYTHON':sys.executable},capture_output=True,text=True,timeout=10,check=True)
+    assert result.stdout=='client,url,auth,unset', result.stderr

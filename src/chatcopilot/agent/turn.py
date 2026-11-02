@@ -805,6 +805,10 @@ class TurnOps:
             "name": name,
             "content": json.dumps(payload, ensure_ascii=False),
         }
+        if tool_result.ok and tool_result.images:
+            from chatcopilot.core.tool_images import image_content_blocks
+            tool_msg["content"] = [{"type": "text", "text": tool_msg["content"]},
+                                   *image_content_blocks(tool_result.images)]
         self.session._messages.append(tool_msg)
         if state.llm_view is not None and state.llm_view is not self.session._messages:
             state.llm_view.append(tool_msg)

@@ -237,12 +237,12 @@ class CharacterService:
             installed = self.repository.restore_directories(pending)
         return {"restored": installed, "unchanged": skipped}
 
-    def apply(self, identifier: str, version: int, target: Path) -> dict:
+    def apply(self, identifier: str, version: int, target: Path, *, presentation_only: bool = False) -> dict:
         from .install import install_character
         with self.repository.lock():
             root, _ = self.repository.revision(identifier, revision_number(version))
             return install_character(root / "avatar.zip", profile(read_json(root / "profile.json")),
-                                     target, identifier=identifier, version=version)
+                                     target, identifier=identifier, version=version, presentation_only=presentation_only)
 
     def release_files(self, identifier: str, version: int, destination: Path) -> dict:
         with self.repository.lock():

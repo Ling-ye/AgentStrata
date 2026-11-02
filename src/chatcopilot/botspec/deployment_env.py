@@ -231,14 +231,15 @@ def mcp_env_ref_keys(spec) -> tuple[str, ...]:
         if not isinstance(item, dict):
             continue
         item = resolve_catalog_server(item) or item
+        values = [item.get(field, "") for field in ("url", "command", "cwd")]
+        values.extend(item.get("args", []) if isinstance(item.get("args", []), list) else [])
         for field in ("env", "headers"):
             mapping = item.get(field, {})
             if not isinstance(mapping, dict):
                 continue
-            for value in mapping.values():
-                match = re.match(r"^\$\{([A-Za-z_][A-Za-z0-9_]*)\}$", str(value).strip())
-                if not match:
-                    continue
+            values.extend(mapping.values())
+        for value in values:
+            for match in re.finditer(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}", str(value)):
                 key = match.group(1)
                 if key not in seen:
                     seen.add(key)

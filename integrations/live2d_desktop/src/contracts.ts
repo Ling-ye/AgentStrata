@@ -1,8 +1,17 @@
 export type Mode = 'window' | 'pet';
 export type PluginId = 'open-llm-vtuber' | 'live2d-generator';
-export interface Connection { distro: string; command: string; root: string }
+export interface Connection { distro: string; root: string }
 export interface Bounds { x: number; y: number; width: number; height: number }
 export interface Settings { connection?: Connection; mode: Mode; topmost: boolean; bounds?: Bounds }
+export function launchConnection(args: string[], saved?: Settings): Connection | undefined {
+  const value = (name: string) => {
+    const index = args.indexOf(name);
+    return index < 0 ? undefined : args[index + 1];
+  };
+  if (args.includes('--application-root'))
+    return connection({root: value('--application-root'), distro: value('--distro') ?? 'Ubuntu-22.04'});
+  return saved?.connection ? connection(saved.connection) : undefined;
+}
 export interface Plugin { id: PluginId; status: string; url: string; installed_version: string | null }
 export interface ApplyInput { id: string; version: number }
 export type Result = { ok: true; backup?: string; restored?: string } |
@@ -16,12 +25,12 @@ export function connection(value: unknown): Connection {
   const v = record(value);
   if (typeof v.distro !== 'string' || !/^[\w .-]{1,100}$/.test(v.distro) || v.distro.startsWith('-'))
     throw new Error('请选择已安装的 WSL 发行版');
-  for (const key of ['command', 'root']) {
+  for (const key of ['root']) {
     if (typeof v[key] !== 'string' || !(v[key] as string).startsWith('/') ||
         /[\x00-\x1f]/.test(v[key] as string) || (v[key] as string).length > 2048)
-      throw new Error('命令和插件目录必须是 WSL 内的绝对路径');
+      throw new Error('应用安装目录必须是 WSL 内的绝对路径');
   }
-  return {distro: v.distro, command: v.command as string, root: (v.root as string).replace(/\/+$/, '')};
+  return {distro: v.distro, root: (v.root as string).replace(/\/+$/, '')};
 }
 export function identifier(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{32}$/.test(value)) throw new Error('角色或备份 ID 无效');
@@ -42,7 +51,7 @@ export function localUrl(value: unknown): string {
 }
 export function settings(value: unknown): Settings {
   const v = record(value);
-  const result: Settings = {mode: v.mode === 'pet' ? 'pet' : 'window', topmost: v.topmost === true};
+  const result: Settings = {mode: v.mode === 'window' ? 'window' : 'pet', topmost: v.topmost === true};
   if (v.connection) result.connection = connection(v.connection);
   if (v.bounds) {
     const b = record(v.bounds);
