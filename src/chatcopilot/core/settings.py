@@ -56,7 +56,7 @@ def load_local_env_values(
         raise FileNotFoundError(f"本地配置不存在：{path}")
 
     return parse_local_env_text(
-        path.read_text(encoding="utf-8", errors="replace"),
+        path.read_text(encoding="utf-8-sig", errors="replace"),
         source=path,
         expand_home=expand_home,
     )

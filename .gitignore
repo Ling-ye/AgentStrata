@@ -68,6 +68,10 @@ logs/
 .env.local
 .env.*.local
 
+# Desktop model file copies beside the public examples are local only.
+/integrations/live2d_desktop/config/llm.json
+/integrations/live2d_desktop/config/*.env
+
 # SQLite 临时文件
 *.sqlite3-journal
 *.db-journal

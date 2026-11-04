@@ -126,6 +126,48 @@ Windows 设置和单实例锁按应用路径隔离，位于 `%USERPROFILE%\.agen
 构建方法见[桌面源码说明](../../integrations/live2d_desktop/README.md)，职责见
 [桌面规格](../../specs/live2d-desktop/spec.md)。
 
+### 直接编辑本地模型配置
+
+运行环境准备完成后，可以在软件关闭时直接编辑以下文件，无需先进入设置页。桌面
+每次启动都会连接已选择的安装目录，后台按其中的 `chat` 绑定读取模型。
+
+| 文件（相对于应用安装目录） | 内容 |
+| --- | --- |
+| `.agentstrata-versions/llm.json` | 非秘密模型连接、模型名称及 `chat` 绑定，与设置页共用 |
+| `llm.json` 中 `connections.<连接名>.env_file` 指定的文件 | 私有 API 密钥；设置页生成的文件名为端点摘要，手工配置可以使用 `model-credentials/openai.env` |
+
+默认安装目录为 `%USERPROFILE%\.agentstrata\applications\live2d-desktop-native`。
+自定义安装使用所选目录；桌面启动参数 `--application-root` 优先于保存的目录，再使用默认
+目录。这里读取的是 Windows 安装副本的配置，不会自动读取 WSL 源码仓库的配置。
+
+新配置可参考 [llm.example.json](../../integrations/live2d_desktop/config/llm.example.json)：
+将其复制为安装目录下的 `.agentstrata-versions/llm.json`，把 `YOUR_OPENAI_MODEL` 改为账号
+可用的模型。示例使用官方 `https://api.openai.com/v1` 和 `openai_compatible`
+（Chat Completions）连接。自定义安装需同时修改 `env_file`；它接受绝对路径或 `~/`
+开头的当前用户路径，Windows JSON 路径可以使用正斜杠；不展开 `%USERPROFILE%`。
+
+已有配置保留其连接、方案和用途，只检查 `bindings.chat` 指向的方案及其连接。如果该连接
+没有 `env_file`，为它增加此字段，指向自己的私有文件。不要用示例覆盖其他已有用途。
+
+将 [openai.env.example](../../integrations/live2d_desktop/config/openai.env.example) 复制到
+`env_file` 指定的位置，创建缺少的父目录，然后仅在本机填写：
+
+```dotenv
+AGENTSTRATA_DESKTOP_API_KEY="在这里填写完整的 API Key"
+```
+
+变量名必须与连接的 `auth.key_env` 一致。Tracking ID 不能用于认证。密钥不写进
+`llm.json`、桌面偏好或源码。应用控制目录 `.agentstrata-versions/` 已被 Git 忽略；
+示例旁的 `llm.json`、`*.env` 本地副本也被忽略，提交时只保留示例。
+
+两份文件保存为 UTF-8（支持带 BOM），修改后完全退出桌宠再启动。模型配置不会由设置页
+默认值覆盖；文件中的密钥覆盖同名进程环境变量。若未指定 `env_file`，仍按现有机制使用
+对应环境变量。同端点仅在设置页更改模型且留空 API Key 时，保留原私有文件引用；
+显式填写新密钥时保存到该端点的受管私有文件；更换端点需要配置该端点的凭据。
+
+没有 `chat` 绑定时保持“未配置”；JSON 错误、用途缺失或指定凭据文件不存在时报告错误，
+不会切换其他模型或借用 WSL 凭据。读取配置成功不代表 API 认证、额度或模型访问已经验证。
+
 ## Console 登记
 
 插件 `0.2.1` 起，安装成功会登记 `plugin:open-llm-vtuber:main`。Console 的机器人实例

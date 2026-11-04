@@ -17,6 +17,8 @@ def model_settings(root: Path, value: dict | None = None) -> dict:
     path = installed.control / "llm.json"
     store = ModelSettingsStore(path)
     current = store.view()
+    active_profile = current["profiles"].get(current["bindings"].get("chat"), {})
+    active_connection = current["connections"].get(active_profile.get("connection"), {})
     if value is not None:
         if (not isinstance(value, dict) or set(value) - {"kind", "model", "base_url", "api_key", "revision"}
                 or value.get("kind") not in {"openai_compatible", "chatgpt"}
@@ -38,6 +40,14 @@ def model_settings(root: Path, value: dict | None = None) -> dict:
                 if not isinstance(key, str) or any(ord(c) < 32 for c in key):
                     raise ValueError("Invalid API credential")
                 credential_content = "AGENTSTRATA_DESKTOP_API_KEY=" + json.dumps(key) + "\n"
+            elif (active_connection.get("kind") == kind
+                    and active_connection.get("base_url") == connection["base_url"]
+                    and active_connection.get("auth", {}).get("mode") == "api_key"
+                    and active_connection.get("env_file")):
+                # A model-only UI edit must retain the operator's file reference.
+                # A changed endpoint or explicit key uses its own managed credential.
+                connection["auth"] = dict(active_connection["auth"])
+                credentials = Path(active_connection["env_file"]).expanduser()
             if credential_content is None and not credentials.exists():
                 raise ValueError("Configure this application's API credential")
             connection["env_file"] = str(credentials)

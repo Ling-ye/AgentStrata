@@ -1,0 +1,22 @@
+{
+  "connections": {
+    "openai": {
+      "kind": "openai_compatible",
+      "base_url": "https://api.openai.com/v1",
+      "auth": {
+        "mode": "api_key",
+        "key_env": "AGENTSTRATA_DESKTOP_API_KEY"
+      },
+      "env_file": "~/.agentstrata/applications/live2d-desktop-native/.agentstrata-versions/model-credentials/openai.env"
+    }
+  },
+  "profiles": {
+    "desktop": {
+      "connection": "openai",
+      "model": "YOUR_OPENAI_MODEL"
+    }
+  },
+  "bindings": {
+    "chat": "desktop"
+  }
+}

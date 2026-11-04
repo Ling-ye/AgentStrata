@@ -134,7 +134,7 @@ class ModelSettingsStore:
             if self.defaults_path is not None:
                 return ModelSettingsStore(self.defaults_path).read()
             return empty_settings()
-        with os.fdopen(fd, encoding="utf-8") as stream:
+        with os.fdopen(fd, encoding="utf-8-sig") as stream:
             return validate_settings(json.load(stream))
 
     def view(self) -> dict[str, Any]:
