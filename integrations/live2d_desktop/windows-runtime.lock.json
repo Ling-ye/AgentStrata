@@ -1,0 +1,19 @@
+{
+  "schema": "agentstrata-windows-runtime-inputs/v1",
+  "host_python": "3.13.15",
+  "vtuber_python": "3.12.14",
+  "ffmpeg": {
+    "version": "8.0.1",
+    "url": "https://github.com/GyanD/codexffmpeg/releases/download/8.0.1/ffmpeg-8.0.1-essentials_build.zip",
+    "sha256": "e2aaeaa0fdbc397d4794828086424d4aaa2102cef1fb6874f6ffd29c0b88b673",
+    "directory": "ffmpeg-8.0.1-essentials_build",
+    "binary_sha256": "5af82a0d4fe2b9eae211b967332ea97edfc51c6b328ca35b827e73eac560dc0d"
+  },
+  "codex": {
+    "version": "0.166.0",
+    "url": "https://registry.npmjs.org/@openai/codex/-/codex-0.166.0-win32-x64.tgz",
+    "sha256": "47d74aed875a3c01315f042152329ae09b0bd9d26a3285802d1c85aeadce083e",
+    "member": "package/vendor/x86_64-pc-windows-msvc/bin/codex.exe",
+    "binary_sha256": "9d563ee4e0441ff9d59d612013e0460ddf8e5709735c2d9f6b98b7ef8ca4eb42"
+  }
+}

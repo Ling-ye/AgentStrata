@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+from chatcopilot.core import storage_files as fs
 from pathlib import Path
 import re
 import shutil
@@ -32,27 +33,27 @@ def _directory(path: Path) -> None:
         if current.is_symlink():
             raise ValueError("Trace directory contains a symlink")
     info = path.stat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != fs.getuid() or info.st_mode & 0o077:
         raise ValueError("Trace directory must be private and owned by the current user")
 
 
 def _read(path: Path) -> bytes:
     _directory(path.parent)
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    fd = fs.open(path, os.O_RDONLY | fs.O_NOFOLLOW)
     with os.fdopen(fd, "rb") as stream:
-        info = os.fstat(stream.fileno())
-        if (not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid()
+        info = fs.fstat(stream.fileno())
+        if (not stat.S_ISREG(info.st_mode) or info.st_uid != fs.getuid()
                 or info.st_nlink != 1 or info.st_mode & 0o077):
             raise ValueError("Trace file is not a private regular file")
         return stream.read()
 
 
 def _write(path: Path, raw: bytes) -> None:
-    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | os.O_NOFOLLOW, 0o600)
+    fd = fs.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY | fs.O_NOFOLLOW, 0o600)
     with os.fdopen(fd, "wb") as stream:
         stream.write(raw)
         stream.flush()
-        os.fsync(stream.fileno())
+        fs.fsync(stream.fileno())
 
 
 def _json(raw: bytes) -> Any:
@@ -110,9 +111,9 @@ class TraceArchive:
             # Validate all references before making the record visible.
             self._validate_refs(trace, artifacts)
             os.rename(temporary, target)
-            fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+            fd = fs.open(self.root, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
             try:
-                os.fsync(fd)
+                fs.fsync(fd)
             finally:
                 os.close(fd)
         finally:

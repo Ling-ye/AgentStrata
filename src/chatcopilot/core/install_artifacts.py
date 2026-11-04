@@ -19,6 +19,9 @@ class InstallError(RuntimeError):
 
 
 def private_directory(path: Path) -> Path:
+    if os.name == "nt":
+        from chatcopilot.core.private_sqlite import repair_owned_private_directory
+        return repair_owned_private_directory(path.expanduser().absolute())
     path = path.expanduser().absolute()
     if path.resolve() != path:
         raise InstallError("Installation directory must not contain symlinks")
@@ -38,6 +41,9 @@ def write_private(path: Path, content: str) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as target:
             target.write(content)
+        if os.name == "nt":
+            from chatcopilot.core.storage_files import tighten
+            tighten(Path(temporary))
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
@@ -118,6 +124,7 @@ def extract_archive(archive: Path, destination: Path, *, strip_root: bool = True
 def dependency_environment() -> dict[str, str]:
     """Package builders get network/tool locations, never ambient model credentials."""
     keys = ("HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "TMPDIR",
+            "SYSTEMROOT", "SystemRoot", "USERPROFILE", "LOCALAPPDATA", "APPDATA", "TEMP", "TMP", "COMSPEC", "PATHEXT",
             "SSL_CERT_FILE", "SSL_CERT_DIR", "CURL_CA_BUNDLE", "HTTP_PROXY", "HTTPS_PROXY",
             "NO_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "no_proxy", "all_proxy")
     env = {key: os.environ[key] for key in keys if key in os.environ}

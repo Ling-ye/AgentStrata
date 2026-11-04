@@ -133,6 +133,10 @@ def prepare_models(root: Path) -> None:
 
 
 def prepare(request: dict) -> dict:
+    import os
+    if os.name == "nt":
+        from .native_prepare import prepare as prepare_native
+        return prepare_native(request)
     root = Path(request["root"])
     # These checks must precede expensive downloads and never silently choose a port.
     from chatcopilot.deployment.systemd import require_free_port

@@ -22,6 +22,7 @@ class InstalledApplication:
     bot_id: str
     bot_relative: str
     delivered_digest: str
+    artifact_digest: str | None = None
 
     @property
     def control(self) -> Path:
@@ -29,8 +30,9 @@ class InstalledApplication:
 
     def deployment_overrides(self) -> dict[str, str]:
         """Machine locations are host inputs, never edits to the delivered BotSpec."""
+        from chatcopilot.core.storage_files import long_path
         return {"instance_id": self.bot_id, "wsl_home": str(self.root),
-                "workspace_root": str(self.root / ".agentstrata-data/workspace"),
+                "workspace_root": str(long_path(self.root / ".agentstrata-data/workspace")),
                 "log_dir": str(self.root / ".agentstrata-data/logs"), "env_file": str(self.control / "runtime.env")}
 
 
@@ -40,8 +42,11 @@ def installation(root: Path) -> InstalledApplication | None:
     path = root / RECORD
     if not path.exists() and not path.is_symlink():
         return None
-    if root.resolve() != root or root.stat().st_uid != os.getuid():
+    if root.resolve() != root or (os.name != "nt" and root.stat().st_uid != os.getuid()):
         raise ValueError("Application installation must be owned by this user and contain no symlink")
+    if os.name == "nt":
+        from chatcopilot.core.storage_files import lstat
+        lstat(root)
     private_file(path)
     value = json.loads(path.read_text())
     if not isinstance(value, dict) or value.get("schema") != SCHEMA:
@@ -56,7 +61,11 @@ def installation(root: Path) -> InstalledApplication | None:
     app = load_application_spec(root / relative)
     if (app.raw.get("deploy", {}).get("instance_id") or app.raw.get("id")) != bot_id:
         raise ValueError("Installed application declaration changed identity")
-    return InstalledApplication(root, bot_id, relative, delivered)
+    artifacts = value.get("artifacts_digest")
+    if value.get("platform") == "windows-x86_64" and (
+            not isinstance(artifacts, str) or not re.fullmatch(r"[a-f0-9]{64}", artifacts)):
+        raise ValueError("Native application must bind its prepared artifact manifest")
+    return InstalledApplication(root, bot_id, relative, delivered, artifacts)
 
 
 def application_source(root: Path, bot_id: str | None = None) -> tuple[Path, dict] | None:
@@ -77,7 +86,7 @@ def application_source(root: Path, bot_id: str | None = None) -> tuple[Path, dic
         manifest = read_json(source.parent / "manifest.json")
     else:
         source = installed.root
-        manifest = source_manifest(source)
+        manifest = installed_manifest(installed)
     verify_copy(source, manifest)
     return source, manifest
 
@@ -102,10 +111,39 @@ def running_application_identity(source: Path, control: Path | None = None) -> d
     if installed is None:
         return None
     if source == root:
-        manifest = source_manifest(source)
+        manifest = installed_manifest(installed)
     else:
         resolved = application_source(root)
         if resolved is None or source != resolved[0]:
             raise ValueError("Running application source differs from its selected version")
         _, manifest = resolved
     return {"bot_id": installed.bot_id, "source_digest": manifest_digest(manifest)}
+
+
+def installed_manifest(installed: InstalledApplication) -> dict:
+    record = json.loads((installed.root / RECORD).read_text())
+    if record.get("platform") != "windows-x86_64":
+        return source_manifest(installed.root)
+    path = installed.root / ".agentstrata-source.json"
+    private_file(path)
+    manifest = json.loads(path.read_text())
+    if manifest_digest(manifest) != installed.delivered_digest:
+        raise ValueError("Installed Windows source manifest changed")
+    verify_copy(installed.root, manifest)
+    from chatcopilot.core.source_manifest import IGNORED_PARTS, is_deployable_source_path
+    actual = set()
+    for parent, directories, files in os.walk(installed.root, followlinks=False):
+        base = Path(parent)
+        directories[:] = [name for name in directories if name not in IGNORED_PARTS
+            and not (base == installed.root and name in {"runtime", "windows-mcp"})]
+        for name in directories:
+            metadata = (base / name).lstat()
+            if (base / name).is_symlink() or getattr(metadata, "st_reparse_tag", 0):
+                raise ValueError("Installed source contains a directory link")
+        for name in files:
+            relative = (base / name).relative_to(installed.root).as_posix()
+            if is_deployable_source_path(relative):
+                actual.add(relative)
+    if actual != set(manifest):
+        raise ValueError("Installed native source contains missing or unrecorded files")
+    return manifest

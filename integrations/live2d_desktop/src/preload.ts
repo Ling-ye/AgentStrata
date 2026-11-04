@@ -45,7 +45,7 @@ contextBridge.exposeInMainWorld('api', {
   onToggleInputSubtitle: (fn: Function) => subscribe('toggle-input-subtitle', fn),
 });
 contextBridge.exposeInMainWorld('agentstrataDesktop', {
-  version: '0.2.0',
+  version: '0.3.0',
   initialMode: process.argv.includes('--agentstrata-mode=window') ? 'window' : 'pet',
   status: () => ipcRenderer.invoke('desktop-status'),
   openManager: () => ipcRenderer.invoke('desktop-manager'),
@@ -67,4 +67,8 @@ contextBridge.exposeInMainWorld('desktopSettings', {
   read: () => ipcRenderer.invoke('settings-read'),
   save: (value: unknown) => ipcRenderer.invoke('settings-save', value),
   connect: () => ipcRenderer.invoke('settings-connect'),
+  prepare: () => ipcRenderer.invoke('settings-prepare'),
+  readModel: () => ipcRenderer.invoke('settings-model-read'),
+  saveModel: (value: unknown) => ipcRenderer.invoke('settings-model-save', value),
+  login: () => ipcRenderer.invoke('settings-login'),
 });

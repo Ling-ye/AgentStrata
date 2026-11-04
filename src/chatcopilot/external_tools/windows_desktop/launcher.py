@@ -42,6 +42,12 @@ def main(argv=None) -> int:
     parser.add_argument("--python", required=True)
     args = parser.parse_args(argv)
     script = Path(__file__).with_name("native_server.py").resolve()
+    if os.name == "nt":
+        if not Path(args.python).is_absolute() or not args.python.lower().endswith("python.exe"):
+            raise ValueError("Configure an absolute managed Windows Python executable")
+        environment = {key: value for key, value in os.environ.items() if key.upper() in {name.upper() for name in WINDOWS_ENV}}
+        environment.update(ANONYMIZED_TELEMETRY="false", PYTHONUTF8="1")
+        return subprocess.run([args.python, "-u", str(script)], env=environment, check=False).returncode
     environment = {key: value for key, value in os.environ.items() if key in LINUX_ENV}
     native = subprocess.run(["wslpath", "-w", str(script)], env=environment, capture_output=True,
                             text=True, check=True, timeout=10).stdout.strip()

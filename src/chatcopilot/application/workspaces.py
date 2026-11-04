@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import hashlib
 import os
+from chatcopilot.core import storage_files as fs
 from pathlib import Path
 import re
 import stat
@@ -155,7 +156,7 @@ def _validate_trusted_root(value: Path) -> Path:
             "The trusted workspace root must be an absolute normalized path",
         )
     try:
-        current = root.lstat()
+        current = fs.lstat(root)
         resolved = root.resolve(strict=True)
     except OSError as exc:
         raise WorkspaceAssemblyError(
@@ -166,7 +167,7 @@ def _validate_trusted_root(value: Path) -> Path:
         resolved != root
         or stat.S_ISLNK(current.st_mode)
         or not stat.S_ISDIR(current.st_mode)
-        or current.st_uid != os.geteuid()
+        or current.st_uid != fs.geteuid()
         or stat.S_IMODE(current.st_mode) & 0o022
     ):
         raise WorkspaceAssemblyError(
@@ -180,8 +181,26 @@ def _bind_workspace_owner(root: Path, platform: str, account_id: str) -> None:
     """Claim an unused root once; never infer ownership from existing user data."""
 
     expected = ("v1:" + hashlib.sha256(f"{platform}\0{account_id}".encode()).hexdigest() + "\n").encode()
+    if os.name == "nt":
+        from chatcopilot.core.private_sqlite import private_lock
+        marker = root / _OWNER_FILE
+        with private_lock(root / ".workspace-owner.lock", timeout=None):
+            if not marker.exists():
+                if set(root.iterdir()) - {root / name for name in (*_DEPLOYMENT_FILES, ".workspace-owner.lock")}:
+                    raise WorkspaceAssemblyError("workspace_owner_unbound", "Existing workspace data requires an explicit reset")
+                descriptor = fs.open(marker, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                with os.fdopen(descriptor, "wb") as stream:
+                    stream.write(expected)
+                    stream.flush()
+                    fs.fsync(stream.fileno())
+            descriptor = fs.open(marker, os.O_RDONLY | fs.O_NOFOLLOW)
+            with os.fdopen(descriptor, "rb") as stream:
+                observed = stream.read(len(expected) + 1)
+            if observed != expected:
+                raise WorkspaceAssemblyError("workspace_owner_mismatch", "Workspace belongs to another platform account")
+        return
     try:
-        root_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        root_fd = fs.open(root, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
     except OSError as exc:
         raise WorkspaceAssemblyError("workspace_owner_unsafe", "Workspace owner is unsafe") from exc
     try:
@@ -189,28 +208,28 @@ def _bind_workspace_owner(root: Path, platform: str, account_id: str) -> None:
         # owner record is needed when two first turns start together.
         fcntl.flock(root_fd, fcntl.LOCK_EX)
         try:
-            marker_fd = os.open(_OWNER_FILE, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+            marker_fd = fs.open(_OWNER_FILE, os.O_RDONLY | fs.O_NOFOLLOW, dir_fd=root_fd)
         except FileNotFoundError:
-            if set(os.listdir(root_fd)) - _DEPLOYMENT_FILES:
+            if set(fs.listdir(root_fd)) - _DEPLOYMENT_FILES:
                 raise WorkspaceAssemblyError(
                     "workspace_owner_unbound", "Existing workspace data requires an explicit reset"
                 )
-            marker_fd = os.open(
-                _OWNER_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+            marker_fd = fs.open(
+                _OWNER_FILE, os.O_WRONLY | os.O_CREAT | os.O_EXCL | fs.O_NOFOLLOW,
                 0o600, dir_fd=root_fd,
             )
             with os.fdopen(marker_fd, "wb") as stream:
-                os.fchmod(stream.fileno(), 0o600)
+                fs.fchmod(stream.fileno(), 0o600)
                 stream.write(expected)
                 stream.flush()
-                os.fsync(stream.fileno())
-            os.fsync(root_fd)
-            marker_fd = os.open(_OWNER_FILE, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=root_fd)
+                fs.fsync(stream.fileno())
+            fs.fsync(root_fd)
+            marker_fd = fs.open(_OWNER_FILE, os.O_RDONLY | fs.O_NOFOLLOW, dir_fd=root_fd)
         with os.fdopen(marker_fd, "rb") as stream:
-            info = os.fstat(stream.fileno())
+            info = fs.fstat(stream.fileno())
             if (
                 not stat.S_ISREG(info.st_mode)
-                or info.st_uid != os.geteuid()
+                or info.st_uid != fs.geteuid()
                 or info.st_nlink != 1
                 or stat.S_IMODE(info.st_mode) != 0o600
                 or info.st_size != len(expected)
@@ -247,7 +266,7 @@ def _ensure_data_directory(parent: Path, name: str) -> Path:
     if (
         stat.S_ISLNK(current.st_mode)
         or not stat.S_ISDIR(current.st_mode)
-        or current.st_uid != os.geteuid()
+        or current.st_uid != fs.geteuid()
         or stat.S_IMODE(current.st_mode) & 0o022
     ):
         raise WorkspaceAssemblyError(
@@ -268,7 +287,7 @@ def _ensure_private_directory(parent: Path, name: str) -> Path:
     if (
         stat.S_ISLNK(current.st_mode)
         or not stat.S_ISDIR(current.st_mode)
-        or current.st_uid != os.geteuid()
+        or current.st_uid != fs.geteuid()
         or stat.S_IMODE(current.st_mode) != _PRIVATE_MODE
     ):
         raise WorkspaceAssemblyError(
@@ -321,7 +340,7 @@ def _mkdir_one(path: Path) -> bool:
 
 def _safe_lstat(path: Path, *, code: str) -> os.stat_result:
     try:
-        return path.lstat()
+        return fs.lstat(path)
     except OSError as exc:
         raise WorkspaceAssemblyError(code, "Actor workspace storage is unsafe") from exc
 

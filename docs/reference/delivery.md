@@ -22,6 +22,14 @@ WSL 启动环境读取应用声明的客户端凭据及 MCP 环境引用，不�
 桌面通过仅本机 CLI 的 `desktop-info` 取得呈现地址与控制凭据，不能将其输出公开。
 Windows 包、Windows-MCP 环境和上游前端构建须随对应源码分别核验，M5 不回滚这些构建产物。
 
+Windows 桌宠首版另以 `agentstrata-windows-runtime/v1` 记录首次源码构建，绑定基线提交、
+精确源码清单及构建产物清单摘要，不能携带或伪造 `AcceptedCandidate`。安装保留该来源，
+使用清单核验源码及 executable 意图，不要求用户安装 Git；已有已接受候选交付格式不变。
+桌面通过前台 `app run --watch-stdin` 持有 Windows 后台；`status/stop/desktop-info` 沿用应用
+作用域，进程与停止事件由 Windows 适配管理，不模拟 systemd 或新增控制网络协议。
+Windows 首版支持新目录与同版本续装，`update/rollback` 明确不支持；开发侧 Harness/Eval
+与 Linux M5 保持原有职责。模型设置使用既有 ModelSettingsStore，API 凭据不经过命令行参数。
+
 Console 可通过 `CHATCOPILOT_SOURCE_ROOT` 显式选择安装副本，也可直接从副本启动。
 Console 与 Evaluation 仅发现该安装声明的应用；Harness 和 Eval 继续在本机按需启用。
 服务重启、模型设置、预算及权限遵循原有机制，不增加第二套控制或验收系统。

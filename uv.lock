@@ -30,6 +30,7 @@ source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
     { name = "mcp-server-git" },
+    { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
     { name = "requests" },
     { name = "ruamel-yaml" },
@@ -126,6 +127,7 @@ requires-dist = [
     { name = "pytest", marker = "extra == 'test'" },
     { name = "pytest-xdist", marker = "extra == 'dev'", specifier = ">=3.8,<4" },
     { name = "pytest-xdist", marker = "extra == 'test'", specifier = ">=3.8,<4" },
+    { name = "pywin32", marker = "sys_platform == 'win32'", specifier = "==312" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "qrcode", marker = "extra == 'weixin'", specifier = ">=8,<9" },
     { name = "requests", specifier = ">=2.32,<3" },

@@ -126,6 +126,11 @@ def main(argv=None) -> int:
         "bot": str(bot) if bot else None, "configuration": digest(configuration_manifest(bot)) if bot else None,
         "model": model["model"]}
     identity["gate_root"] = gate_root
+    if os.name == "nt" and selected is None:
+        version = environment.get("AGENTSTRATA_APPLICATION_VERSION", "")
+        if not re.fullmatch(r"[a-f0-9]{64}", version):
+            raise ValueError("Native service requires its installed source version")
+        identity["version"] = version
     if selected:
         expected = selected["services"][args.service]
         for key in ("components", "environment", "configuration", "model", "gate_root"):
@@ -134,6 +139,17 @@ def main(argv=None) -> int:
     context = running / (args.service + ".launch.json")
     write_private(context, json.dumps(identity, sort_keys=True))
     environment[CONTEXT] = str(context)
+    if os.name == "nt":
+        # Windows execve creates a different process. Execute our fixed Python
+        # module command in this interpreter so loaded() attests the actual PID.
+        if len(command) < 3 or command[1] != "-m":
+            raise ValueError("Native managed services require a Python module entry")
+        import runpy
+        os.environ.clear()
+        os.environ.update(environment)
+        sys.argv = [command[2], *command[3:]]
+        runpy.run_module(command[2], run_name="__main__", alter_sys=True)
+        return 0
     os.execve(command[0], command, environment)
     return 0
 

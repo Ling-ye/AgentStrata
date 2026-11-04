@@ -6,6 +6,7 @@ import json
 import logging
 import math
 import os
+from chatcopilot.core import storage_files as fs
 import stat
 import tempfile
 import time
@@ -113,7 +114,7 @@ def job_storage_root(workspace: Workspace, *, create: bool = False) -> Path:
             path.chmod(0o700)
             info = path.stat()
             if os.name == "posix" and (
-                info.st_uid != os.getuid() or stat.S_IMODE(info.st_mode) != 0o700
+                info.st_uid != fs.getuid() or stat.S_IMODE(info.st_mode) != 0o700
             ):
                 raise RuntimeError("protected group job directory must be owner-only")
     return actor_root
@@ -199,7 +200,7 @@ def _write_json_atomic_unchecked(path: Path, payload: dict[str, Any]) -> None:
         with stream:
             json.dump(payload, stream, ensure_ascii=False, indent=2, sort_keys=True)
             stream.flush()
-            os.fsync(stream.fileno())
+            fs.fsync(stream.fileno())
         temp.replace(path)
     finally:
         if fd >= 0:
@@ -212,26 +213,26 @@ def _open_private_child_dir_at(parent_fd: int, name: str, *, create: bool) -> in
         raise OSError("private job directory name is invalid")
     if create:
         try:
-            os.mkdir(name, 0o700, dir_fd=parent_fd)
+            fs.mkdir(name, 0o700, dir_fd=parent_fd)
         except FileExistsError:
             pass
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(name, flags, dir_fd=parent_fd)
+    flags |= fs.O_DIRECTORY | fs.O_NOFOLLOW
+    fd = fs.open(name, flags, dir_fd=parent_fd)
     try:
-        current = os.fstat(fd)
+        current = fs.fstat(fd)
         if (
             not stat.S_ISDIR(current.st_mode)
-            or (os.name == "posix" and current.st_uid != os.geteuid())
+            or (os.name == "posix" and current.st_uid != fs.geteuid())
         ):
             raise OSError("private job directory identity is unsafe")
         if stat.S_IMODE(current.st_mode) != 0o700:
-            os.fchmod(fd, 0o700)
-            current = os.fstat(fd)
+            fs.fchmod(fd, 0o700)
+            current = fs.fstat(fd)
         if (
             not stat.S_ISDIR(current.st_mode)
             or stat.S_IMODE(current.st_mode) != 0o700
-            or (os.name == "posix" and current.st_uid != os.geteuid())
+            or (os.name == "posix" and current.st_uid != fs.geteuid())
         ):
             raise OSError("private job directory could not be secured")
         return fd
@@ -243,11 +244,11 @@ def _open_private_child_dir_at(parent_fd: int, name: str, *, create: bool) -> in
 def _open_directory_path_no_symlinks(path: Path) -> int:
     absolute = path.absolute()
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(absolute.anchor or os.sep, flags)
+    flags |= fs.O_DIRECTORY | fs.O_NOFOLLOW
+    fd = fs.open(absolute.anchor or os.sep, flags)
     try:
         for part in absolute.parts[1:]:
-            next_fd = os.open(part, flags, dir_fd=fd)
+            next_fd = fs.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = next_fd
         return fd
@@ -261,16 +262,16 @@ def _open_private_job_dir(job_dir: Path, *, create: bool) -> int | None:
         raise OSError("job observability path is invalid")
     if os.name != "posix":  # pragma: no cover - native Windows validation required
         parent = job_dir.parent
-        parent_stat = parent.lstat()
+        parent_stat = fs.lstat(parent)
         if stat.S_ISLNK(parent_stat.st_mode) or not stat.S_ISDIR(parent_stat.st_mode):
             raise OSError("job parent must be a real directory")
         try:
-            current = job_dir.lstat()
+            current = fs.lstat(job_dir)
         except FileNotFoundError:
             if not create:
                 raise
             job_dir.mkdir(mode=0o700)
-            current = job_dir.lstat()
+            current = fs.lstat(job_dir)
         if stat.S_ISLNK(current.st_mode) or not stat.S_ISDIR(current.st_mode):
             raise OSError("private job directory must be a real directory")
         job_dir.chmod(0o700)
@@ -293,10 +294,10 @@ def _open_private_job_dir(job_dir: Path, *, create: bool) -> int | None:
                 )
             finally:
                 os.close(grandparent_fd)
-        current_parent = os.fstat(parent_fd)
+        current_parent = fs.fstat(parent_fd)
         if (
             not stat.S_ISDIR(current_parent.st_mode)
-            or current_parent.st_uid != os.geteuid()
+            or current_parent.st_uid != fs.geteuid()
         ):
             raise OSError("job parent identity is unsafe")
         return _open_private_child_dir_at(parent_fd, job_dir.name, create=create)
@@ -306,18 +307,18 @@ def _open_private_job_dir(job_dir: Path, *, create: bool) -> int | None:
 
 
 def _read_private_job_json_at(dir_fd: int, name: str) -> dict[str, Any] | None:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     try:
-        fd = os.open(name, flags, dir_fd=dir_fd)
+        fd = fs.open(name, flags, dir_fd=dir_fd)
     except FileNotFoundError:
         return None
     try:
-        current = os.fstat(fd)
+        current = fs.fstat(fd)
         if (
             not stat.S_ISREG(current.st_mode)
             or current.st_nlink != 1
             or bool(stat.S_IMODE(current.st_mode) & 0o022)
-            or (os.name == "posix" and current.st_uid != os.geteuid())
+            or (os.name == "posix" and current.st_uid != fs.geteuid())
         ):
             raise OSError("private job JSON is unsafe")
         if current.st_size > _MAX_JOB_JSON_BYTES:
@@ -348,7 +349,7 @@ def _read_private_job_json_path(job_dir: Path, name: str) -> dict[str, Any] | No
 
     path = job_dir / name
     try:
-        expected = path.lstat()
+        expected = fs.lstat(path)
     except FileNotFoundError:
         return None
     if (
@@ -360,10 +361,10 @@ def _read_private_job_json_path(job_dir: Path, name: str) -> dict[str, Any] | No
         raise OSError("private job JSON is unsafe")
     if expected.st_size > _MAX_JOB_JSON_BYTES:
         raise _JobJsonTooLargeError(expected.st_size)
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(path, flags)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
+    fd = fs.open(path, flags)
     try:
-        current = os.fstat(fd)
+        current = fs.fstat(fd)
         if (
             not stat.S_ISREG(current.st_mode)
             or current.st_nlink != 1
@@ -428,46 +429,46 @@ def _write_private_job_json_at(
         raise ValueError("private job JSON exceeds the hard size limit")
     temp_name = f".{name}.{os.urandom(8).hex()}.tmp"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     temp_exists = False
     try:
-        fd = os.open(temp_name, flags, 0o600, dir_fd=dir_fd)
+        fd = fs.open(temp_name, flags, 0o600, dir_fd=dir_fd)
         temp_exists = True
         try:
-            current = os.fstat(fd)
+            current = fs.fstat(fd)
             if (
                 not stat.S_ISREG(current.st_mode)
                 or current.st_nlink != 1
-                or (os.name == "posix" and current.st_uid != os.geteuid())
+                or (os.name == "posix" and current.st_uid != fs.geteuid())
             ):
                 raise OSError("private job temporary file is unsafe")
-            os.fchmod(fd, 0o600)
+            fs.fchmod(fd, 0o600)
             remaining = memoryview(encoded)
             while remaining:
                 written = os.write(fd, remaining)
                 if written <= 0:
                     raise OSError("failed to write private job JSON")
                 remaining = remaining[written:]
-            os.fsync(fd)
+            fs.fsync(fd)
         finally:
             os.close(fd)
         try:
-            existing = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            existing = fs.stat(name, dir_fd=dir_fd, follow_symlinks=False)
         except FileNotFoundError:
             existing = None
         if existing is not None and (
             not stat.S_ISREG(existing.st_mode)
             or existing.st_nlink != 1
             or bool(stat.S_IMODE(existing.st_mode) & 0o022)
-            or (os.name == "posix" and existing.st_uid != os.geteuid())
+            or (os.name == "posix" and existing.st_uid != fs.geteuid())
         ):
             raise OSError("existing private job JSON is unsafe")
-        os.replace(temp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        fs.replace(temp_name, name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
         temp_exists = False
     finally:
         if temp_exists:
             try:
-                os.unlink(temp_name, dir_fd=dir_fd)
+                fs.unlink(temp_name, dir_fd=dir_fd)
             except FileNotFoundError:
                 pass
 
@@ -530,7 +531,7 @@ def _write_private_job_json(path: Path, payload: dict[str, Any]) -> None:
     try:
         if job_dir_fd is None:  # pragma: no cover - native Windows validation required
             try:
-                existing = path.lstat()
+                existing = fs.lstat(path)
             except FileNotFoundError:
                 existing = None
             if existing is not None and (
@@ -554,15 +555,15 @@ def code_task_state_lock(job_dir: Path) -> Iterator[None]:
     """Serialize cancellation against the non-cancellable delivery transition."""
     if os.name != "posix":
         raise RuntimeError("isolated code tasks require a POSIX runtime")
-    import fcntl
+    from chatcopilot.core import file_lock as fcntl
 
     lock_path = job_dir / ".code-task-state.lock"
     flags = os.O_RDWR | os.O_CREAT
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(lock_path, flags, 0o600)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
+    fd = fs.open(lock_path, flags, 0o600)
     locked = False
     try:
-        os.fchmod(fd, 0o600)
+        fs.fchmod(fd, 0o600)
         fcntl.flock(fd, fcntl.LOCK_EX)
         locked = True
         yield
@@ -733,17 +734,17 @@ def _append_private_status_event(
         raise ValueError("bounded job status event exceeds the hard size limit")
 
     flags = os.O_WRONLY | os.O_CREAT | os.O_APPEND
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     fd = (
-        os.open(path, flags, 0o600)
+        fs.open(path, flags, 0o600)
         if dir_fd is None
-        else os.open(path.name, flags, 0o600, dir_fd=dir_fd)
+        else fs.open(path.name, flags, 0o600, dir_fd=dir_fd)
     )
     try:
-        current = os.fstat(fd)
+        current = fs.fstat(fd)
         if not stat.S_ISREG(current.st_mode) or current.st_nlink != 1:
             raise OSError("job status event log must be a single-link regular file")
-        if os.name == "posix" and current.st_uid != os.geteuid():
+        if os.name == "posix" and current.st_uid != fs.geteuid():
             raise OSError("job status event log has an unexpected owner")
         unsafe_permissions = stat.S_IMODE(current.st_mode) & 0o077
         if unsafe_permissions:
@@ -751,12 +752,12 @@ def _append_private_status_event(
                 raise OSError("job status event log has unsafe writable permissions")
             if not hasattr(os, "fchmod"):
                 raise OSError("job status event log has unsafe permissions")
-            os.fchmod(fd, 0o600)
-            current = os.fstat(fd)
+            fs.fchmod(fd, 0o600)
+            current = fs.fstat(fd)
             if (
                 not stat.S_ISREG(current.st_mode)
                 or current.st_nlink != 1
-                or (os.name == "posix" and current.st_uid != os.geteuid())
+                or (os.name == "posix" and current.st_uid != fs.geteuid())
                 or stat.S_IMODE(current.st_mode) & 0o077
             ):
                 raise OSError("job status event log could not be made private")

@@ -1,23 +1,60 @@
 const $ = id => document.getElementById(id);
-async function run(action) {
-  $('save').disabled = $('connect').disabled = true;
-  $('status').textContent = '正在启动并检查后台，请稍候…';
-  try { await action(); $('status').textContent = '后台已就绪，正在打开角色窗口。'; }
-  catch (error) { $('status').textContent = error.message; }
-  finally { $('save').disabled = $('connect').disabled = false; }
+let revision = '';
+const controls = ['save','prepare','connect','save-model','login'];
+async function run(action, message) {
+  for (const id of controls) $(id).disabled = true;
+  $('status').textContent = message;
+  try {await action();}
+  catch (error) {$('status').textContent = error.message;}
+  finally {for (const id of controls) $(id).disabled = false;}
 }
+function fields() {
+  const chatgpt = $('kind').value === 'chatgpt';
+  $('api-fields').hidden = chatgpt;
+  $('login').hidden = !chatgpt;
+}
+async function readModel() {
+  const value = await window.desktopSettings.readModel();
+  if (!value) return;
+  revision = value.revision;
+  for (const key of ['kind','model','base_url']) $(key).value = value[key];
+  fields();
+}
+$('kind').onchange = fields;
 $('settings').onsubmit = event => {
   event.preventDefault();
   void run(async () => {
-    const saved = await window.desktopSettings.save({distro: $('distro').value, root: $('root').value.trim()});
-    if (!saved.relaunch) await window.desktopSettings.connect();
-  });
+    const result = await window.desktopSettings.save({root:$('root').value.trim()});
+    if (!result.relaunch) $('status').textContent = '目录已保存，可以准备本机应用。';
+  }, '正在保存本机安装目录…');
 };
-$('connect').onclick = () => run(() => window.desktopSettings.connect());
-window.desktopSettings.read().then(result => {
-  for (const name of result.distributions) $('distro').add(new Option(name, name));
+$('prepare').onclick = () => run(async () => {
+  await window.desktopSettings.prepare();
+  await readModel();
+  $('status').textContent = '运行环境已准备，请配置模型连接。';
+}, '正在下载并准备原生运行环境。首次准备可能需要几分钟，请保持窗口打开。');
+$('model-settings').onsubmit = event => {
+  event.preventDefault();
+  void run(async () => {
+    const value = {kind:$('kind').value, model:$('model').value.trim(), base_url:$('base_url').value.trim(), revision};
+    if ($('api_key').value) value.api_key = $('api_key').value;
+    const saved = await window.desktopSettings.saveModel(value);
+    revision = saved.revision;
+    $('api_key').value = '';
+    $('status').textContent = value.kind === 'chatgpt' ? '模型已保存，请完成 ChatGPT 登录后启动。' : '模型已保存，可以启动桌宠。';
+  }, '正在保存本应用的模型连接…');
+};
+$('login').onclick = () => run(async () => {
+  await window.desktopSettings.login();
+  $('status').textContent = 'ChatGPT 登录已完成，可以启动桌宠。';
+}, '请在系统浏览器完成 ChatGPT 登录。凭据将保存到本应用。');
+$('connect').onclick = () => run(async () => {
+  await window.desktopSettings.connect();
+  $('status').textContent = '后台已就绪，正在打开角色窗口。';
+}, '正在启动并检查本机后台…');
+window.desktopSettings.read().then(async result => {
   const config = result.settings.connection;
-  if (config) for (const key of ['distro', 'root']) $(key).value = config[key];
-  $('status').textContent = result.lastResult?.message || (result.distributions.length ?
-    '选择发行版并填写已安装后台的位置。' : '未检测到 WSL 发行版。请在 Windows 安装 WSL 和 Ubuntu 后重试。');
-}).catch(error => { $('status').textContent = error.message; });
+  if (config) $('root').value = config.root;
+  $('status').textContent = result.lastResult?.message || '先准备本机应用，再配置模型并启动桌宠。';
+  try {await readModel();} catch { /* An unprepared installation is expected on first launch. */ }
+}).catch(error => {$('status').textContent = error.message;});

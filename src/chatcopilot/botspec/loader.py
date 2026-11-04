@@ -58,7 +58,7 @@ from chatcopilot.core.application_configuration import load_application_spec
 
 _BOT_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
 _ENV_PREFIX_RE = re.compile(r"^[A-Z][A-Z0-9_]*$")
-_SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2"}
+_SUPPORTED_DEPLOY_TARGETS = {"wsl", "wsl2", "windows"}
 _GATEWAY_FIELDS = frozenset(
     {"protocol_version", "host", "port_env", "token_env", "state_root_env",
      "max_concurrent_turns", "max_pending_ingress", "clients"}

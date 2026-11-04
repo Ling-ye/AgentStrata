@@ -7,6 +7,7 @@ import asyncio
 import hashlib
 import math
 import os
+from chatcopilot.core import storage_files as fs
 from pathlib import Path
 import re
 import secrets
@@ -460,7 +461,7 @@ def _commit_resources(
             attachments_fd, INBOUND_RESOURCES_DIRNAME
         )
         try:
-            os.mkdir(event_name, 0o700, dir_fd=inbound_fd)
+            fs.mkdir(event_name, 0o700, dir_fd=inbound_fd)
         except FileExistsError as exc:
             raise ResourceMaterializationError(
                 "resource_destination_exists",
@@ -470,7 +471,7 @@ def _commit_resources(
         event_fd = _open_existing_child_dir(inbound_fd, event_name)
         if event_fd is None:
             raise OSError("created resource event directory is unavailable")
-        os.fchmod(event_fd, 0o700)
+        fs.fchmod(event_fd, 0o700)
 
         storage_names: set[str] = set()
         references: list[ResourceRef] = []
@@ -498,8 +499,8 @@ def _commit_resources(
                     sha256=resource.sha256,
                 )
             )
-        os.fsync(event_fd)
-        os.fsync(inbound_fd)
+        fs.fsync(event_fd)
+        fs.fsync(inbound_fd)
         committed = True
         return tuple(references)
     except ResourceMaterializationError:
@@ -524,14 +525,14 @@ def _commit_resources(
             os.close(inbound_fd)
         if not committed and inbound_created and attachments_fd is not None:
             try:
-                os.rmdir(INBOUND_RESOURCES_DIRNAME, dir_fd=attachments_fd)
+                fs.rmdir(INBOUND_RESOURCES_DIRNAME, dir_fd=attachments_fd)
             except OSError:
                 cleanup_ok = False
         if attachments_fd is not None:
             os.close(attachments_fd)
         if not committed and attachments_created and root_fd is not None:
             try:
-                os.rmdir(ATTACHMENTS_DIRNAME, dir_fd=root_fd)
+                fs.rmdir(ATTACHMENTS_DIRNAME, dir_fd=root_fd)
             except OSError:
                 cleanup_ok = False
         if root_fd is not None:
@@ -545,7 +546,7 @@ def _commit_resources(
 
 def _publish_file_atomic(dir_fd: int, *, name: str, data: bytes) -> tuple[int, int]:
     try:
-        os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        fs.stat(name, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError:
         pass
     else:
@@ -556,17 +557,17 @@ def _publish_file_atomic(dir_fd: int, *, name: str, data: bytes) -> tuple[int, i
 
     temp_name = f".tmp-{secrets.token_hex(16)}"
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     temp_fd: int | None = None
     temp_exists = False
     final_exists = False
     identity: tuple[int, int] | None = None
     created_identity: tuple[int, int] | None = None
     try:
-        temp_fd = os.open(temp_name, flags, 0o600, dir_fd=dir_fd)
+        temp_fd = fs.open(temp_name, flags, 0o600, dir_fd=dir_fd)
         temp_exists = True
-        os.fchmod(temp_fd, 0o600)
-        initial = os.fstat(temp_fd)
+        fs.fchmod(temp_fd, 0o600)
+        initial = fs.fstat(temp_fd)
         _validate_private_file(initial)
         created_identity = (initial.st_dev, initial.st_ino)
         remaining = memoryview(data)
@@ -575,8 +576,8 @@ def _publish_file_atomic(dir_fd: int, *, name: str, data: bytes) -> tuple[int, i
             if written <= 0:
                 raise OSError("short resource write")
             remaining = remaining[written:]
-        os.fsync(temp_fd)
-        os.link(
+        fs.fsync(temp_fd)
+        fs.link(
             temp_name,
             name,
             src_dir_fd=dir_fd,
@@ -584,19 +585,19 @@ def _publish_file_atomic(dir_fd: int, *, name: str, data: bytes) -> tuple[int, i
             follow_symlinks=False,
         )
         final_exists = True
-        os.unlink(temp_name, dir_fd=dir_fd)
+        fs.unlink(temp_name, dir_fd=dir_fd)
         temp_exists = False
-        current = os.fstat(temp_fd)
+        current = fs.fstat(temp_fd)
         _validate_private_file(current)
         if current.st_size != len(data):
             raise OSError("resource file size drifted during publication")
-        destination = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        destination = fs.stat(name, dir_fd=dir_fd, follow_symlinks=False)
         if (
             (destination.st_dev, destination.st_ino) != (current.st_dev, current.st_ino)
         ):
             raise OSError("resource destination identity changed during publication")
         identity = (current.st_dev, current.st_ino)
-        os.fsync(dir_fd)
+        fs.fsync(dir_fd)
         return identity
     finally:
         if temp_fd is not None:
@@ -605,7 +606,7 @@ def _publish_file_atomic(dir_fd: int, *, name: str, data: bytes) -> tuple[int, i
             _unlink_matching_file(dir_fd, name, expected=created_identity)
         if temp_exists:
             try:
-                os.unlink(temp_name, dir_fd=dir_fd)
+                fs.unlink(temp_name, dir_fd=dir_fd)
             except FileNotFoundError:
                 pass
 
@@ -626,7 +627,7 @@ def _rollback_event_directory(
             if not _unlink_matching_file(event_fd, name, expected=identity):
                 cleanup_ok = False
     try:
-        os.rmdir(event_name, dir_fd=inbound_fd)
+        fs.rmdir(event_name, dir_fd=inbound_fd)
     except OSError:
         cleanup_ok = False
     return cleanup_ok
@@ -639,7 +640,7 @@ def _unlink_matching_file(
     expected: tuple[int, int] | None,
 ) -> bool:
     try:
-        current = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        current = fs.stat(name, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError:
         return True
     if not stat.S_ISREG(current.st_mode):
@@ -647,7 +648,7 @@ def _unlink_matching_file(
     if expected is not None and (current.st_dev, current.st_ino) != expected:
         return False
     try:
-        os.unlink(name, dir_fd=dir_fd)
+        fs.unlink(name, dir_fd=dir_fd)
     except OSError:
         return False
     return True
@@ -656,7 +657,7 @@ def _unlink_matching_file(
 def _open_workspace_root(path: Path) -> int:
     fd = _open_directory_path_no_symlinks(path)
     try:
-        _validate_owned_directory(os.fstat(fd))
+        _validate_owned_directory(fs.fstat(fd))
         return fd
     except Exception:
         os.close(fd)
@@ -666,13 +667,13 @@ def _open_workspace_root(path: Path) -> int:
 def _open_directory_path_no_symlinks(path: Path) -> int:
     absolute = Path(os.path.abspath(os.fspath(path)))
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
-    fd = os.open(absolute.anchor or os.sep, flags)
+    flags |= fs.O_DIRECTORY | fs.O_NOFOLLOW
+    fd = fs.open(absolute.anchor or os.sep, flags)
     try:
         for part in absolute.parts[1:]:
             if part in {"", ".", ".."}:
                 raise OSError("unsafe workspace path component")
-            next_fd = os.open(part, flags, dir_fd=fd)
+            next_fd = fs.open(part, flags, dir_fd=fd)
             os.close(fd)
             fd = next_fd
         return fd
@@ -683,13 +684,13 @@ def _open_directory_path_no_symlinks(path: Path) -> int:
 
 def _open_existing_child_dir(parent_fd: int, name: str) -> int | None:
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= fs.O_DIRECTORY | fs.O_NOFOLLOW
     try:
-        fd = os.open(name, flags, dir_fd=parent_fd)
+        fd = fs.open(name, flags, dir_fd=parent_fd)
     except FileNotFoundError:
         return None
     try:
-        _validate_owned_directory(os.fstat(fd))
+        _validate_owned_directory(fs.fstat(fd))
         return fd
     except Exception:
         os.close(fd)
@@ -699,7 +700,7 @@ def _open_existing_child_dir(parent_fd: int, name: str) -> int | None:
 def _open_or_create_private_child_dir(parent_fd: int, name: str) -> tuple[int, bool]:
     created = False
     try:
-        os.mkdir(name, 0o700, dir_fd=parent_fd)
+        fs.mkdir(name, 0o700, dir_fd=parent_fd)
         created = True
     except FileExistsError:
         pass
@@ -708,8 +709,8 @@ def _open_or_create_private_child_dir(parent_fd: int, name: str) -> tuple[int, b
         raise OSError("resource directory is unavailable")
     try:
         if created:
-            os.fchmod(fd, 0o700)
-        _validate_owned_directory(os.fstat(fd))
+            fs.fchmod(fd, 0o700)
+        _validate_owned_directory(fs.fstat(fd))
         return fd, created
     except Exception:
         os.close(fd)
@@ -719,7 +720,7 @@ def _open_or_create_private_child_dir(parent_fd: int, name: str) -> tuple[int, b
 def _validate_owned_directory(current: os.stat_result) -> None:
     if not stat.S_ISDIR(current.st_mode):
         raise OSError("resource path is not a directory")
-    if os.name == "posix" and current.st_uid != os.geteuid():
+    if os.name == "posix" and current.st_uid != fs.geteuid():
         raise OSError("resource directory owner is unsafe")
     if bool(stat.S_IMODE(current.st_mode) & 0o022):
         raise OSError("resource directory is writable by another account")
@@ -727,7 +728,7 @@ def _validate_owned_directory(current: os.stat_result) -> None:
 
 def _validate_private_file(current: os.stat_result) -> None:
     require_regular_file(
-        current, owner_uid=os.geteuid() if os.name == "posix" else None,
+        current, owner_uid=fs.geteuid() if os.name == "posix" else None,
         mode=0o600, single_link=True,
     )
 

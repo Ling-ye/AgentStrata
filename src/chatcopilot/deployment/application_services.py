@@ -1,5 +1,6 @@
 """Installed application lifecycle and live-state queries through deployment adapters."""
 from pathlib import Path
+import os
 import time
 from chatcopilot.core.application_installation import application_identity, installation
 from chatcopilot.deployment.component_repository import load_components
@@ -21,6 +22,9 @@ def desktop_info(root: Path) -> dict:
 
 
 def status(root: Path, *, runtime=None) -> dict:
+    if os.name == "nt" and runtime is None:
+        from chatcopilot.deployment.windows_runtime import observe
+        return observe(root)
     identity = application_identity(root)
     if identity is None:
         raise ValueError("No independent application is installed here")
@@ -39,6 +43,11 @@ def status(root: Path, *, runtime=None) -> dict:
 
 
 def control(root: Path, operation: str, *, runtime=None, timeout: float = 60) -> dict:
+    if os.name == "nt" and runtime is None:
+        if operation != "stop":
+            raise ValueError("Start native applications through the desktop or foreground app run")
+        from chatcopilot.deployment.windows_runtime import stop
+        return stop(root, timeout=timeout)
     installed = installation(root)
     if installed is None or operation not in {"start", "stop"}:
         raise ValueError("An explicit installed application and start/stop operation are required")

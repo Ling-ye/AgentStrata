@@ -54,7 +54,7 @@ def copy_sources(source: Path, destination: Path, manifest: dict[str, dict[str, 
         digest = trusted_source_sha256(path, root=source, max_bytes=max(1, path.lstat().st_size))
         if digest != expected["sha256"]:
             raise ValueError("source changed while copying")
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_BINARY", 0))
         with os.fdopen(fd, "rb") as stream:
             content = stream.read()
         if hashlib.sha256(content).hexdigest() != digest:
@@ -72,7 +72,7 @@ def verify_copy(root: Path, manifest: dict[str, dict[str, Any]]) -> None:
         actual = trusted_source_sha256(path, root=root, max_bytes=max(1, path.lstat().st_size))
         if (
             actual != expected["sha256"]
-            or bool(path.stat().st_mode & stat.S_IXUSR) != expected["executable"]
+            or (os.name != "nt" and bool(path.stat().st_mode & stat.S_IXUSR) != expected["executable"])
         ):
             raise ValueError("frozen source identity changed")
 

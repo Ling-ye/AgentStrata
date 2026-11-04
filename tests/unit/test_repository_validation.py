@@ -204,12 +204,20 @@ def test_ci_extensions_use_shared_checks_and_conservative_scope_outputs():
         step = next(s for s in job["steps"] if script in s.get("run", ""))
         assert f"outputs.{key}" in step["if"]
     windows = workflow["jobs"]["live2d-desktop"]
-    assert windows["needs"] == "public-boundary" and "outputs.desktop" in windows["if"]
+    assert set(windows["needs"]) == {"public-boundary", "native-runtime-payload"}
+    assert "outputs.desktop" in windows["if"] and "!cancelled()" in windows["if"]
+    assert "needs.native-runtime-payload.result == 'success'" in windows["if"]
+    assert "needs.native-runtime-payload.result == 'skipped'" in windows["if"]
     checks = [s for s in windows["steps"] if "build-windows.ps1" in s.get("run", "")]
     verify = next(s for s in checks if "-VerifyOnly" in s["run"])
     package = next(s for s in checks if "-VerifyOnly" not in s["run"])
     assert "outputs.package != 'true'" in verify["if"]
     assert "outputs.package == 'true'" in package["if"]
+    assert "-RuntimePayload" in package["run"]
+    producer = workflow["jobs"]["native-runtime-payload"]
+    assert producer["needs"] == "public-boundary" and "outputs.package == 'true'" in producer["if"]
+    assert any("prepare-runtime.py" in step.get("run", "") for step in producer["steps"])
+    assert "secrets." not in str(producer)
     scope = next(s for s in workflow["jobs"]["public-boundary"]["steps"] if s.get("id") == "scope")
     assert "scripts/ci_scope.py" in scope["run"] and "--github-output" in scope["run"]
     assert "secrets." not in str(job)
@@ -254,8 +262,17 @@ def test_ci_summaries_do_not_override_gates_or_upload_private_reports():
         summary = next(s for s in steps if "scripts/ci_summary.py" in s.get("run", ""))
         assert "always()" in summary["if"]
         assert steps.index(summary) > steps.index(gate)
-    assert not any("upload-artifact" in s.get("uses", "")
-                   for job in workflow["jobs"].values() for s in job["steps"])
+    # Only the verified public runtime payload crosses between build platforms.
+    # Python/Console diagnostics and every other job remain local to the runner.
+    uploads = [(identifier, step) for identifier, job in workflow["jobs"].items()
+               for step in job["steps"] if "upload-artifact" in step.get("uses", "")]
+    assert len(uploads) == 1 and uploads[0][0] == "native-runtime-payload"
+    assert uploads[0][1]["with"]["name"] == "live2d-native-runtime-payload"
+    assert uploads[0][1]["with"]["path"] == "${{ runner.temp }}/live2d-native-payload"
+    assert uploads[0][1]["with"]["include-hidden-files"] is True
+    producer = workflow["jobs"]["native-runtime-payload"]
+    command = next(s["run"] for s in producer["steps"] if "prepare-runtime.py" in s.get("run", ""))
+    assert '--output "$RUNNER_TEMP/live2d-native-payload"' in command
 
 
 def test_release_verification_uses_the_same_locked_environment_and_full_gate():

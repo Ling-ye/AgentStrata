@@ -1,5 +1,5 @@
 import {ApplyInput, Plugin, Result, identifier} from './contracts';
-import {Backend} from './wsl';
+import {Backend} from './backend';
 
 export interface Renderer {
   prepare(): Promise<boolean>;

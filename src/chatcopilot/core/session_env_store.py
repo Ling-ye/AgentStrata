@@ -2,11 +2,12 @@
 
 from __future__ import annotations
 
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import hashlib
 import hmac
 import json
 import os
+from chatcopilot.core import storage_files as fs
 import re
 import secrets
 import stat
@@ -124,7 +125,7 @@ def session_env_lock_name_from_path(path: Path) -> str:
 def _validate_secure_regular_file(file_stat: os.stat_result, *, label: str) -> None:
     if (
         not stat.S_ISREG(file_stat.st_mode)
-        or file_stat.st_uid != os.geteuid()
+        or file_stat.st_uid != fs.geteuid()
         or file_stat.st_nlink != 1
         or stat.S_IMODE(file_stat.st_mode) != 0o600
     ):
@@ -143,26 +144,26 @@ def _open_session_env_directory(path: Path, *, create: bool) -> tuple[Path, int]
     if created:
         os.chmod(directory, 0o700, follow_symlinks=False)
     try:
-        directory_lstat = directory.lstat()
+        directory_lstat = fs.lstat(directory)
     except OSError as exc:
         raise SessionEnvSecurityError("session env directory is unavailable") from exc
     if stat.S_ISLNK(directory_lstat.st_mode):
         raise SessionEnvSecurityError("session env directory must not be a symlink")
     flags = os.O_RDONLY
-    if hasattr(os, "O_DIRECTORY"):
-        flags |= os.O_DIRECTORY
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    if hasattr(fs, "O_DIRECTORY"):
+        flags |= fs.O_DIRECTORY
+    if hasattr(fs, "O_NOFOLLOW"):
+        flags |= fs.O_NOFOLLOW
     if hasattr(os, "O_CLOEXEC"):
         flags |= os.O_CLOEXEC
     try:
-        directory_fd = os.open(directory, flags)
+        directory_fd = fs.open(directory, flags)
     except OSError as exc:
         raise SessionEnvSecurityError("session env directory is unavailable") from exc
-    directory_stat = os.fstat(directory_fd)
+    directory_stat = fs.fstat(directory_fd)
     if (
         not stat.S_ISDIR(directory_stat.st_mode)
-        or directory_stat.st_uid != os.geteuid()
+        or directory_stat.st_uid != fs.geteuid()
         or stat.S_IMODE(directory_stat.st_mode) != 0o700
         or (directory_stat.st_dev, directory_stat.st_ino)
         != (directory_lstat.st_dev, directory_lstat.st_ino)
@@ -185,33 +186,33 @@ def _locked_session_env(
     lock_fd: int | None = None
     try:
         flags = os.O_RDWR
-        if hasattr(os, "O_NONBLOCK"):
-            flags |= os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
+        if hasattr(fs, "O_NONBLOCK"):
+            flags |= fs.O_NONBLOCK
+        if hasattr(fs, "O_NOFOLLOW"):
+            flags |= fs.O_NOFOLLOW
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
         if create_lock:
             try:
-                lock_fd = os.open(
+                lock_fd = fs.open(
                     lock_name,
                     flags | os.O_CREAT | os.O_EXCL,
                     0o600,
                     dir_fd=dir_fd,
                 )
-                os.fchmod(lock_fd, 0o600)
+                fs.fchmod(lock_fd, 0o600)
             except FileExistsError:
-                lock_fd = os.open(lock_name, flags, dir_fd=dir_fd)
+                lock_fd = fs.open(lock_name, flags, dir_fd=dir_fd)
         else:
-            lock_fd = os.open(lock_name, flags, dir_fd=dir_fd)
+            lock_fd = fs.open(lock_name, flags, dir_fd=dir_fd)
     except OSError as exc:
         os.close(dir_fd)
         raise SessionEnvSecurityError("session env lock is unavailable") from exc
     try:
-        lock_stat = os.fstat(lock_fd)
+        lock_stat = fs.fstat(lock_fd)
         _validate_secure_regular_file(lock_stat, label="session env lock")
         fcntl.flock(lock_fd, fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH)
-        lock_path_stat = os.stat(lock_name, dir_fd=dir_fd, follow_symlinks=False)
+        lock_path_stat = fs.stat(lock_name, dir_fd=dir_fd, follow_symlinks=False)
         _validate_secure_regular_file(lock_path_stat, label="session env lock")
         if (lock_stat.st_dev, lock_stat.st_ino) != (
             lock_path_stat.st_dev,
@@ -313,19 +314,19 @@ def _read_state_unlocked(
     file_fd: int | None = None
     try:
         flags = os.O_RDONLY
-        if hasattr(os, "O_NONBLOCK"):
-            flags |= os.O_NONBLOCK
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
+        if hasattr(fs, "O_NONBLOCK"):
+            flags |= fs.O_NONBLOCK
+        if hasattr(fs, "O_NOFOLLOW"):
+            flags |= fs.O_NOFOLLOW
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
         try:
-            file_fd = os.open(path.name, flags, dir_fd=dir_fd)
+            file_fd = fs.open(path.name, flags, dir_fd=dir_fd)
         except FileNotFoundError:
             if allow_missing:
                 return None
             raise
-        file_stat = os.fstat(file_fd)
+        file_stat = fs.fstat(file_fd)
         _validate_secure_regular_file(file_stat, label="session env file")
         if file_stat.st_size > MAX_SESSION_ENV_BYTES:
             raise SessionEnvSecurityError("session env payload is too large")
@@ -375,7 +376,7 @@ def _write_state_unlocked(
     if len(encoded) > MAX_SESSION_ENV_BYTES:
         raise SessionEnvSecurityError("session env payload is too large")
     try:
-        existing = os.stat(path.name, dir_fd=dir_fd, follow_symlinks=False)
+        existing = fs.stat(path.name, dir_fd=dir_fd, follow_symlinks=False)
     except FileNotFoundError:
         if require_existing:
             raise SessionEnvSecurityError("session env target is unavailable") from None
@@ -389,28 +390,28 @@ def _write_state_unlocked(
     temp_fd: int | None = None
     try:
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-        if hasattr(os, "O_NOFOLLOW"):
-            flags |= os.O_NOFOLLOW
+        if hasattr(fs, "O_NOFOLLOW"):
+            flags |= fs.O_NOFOLLOW
         if hasattr(os, "O_CLOEXEC"):
             flags |= os.O_CLOEXEC
-        temp_fd = os.open(temp_name, flags, 0o600, dir_fd=dir_fd)
-        os.fchmod(temp_fd, 0o600)
+        temp_fd = fs.open(temp_name, flags, 0o600, dir_fd=dir_fd)
+        fs.fchmod(temp_fd, 0o600)
         offset = 0
         while offset < len(encoded):
             written = os.write(temp_fd, encoded[offset:])
             if written <= 0:
                 raise OSError("short write")
             offset += written
-        os.fsync(temp_fd)
+        fs.fsync(temp_fd)
         os.close(temp_fd)
         temp_fd = None
-        os.replace(temp_name, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        os.fsync(dir_fd)
+        fs.replace(temp_name, path.name, src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
+        fs.fsync(dir_fd)
     except Exception:
         if temp_fd is not None:
             os.close(temp_fd)
         try:
-            os.unlink(temp_name, dir_fd=dir_fd)
+            fs.unlink(temp_name, dir_fd=dir_fd)
         except FileNotFoundError:
             pass
         raise
@@ -559,7 +560,7 @@ def consume_session_attestation(
     """Match and consume exactly one actor/body record, preserving mismatches."""
 
     try:
-        path.lstat()
+        fs.lstat(path)
     except FileNotFoundError:
         return SessionAttestationConsumeResult(SessionAttestationResultKind.MISSING)
     except OSError as exc:

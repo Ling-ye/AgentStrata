@@ -12,6 +12,23 @@ from urllib.request import urlopen
 from chatcopilot.core.install_artifacts import sha256
 from .resources import artifact_lock, manifest, resource
 
+_NATIVE_LIBRARIES = []
+
+
+def prepare_native_libraries() -> None:
+    if os.name != "nt" or _NATIVE_LIBRARIES:
+        return
+    import ctypes
+    from importlib.util import find_spec
+    spec = find_spec("onnxruntime")
+    if spec is None or spec.origin is None:
+        raise RuntimeError("The native ONNX runtime is missing")
+    directory = Path(spec.origin).parent / "capi"
+    # Win11 can resolve sherpa's dependency to an incompatible System32 DLL.
+    # Preload the pinned wheel's runtime without modifying any system library.
+    _NATIVE_LIBRARIES.extend((os.add_dll_directory(str(directory)),
+                              ctypes.WinDLL(str(directory / "onnxruntime.dll"))))
+
 
 def installation_checks(request: dict) -> dict:
     from .prepare import verify_receipt
@@ -115,12 +132,13 @@ def doctor(request: dict) -> dict:
 def load_upstream(request: dict):
     """Resolve the installed upstream; never search an AgentStrata checkout."""
     from chatcopilot.core.settings import load_local_env_values
+    prepare_native_libraries()
     root = Path(request["root"])
     from .assets import runtime_assets
     os.environ.update(load_local_env_values(root / "config/runtime.env", expand_home=True))
     os.environ.update(runtime_assets(root))
     backend = root / "runtime/apps/backend"
-    os.chdir(backend)
+    os.chdir(root / "data" if os.name == "nt" else backend)
     sys.path[:0] = [str(backend / "src"), str(backend)]
     os.environ["HF_HOME"] = str(root / "data/models")
     os.environ["MODELSCOPE_CACHE"] = str(root / "data/models")
@@ -140,8 +158,19 @@ async def serve(request: dict) -> None:
     await server.initialize()
     from chatcopilot.core.release_runtime import loaded
     loaded(__file__)
-    await uvicorn.Server(uvicorn.Config(server.app, host=config.system_config.host,
-                                        port=config.system_config.port, log_level="info")).serve()
+    runner = uvicorn.Server(uvicorn.Config(server.app, host=config.system_config.host,
+                                          port=config.system_config.port, log_level="info"))
+    watcher = None
+    if os.name == "nt":
+        from chatcopilot.core.process_shutdown import STOP_EVENT, watch_shutdown
+        if os.environ.get(STOP_EVENT):
+            watcher = asyncio.create_task(watch_shutdown(lambda: setattr(runner, "should_exit", True)))
+    try:
+        await runner.serve()
+    finally:
+        if watcher is not None:
+            watcher.cancel()
+            await asyncio.gather(watcher, return_exceptions=True)
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -1,5 +1,5 @@
 plugins:
   - id: open-llm-vtuber
     options:
-      port: 12494
-      gateway_port: 18892
+      port: 12495
+      gateway_port: 18893

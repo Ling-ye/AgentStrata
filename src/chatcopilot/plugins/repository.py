@@ -2,9 +2,10 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import json
 import os
+from chatcopilot.core import storage_files as fs
 from pathlib import Path
 import stat
 
@@ -17,7 +18,7 @@ from chatcopilot.plugins.types import ObservableAgentDefinition
 
 
 def _private_directory(info: os.stat_result) -> None:
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != fs.getuid() or info.st_mode & 0o077:
         raise InstallError("Agent registration directories must be private and owner-owned")
 
 
@@ -25,19 +26,19 @@ def _read_private(root: Path, relative: Path) -> str:
     """Read config/record files through the installation's private directory descriptors."""
     if root.resolve() != root:
         raise InstallError("Installation directory must not contain symlinks")
-    flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
-    descriptor = os.open(root, flags)
+    flags = os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW
+    descriptor = fs.open(root, flags)
     try:
-        _private_directory(os.fstat(descriptor))
+        _private_directory(fs.fstat(descriptor))
         for part in relative.parts[:-1]:
-            child = os.open(part, flags, dir_fd=descriptor)
+            child = fs.open(part, flags, dir_fd=descriptor)
             os.close(descriptor)
             descriptor = child
-            _private_directory(os.fstat(descriptor))
-        file = os.open(relative.name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=descriptor)
+            _private_directory(fs.fstat(descriptor))
+        file = fs.open(relative.name, os.O_RDONLY | fs.O_NOFOLLOW | fs.O_NONBLOCK, dir_fd=descriptor)
         with os.fdopen(file, encoding="utf-8") as stream:
-            info = os.fstat(stream.fileno())
-            require_regular_file(info, owner_uid=os.getuid(), single_link=True)
+            info = fs.fstat(stream.fileno())
+            require_regular_file(info, owner_uid=fs.getuid(), single_link=True)
             if info.st_mode & 0o077:
                 raise InstallError("Agent registration files must be private")
             return stream.read()
@@ -67,12 +68,12 @@ def validate_observable_agents(values: list, *, root: Path) -> list[ObservableAg
         if not value or not state.is_absolute() or not state.is_relative_to(root) or state.resolve() != state:
             raise InstallError("Observable Agent state must remain inside its plugin installation")
         current = root
-        _private_directory(current.lstat())
+        _private_directory(fs.lstat(current))
         for part in state.relative_to(root).parts:
             current /= part
             if not current.exists() and not current.is_symlink():
                 break  # A reader must not create a state/observation directory.
-            _private_directory(current.lstat())
+            _private_directory(fs.lstat(current))
     return agents
 
 
@@ -102,9 +103,9 @@ class InstallRepository:
                 and any(p.name != ".lock" for p in self.root.iterdir())):
             raise InstallError("Refusing to adopt an unregistered non-empty directory")
         private_directory(self.root)
-        fd = os.open(self.root / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fd = fs.open(self.root / ".lock", os.O_CREAT | os.O_RDWR | fs.O_NOFOLLOW, 0o600)
         try:
-            if os.fstat(fd).st_uid != os.getuid() or os.fstat(fd).st_nlink != 1:
+            if fs.fstat(fd).st_uid != fs.getuid() or fs.fstat(fd).st_nlink != 1:
                 raise InstallError("Invalid installation lock")
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)

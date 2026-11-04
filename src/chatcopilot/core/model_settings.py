@@ -6,10 +6,11 @@ already captured document so a later save cannot change their model routes.
 from __future__ import annotations
 
 import copy
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import json
 import math
 import os
+from chatcopilot.core import storage_files as fs
 import re
 import tempfile
 from contextlib import contextmanager
@@ -128,7 +129,7 @@ class ModelSettingsStore:
 
     def read(self) -> dict[str, Any]:
         try:
-            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+            fd = fs.open(self.path, os.O_RDONLY | fs.O_NOFOLLOW)
         except FileNotFoundError:
             if self.defaults_path is not None:
                 return ModelSettingsStore(self.defaults_path).read()
@@ -144,7 +145,7 @@ class ModelSettingsStore:
         data = validate_settings(data)
         self.path.parent.mkdir(parents=True, exist_ok=True)
         lock = self.path.with_suffix(self.path.suffix + ".lock")
-        fd = os.open(lock, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        fd = fs.open(lock, os.O_CREAT | os.O_RDWR | fs.O_NOFOLLOW, 0o600)
         with os.fdopen(fd, "a") as stream:
             fcntl.flock(stream, fcntl.LOCK_EX)
             old = self.read()
@@ -160,11 +161,11 @@ class ModelSettingsStore:
                     json.dump(data, target, ensure_ascii=False, indent=2, allow_nan=False)
                     target.write("\n")
                     target.flush()
-                    os.fsync(target.fileno())
-                os.replace(name, self.path)
+                    fs.fsync(target.fileno())
+                fs.replace(name, self.path)
             finally:
                 if os.path.exists(name):
-                    os.unlink(name)
+                    fs.unlink(name)
         return {**data, "revision": digest(data)}
 
 
@@ -245,7 +246,7 @@ def frozen_settings(document: dict):
     """Project a job's captured settings into its isolated process environment."""
     with tempfile.TemporaryDirectory(prefix="as-llm-") as directory:
         path = Path(directory) / "llm.json"
-        fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
+        fd = fs.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600)
         with os.fdopen(fd, "w") as stream:
             json.dump(validate_settings(document), stream)
         old = os.environ.get("AGENTSTRATA_LLM_CONFIG")

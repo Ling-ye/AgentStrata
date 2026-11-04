@@ -898,7 +898,12 @@ async def serve_gateway_runtime(
     shutdown = stop_event or asyncio.Event()
     loop = asyncio.get_running_loop()
     installed: list[signal.Signals] = []
+    native_shutdown = None
     try:
+        if os.name == "nt":
+            from chatcopilot.core.process_shutdown import STOP_EVENT, watch_shutdown
+            if os.environ.get(STOP_EVENT):
+                native_shutdown = asyncio.create_task(watch_shutdown(shutdown.set))
         if stop_event is None:
             for signum in (signal.SIGINT, signal.SIGTERM):
                 try:
@@ -909,6 +914,9 @@ async def serve_gateway_runtime(
         await host.start()
         await shutdown.wait()
     finally:
+        if native_shutdown is not None:
+            native_shutdown.cancel()
+            await asyncio.gather(native_shutdown, return_exceptions=True)
         try:
             for signum in installed:
                 loop.remove_signal_handler(signum)

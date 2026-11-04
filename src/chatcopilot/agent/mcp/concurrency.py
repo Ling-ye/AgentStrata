@@ -3,37 +3,29 @@ from __future__ import annotations
 
 import os
 import sys
-import threading
 import time
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
 from chatcopilot.agent.mcp.errors import McpToolBusyError
+from chatcopilot.core import file_lock as fcntl
 
 _MCP_LOCK_DIR = Path("/tmp") if sys.platform != "win32" else Path(os.environ.get("TEMP", "."))
-_IS_UNIX = sys.platform != "win32"
-_WIN_FALLBACK_LOCKS: dict[str, threading.Lock] = {}
-_WIN_FALLBACK_META_LOCK = threading.Lock()
 
 
 @contextmanager
 def _cross_process_lock(server_id: str, timeout: float) -> Iterator[None]:
-    """Acquire a cross-process advisory lock (Unix fcntl / Windows fallback).
+    """Acquire a real interprocess advisory lock on POSIX and Windows.
 
     Blocks up to *timeout* seconds; raises ``McpToolBusyError`` if the lock
     cannot be obtained within the deadline.
     """
-    if _IS_UNIX:
-        yield from _unix_flock(server_id, timeout)
-    else:
-        yield from _win_thread_lock(server_id, timeout)
-
-
-def _unix_flock(server_id: str, timeout: float) -> Iterator[None]:
-    import fcntl
-
     lock_path = _MCP_LOCK_DIR / f"chatcopilot-mcp-lock-{server_id}.lock"
+    if os.name == "nt":
+        from chatcopilot.core.private_sqlite import private_directory
+        private_directory(_MCP_LOCK_DIR / "agentstrata-mcp-locks")
+        lock_path = _MCP_LOCK_DIR / "agentstrata-mcp-locks" / lock_path.name
     deadline = time.monotonic() + timeout
     fd = lock_path.open("w")
     try:
@@ -41,7 +33,7 @@ def _unix_flock(server_id: str, timeout: float) -> Iterator[None]:
             try:
                 fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
                 break
-            except (BlockingIOError, OSError):
+            except BlockingIOError:
                 if time.monotonic() >= deadline:
                     raise McpToolBusyError(
                         f"MCP server '{server_id}' concurrency lock timed out "
@@ -57,23 +49,6 @@ def _unix_flock(server_id: str, timeout: float) -> Iterator[None]:
         except OSError:
             pass
         fd.close()
-
-
-def _win_thread_lock(server_id: str, timeout: float) -> Iterator[None]:
-    with _WIN_FALLBACK_META_LOCK:
-        lock = _WIN_FALLBACK_LOCKS.setdefault(server_id, threading.Lock())
-    acquired = lock.acquire(timeout=timeout)
-    if not acquired:
-        raise McpToolBusyError(
-            f"MCP server '{server_id}' concurrency lock timed out "
-            f"after {timeout:.0f}s; another call is still in flight.",
-            server_id=server_id,
-            tool_name="",
-        )
-    try:
-        yield
-    finally:
-        lock.release()
 
 
 __all__ = ["_cross_process_lock"]

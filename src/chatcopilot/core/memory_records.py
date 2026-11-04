@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+from chatcopilot.core import storage_files as fs
 import re
 import sqlite3
 import unicodedata
@@ -93,7 +94,7 @@ class MemoryRecordStore:
     def _connection(self, *, write: bool) -> Iterator[sqlite3.Connection | None]:
         path = self._path
         try:
-            path.lstat()
+            fs.lstat(path)
             exists = True
         except FileNotFoundError:
             exists = False
@@ -106,18 +107,18 @@ class MemoryRecordStore:
             self._state._validate_state_parents(path.parent)
         with self._state._locked(path):
             try:
-                path.lstat()
+                fs.lstat(path)
                 exists = True
             except FileNotFoundError:
                 exists = False
             if not exists:
-                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+                flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | fs.O_NOFOLLOW
                 try:
-                    fd = os.open(path, flags, 0o600)
+                    fd = fs.open(path, flags, 0o600)
                 except OSError as exc:
                     raise RuntimeError("记忆存储无法安全创建") from exc
                 os.close(fd)
-            self._state._validate_file(path.lstat())
+            self._state._validate_file(fs.lstat(path))
             try:
                 conn = sqlite3.connect(path, timeout=5, isolation_level=None)
             except sqlite3.Error as exc:

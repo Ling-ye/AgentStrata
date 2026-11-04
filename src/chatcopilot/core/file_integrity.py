@@ -32,8 +32,12 @@ def require_regular_file(
 
 
 def _content_identity(info: os.stat_result) -> tuple[int, ...]:
+    # Windows path stat still reports creation time as ctime, whereas fstat
+    # reports metadata-change time in current CPython. Birth time has the same
+    # meaning in both APIs; descriptor ctime is also compared across the read.
+    timestamp = getattr(info, "st_birthtime_ns") if os.name == "nt" else info.st_ctime_ns
     return (info.st_dev, info.st_ino, info.st_mode, info.st_nlink,
-            info.st_size, info.st_mtime_ns, info.st_ctime_ns)
+            info.st_size, info.st_mtime_ns, timestamp)
 
 
 def trusted_source_sha256(path: Path, *, root: Path, max_bytes: int) -> str:
@@ -52,17 +56,19 @@ def trusted_source_sha256(path: Path, *, root: Path, max_bytes: int) -> str:
         if part is not None:
             current = current / part
         info = current.stat(follow_symlinks=False)
-        if not stat.S_ISDIR(info.st_mode):
+        if not stat.S_ISDIR(info.st_mode) or getattr(info, "st_reparse_tag", 0):
             raise ValueError("source parent is unsafe")
         parents.append((current, info))
     before = path.stat(follow_symlinks=False)
+    if getattr(before, "st_reparse_tag", 0):
+        raise ValueError("source is a reparse point")
     try:
         require_regular_file(before, single_link=True)
     except FileMetadataError as exc:
         raise ValueError("source inode is unsafe") from exc
     if before.st_size > max_bytes:
         raise ValueError("source is too large")
-    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0)
+    flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_BINARY", 0)
     descriptor = os.open(path, flags)
     try:
         opened = os.fstat(descriptor)
@@ -81,6 +87,7 @@ def trusted_source_sha256(path: Path, *, root: Path, max_bytes: int) -> str:
         finished = os.fstat(descriptor)
         after = path.stat(follow_symlinks=False)
         if (total != opened.st_size or _content_identity(finished) != _content_identity(opened)
+                or finished.st_ctime_ns != opened.st_ctime_ns
                 or _content_identity(after) != _content_identity(opened)):
             raise ValueError("source changed while reading")
         for parent, original in parents:

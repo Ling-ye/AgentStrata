@@ -4,7 +4,7 @@ import {join, basename} from 'node:path';
 import {pathToFileURL} from 'node:url';
 import {createHash, randomUUID} from 'node:crypto';
 import {ApplyInput, Connection, Mode, Plugin, Settings, applyInput, connection, identifier, settings, visibleBounds} from './contracts';
-import {Backend, WslBackend, distributions} from './wsl';
+import {Backend, NativeBackend} from './backend';
 import {Controller} from './controller';
 import {allowed, sameHttpOrigin, WindowGrant, WindowRole} from './security';
 import {Perception} from './perception';
@@ -12,7 +12,6 @@ import {Perception} from './perception';
 export interface DesktopOptions {
   // Injection is only used by the separate, unpackaged smoke harness.
   backend?: (config: Connection) => Backend;
-  distributions?: () => Promise<string[]>;
   initial?: Settings;
   settingsFile?: string;
   selectionFile?: string;
@@ -126,7 +125,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
         click: () => void openManager().catch(showError)},
       {label: '连接设置', click: openSettings},
       {label: '隐藏角色', click: hide},
-      {label: '退出桌面（后台继续运行）', click: () => app.quit()},
+      {label: '退出桌宠并停止后台', click: () => app.quit()},
     ]);
   }
   function rebuildTray() { tray?.setContextMenu(menu()); }
@@ -166,7 +165,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
   }
   async function openManager() {
     if (!plugins.length) await connect();
-    if (!plugins.length) throw new Error('请先在连接设置中配置 WSL 后台');
+    if (!plugins.length) throw new Error('请先在设置中准备本机应用');
     const generator = plugins.find(p => p.id === 'live2d-generator');
     if (!generator) throw new Error('角色生成器尚未安装；它是可选组件。');
     await backend!.start('live2d-generator'); await reachable(generator);
@@ -186,7 +185,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     if (connectionPromise) return connectionPromise;
     if (!prefs.connection) { openSettings(); return; }
     connectionPromise = (async () => {
-      backend = (options.backend ?? (c => new WslBackend(c)))(prefs.connection!);
+      backend ??= (options.backend ?? (c => new NativeBackend(c, app.isPackaged ? join(process.resourcesPath, 'runtime-payload') : join(__dirname, '../runtime-payload'))))(prefs.connection!);
       const next = new Controller(backend, {
         prepare: async () => {
           if (!client || client.webContents.isLoading()) return false;
@@ -229,27 +228,31 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     })().finally(() => { connectionPromise = undefined; });
     return connectionPromise;
   }
-  handle('settings-read', ['settings'], async () => ({settings: prefs, lastResult,
-    distributions: await (options.distributions ?? distributions)().catch(() => [])}));
+  async function disconnectForSettings() {
+    if (client) {
+      const idle = await new Promise<boolean>(resolve => {
+        const nonce = randomUUID();
+        const timer = setTimeout(() => {pending = undefined; resolve(false);}, 5000);
+        pending = {nonce, resolve: value => {clearTimeout(timer); pending = undefined; resolve(value);}};
+        send('desktop-prepare', nonce);
+      });
+      if (!idle) {send('desktop-resume'); throw new Error('请先停止当前任务和麦克风，再修改本机设置');}
+    }
+    await perception.setEnabled(false);
+    await backend?.stop();
+    send('desktop-visibility', false);
+    client?.destroy(); client = undefined;
+    manager?.destroy(); manager = undefined;
+    plugins = []; controller = undefined;
+  }
+  handle('settings-read', ['settings'], async () => ({settings: prefs, lastResult}));
   handle('settings-save', ['settings'], async value => {
     if (connectionPromise || changing) throw new Error('后台操作尚未完成');
     changing = true;
     try {
       const config = connection(value);
-      if (!(await (options.distributions ?? distributions)()).includes(config.distro)) throw new Error('WSL 发行版不存在');
-      if (client) {
-        // Reconfiguration is explicit and local; never silently interrupt a conversation.
-        const idle = await new Promise<boolean>(resolve => {
-          const nonce = randomUUID();
-          const timer = setTimeout(() => { pending = undefined; resolve(false); }, 5000);
-          pending = {nonce, resolve: value => {clearTimeout(timer); pending = undefined; resolve(value);}};
-          send('desktop-prepare', nonce);
-        });
-        if (!idle) {send('desktop-resume'); throw new Error('请先停止当前对话和麦克风，再修改连接');}
-        send('desktop-visibility', false); client.destroy(); client = undefined;
-        manager?.destroy(); manager = undefined; plugins = []; controller = undefined;
-      }
-      await perception.setEnabled(false);
+      await disconnectForSettings();
+      backend = undefined;
       prefs.connection = config; await save();
       if (options.selectionFile && options.selectionFile !== configFile) {
         await mkdir(join(options.selectionFile, '..'), {recursive: true});
@@ -258,8 +261,8 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
       }
       if (!options.backend && JSON.stringify(config) !== JSON.stringify(options.connection)) {
         app.relaunch({args: [...process.argv.slice(1).filter((v, i, all) =>
-          !['--application-root', '--distro'].includes(v) && !['--application-root', '--distro'].includes(all[i - 1])),
-          '--application-root', config.root, '--distro', config.distro]});
+          !['--application-root'].includes(v) && !['--application-root'].includes(all[i - 1])),
+          '--application-root', config.root]});
         app.quit();
         return {ok: true, relaunch: true};
       }
@@ -267,6 +270,31 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     } finally { changing = false; }
   });
   handle('settings-connect', ['settings'], async () => { await connect(); return {ok: true}; });
+  const settingsBackend = () => {
+    if (!prefs.connection) throw new Error('请先保存本机安装目录');
+    backend ??= (options.backend ?? (c => new NativeBackend(c, app.isPackaged ? join(process.resourcesPath, 'runtime-payload') : join(__dirname, '../runtime-payload'))))(prefs.connection);
+    return backend;
+  };
+  handle('settings-prepare', ['settings'], async () => {
+    if (changing || connectionPromise) throw new Error('后台操作尚未完成');
+    changing = true;
+    try {
+      await disconnectForSettings();
+      await settingsBackend().prepare?.(); return {ok: true};
+    } finally {changing = false;}
+  });
+  handle('settings-model-read', ['settings'], async () => settingsBackend().modelSettings?.());
+  handle('settings-model-save', ['settings'], async value => {
+    if (changing || connectionPromise) throw new Error('后台操作尚未完成');
+    changing = true;
+    try {await disconnectForSettings(); return await settingsBackend().modelSettings?.(value);}
+    finally {changing = false;}
+  });
+  handle('settings-login', ['settings'], async () => {
+    if (changing || connectionPromise) throw new Error('后台操作尚未完成');
+    changing = true;
+    try {await settingsBackend().login?.(); return {ok: true};} finally {changing = false;}
+  });
   handle('desktop-status', ['client', 'manager'], () => ({plugins, lastResult, mode: prefs.mode, perception: perception.enabled}));
   handle('desktop-perception-set', ['client'], async value => {
     if (typeof value !== 'boolean') throw new Error('感知状态必须是开关');
@@ -313,7 +341,8 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     if (quitting) return;
     event.preventDefault(); quitting = true;
     send('desktop-visibility', false);
-    void perception.close().catch(showError).finally(() => app.quit());
+    const report = (error: unknown) => console.error(error instanceof Error ? error.message : '后台停止失败');
+    void perception.close().catch(report).then(() => backend?.stop()).catch(report).finally(() => app.quit());
   });
   await app.whenReady();
   try { prefs = options.initial ?? settings(JSON.parse(await readFile(configFile, 'utf8'))); }

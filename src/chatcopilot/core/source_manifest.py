@@ -49,7 +49,7 @@ def is_private_environment_path(rel: str) -> bool:
 
 def is_deployable_source_path(rel: str) -> bool:
     path = PurePosixPath(str(rel).replace("\\", "/"))
-    if str(path) == ".agentstrata-application.json":
+    if str(path) in {".agentstrata-application.json", ".agentstrata-source.json"}:
         return False
     if not path.parts or path.is_absolute():
         return False

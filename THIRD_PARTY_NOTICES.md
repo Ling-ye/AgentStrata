@@ -80,9 +80,11 @@ not an invented license or automatic component replacement.
 
 ## Independently licensed Open-LLM-VTuber integration
 
-The [optional integration](integrations/open_llm_vtuber/README.md) does not vendor
-the complete upstream applications, models or Live2D SDK. Its original Python
-adapter is AGPL-3.0-only. Patches and upstream context have these exceptions:
+The [optional integration](integrations/open_llm_vtuber/README.md) keeps upstream
+applications outside the framework wheel. The Windows native desktop payload
+includes their pinned public sources, patched frontend build, and upstream
+license materials. Models and Live2D SDK retain their own terms. The original
+Python adapter is AGPL-3.0-only. Patches and upstream context have these exceptions:
 
 - Backend revision `992309c0aa19845960228f880013d4685fde93b5` uses MIT. Preserve
   its [original license](third_party/Open-LLM-VTuber-LICENSE.txt) and copyright
@@ -97,6 +99,17 @@ adapter is AGPL-3.0-only. Patches and upstream context have these exceptions:
 
 This remains an external option; its restrictions are not additional conditions
 on the independent AgentStrata AGPL framework.
+
+The native bootstrap separately obtains Windows-MCP at the revision in
+`windows-mcp.lock.json`, its Python/uv environment, and FFmpeg 8.0.1 from
+[Gyan's fixed upstream build](https://github.com/GyanD/codexffmpeg/releases/tag/8.0.1).
+FFmpeg's GPL notices, build configuration and corresponding source remain
+available from that publisher and [FFmpeg](https://ffmpeg.org/releases/).
+Selecting ChatGPT login separately downloads the official OpenAI Codex 0.166.0
+Windows package, used only for authentication, under its
+[Apache-2.0 license](https://github.com/openai/codex/blob/rust-v0.166.0/LICENSE).
+`windows-runtime.lock.json` binds these native downloads and binaries by hash.
+These separately downloaded binaries are not embedded in the framework wheel.
 
 ## Development and release tooling
 

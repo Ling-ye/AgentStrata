@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import hashlib
 import json
 import os

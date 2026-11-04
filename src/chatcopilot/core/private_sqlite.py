@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+from chatcopilot.core import storage_files as fs
 import sqlite3
 import stat
 import time
@@ -12,24 +13,33 @@ import traceback
 from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Iterator
+from urllib.parse import quote
 
 
 logger = logging.getLogger(__name__)
 
 
+def sqlite_uri(path: Path, *, mode: str = "rw") -> str:
+    if os.name == "nt" and str(path).startswith("\\\\?\\"):
+        # An encoded NT path has no URI authority. pathlib.as_uri would turn
+        # the namespace marker into the invalid authority "%3F".
+        return "file:" + quote(str(path), safe="/:") + "?mode=" + mode
+    return path.as_uri() + "?mode=" + mode
+
+
 @contextmanager
 def private_lock(path: Path, *, exclusive: bool = True, timeout: float | None = 0) -> Iterator[int]:
     """Lock a stable private inode; timeout=None waits until its owner releases it."""
-    import fcntl
+    from chatcopilot.core import file_lock as fcntl
 
     private_directory(path.parent)
     try:
-        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+        descriptor = fs.open(path, os.O_CREAT | os.O_EXCL | os.O_RDWR | fs.O_NOFOLLOW, 0o600)
     except FileExistsError:
         private_file(path)
-        descriptor = os.open(path, os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+        descriptor = fs.open(path, os.O_RDWR | fs.O_NOFOLLOW | fs.O_NONBLOCK)
     try:
-        opened = os.fstat(descriptor)
+        opened = fs.fstat(descriptor)
         _require_private_file(opened)
         if stat.S_IMODE(opened.st_mode) != 0o600:
             raise ValueError("private lock requires mode 0600")
@@ -72,6 +82,18 @@ def _record_error(error: BaseException, database: str, phase: str) -> None:
 
 
 def private_directory(path: Path) -> Path:
+    if os.name == "nt":
+        from chatcopilot.core.windows_storage import reject_reparse
+        path = path.absolute()
+        reject_reparse(path)
+        try:
+            path.mkdir(parents=True, mode=0o700)
+        except FileExistsError:
+            pass
+        else:
+            fs.tighten(path)
+        fs.lstat(path)
+        return path
     path = path.absolute()
     current = Path(path.anchor)
     for part in path.parts[1:]:
@@ -79,14 +101,18 @@ def private_directory(path: Path) -> Path:
         if current.is_symlink():
             raise ValueError("private storage path contains a symlink")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    info = path.lstat()
-    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid() or info.st_mode & 0o077:
+    info = fs.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != fs.getuid() or info.st_mode & 0o077:
         raise ValueError("private storage directory must be owned by this user with mode 0700")
     return path
 
 
 def repair_owned_private_directory(path: Path) -> Path:
     """Create or tighten one application-owned directory without relaxing trust checks."""
+    if os.name == "nt":
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
+        fs.tighten(path)
+        return private_directory(path)
     path = path.absolute()
     current = Path(path.anchor)
     for part in path.parts[1:]:
@@ -94,15 +120,15 @@ def repair_owned_private_directory(path: Path) -> Path:
         if current.is_symlink():
             raise ValueError("private storage path contains a symlink")
     path.mkdir(parents=True, mode=0o700, exist_ok=True)
-    descriptor = os.open(path, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    descriptor = fs.open(path, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
     try:
-        opened = os.fstat(descriptor)
-        if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != os.getuid():
+        opened = fs.fstat(descriptor)
+        if not stat.S_ISDIR(opened.st_mode) or opened.st_uid != fs.getuid():
             raise ValueError("private storage directory must be owned by this user with mode 0700")
         if stat.S_IMODE(opened.st_mode) != 0o700:
-            os.fchmod(descriptor, 0o700)
-        tightened = os.fstat(descriptor)
-        linked = path.lstat()
+            fs.fchmod(descriptor, 0o700)
+        tightened = fs.fstat(descriptor)
+        linked = fs.lstat(path)
         if (
             stat.S_IMODE(tightened.st_mode) != 0o700
             or (tightened.st_dev, tightened.st_ino) != (linked.st_dev, linked.st_ino)
@@ -116,7 +142,7 @@ def repair_owned_private_directory(path: Path) -> Path:
 def _require_private_file(info: os.stat_result, *, allow_unlinked: bool = False) -> None:
     if (
         not stat.S_ISREG(info.st_mode)
-        or info.st_uid != os.getuid()
+        or info.st_uid != fs.getuid()
         or info.st_nlink not in ((0, 1) if allow_unlinked else (1,))
         or info.st_mode & 0o077
     ):
@@ -124,7 +150,7 @@ def _require_private_file(info: os.stat_result, *, allow_unlinked: bool = False)
 
 
 def private_file(path: Path) -> os.stat_result:
-    info = path.lstat()
+    info = fs.lstat(path)
     _require_private_file(info)
     return info
 
@@ -152,7 +178,7 @@ class PrivateDatabase:
         # a transaction during concurrent startup.
         with private_lock(self.path.with_name(self.path.name + ".init.lock"), timeout=None):
             try:
-                fd = os.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR | os.O_NOFOLLOW, 0o600)
+                fd = fs.open(self.path, os.O_CREAT | os.O_EXCL | os.O_RDWR | fs.O_NOFOLLOW, 0o600)
             except FileExistsError:
                 # Never open/close an existing DB outside SQLite: close() would drop
                 # every POSIX SQLite lock this process holds on that inode.
@@ -217,7 +243,7 @@ class PrivateDatabase:
                 # its sidecar and return nlink=0 instead of ENOENT. The removed inode
                 # must still be a private regular file owned by this user. Main DBs
                 # and all other private_file callers continue to require one link.
-                _require_private_file(auxiliary.lstat(), allow_unlinked=True)
+                _require_private_file(fs.lstat(auxiliary), allow_unlinked=True)
             except FileNotFoundError:
                 # SQLite can unlink these files when another connection commits
                 # or closes. Only their absence is optional, not their safety.
@@ -225,7 +251,7 @@ class PrivateDatabase:
         # Independent Console/worker processes legitimately serialize on the
         # same private DB. Give SQLite enough time to hand the writer lease over
         # under the repository's documented stress envelope.
-        connection = sqlite3.connect(self.path.as_uri() + "?mode=rw", uri=True, timeout=30)
+        connection = sqlite3.connect(sqlite_uri(self.path), uri=True, timeout=30)
         connection.row_factory = sqlite3.Row
         try:
             after = private_file(self.path)

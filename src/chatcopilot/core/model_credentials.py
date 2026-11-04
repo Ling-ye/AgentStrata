@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import contextlib
 import base64
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import json
 import os
+from chatcopilot.core import storage_files as fs
 import re
 import stat
 import sys
@@ -518,14 +519,14 @@ def _acquire_lock(
     lock_path = lock_dir / f"{lane}.lock"
     _reject_symlink_if_present(lock_path, "lock_symlink")
     flags = os.O_RDWR | os.O_CREAT
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     try:
-        fd = os.open(lock_path, flags, 0o600)
+        fd = fs.open(lock_path, flags, 0o600)
     except OSError as exc:
         raise CredentialError("lock_open_failed") from exc
     handle = os.fdopen(fd, "r+b", buffering=0)
     try:
-        _validate_file_stat(os.fstat(fd), "lock", require_single_link=True)
+        _validate_file_stat(fs.fstat(fd), "lock", require_single_link=True)
         operation = fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB)
         try:
             fcntl.flock(fd, operation)
@@ -559,12 +560,14 @@ def _ensure_private_directory(path: Path, *, create: bool, code_prefix: str) -> 
             pass
         except OSError as exc:
             raise CredentialError(f"{code_prefix}_create_failed") from exc
+        if os.name == "nt":
+            fs.tighten(path)
     _validate_private_directory(path, code_prefix)
 
 
 def _validate_private_directory(path: Path, code_prefix: str) -> None:
     try:
-        info = path.lstat()
+        info = fs.lstat(path)
     except FileNotFoundError as exc:
         raise CredentialError(f"{code_prefix}_missing") from exc
     except OSError as exc:
@@ -575,13 +578,13 @@ def _validate_private_directory(path: Path, code_prefix: str) -> None:
         raise CredentialError(f"{code_prefix}_not_directory")
     if stat.S_IMODE(info.st_mode) != 0o700:
         raise CredentialError(f"{code_prefix}_permissions")
-    if info.st_uid != os.geteuid():
+    if info.st_uid != fs.geteuid():
         raise CredentialError(f"{code_prefix}_owner")
 
 
 def _reject_symlink_if_present(path: Path, code: str) -> None:
     try:
-        info = path.lstat()
+        info = fs.lstat(path)
     except FileNotFoundError:
         return
     except OSError as exc:
@@ -642,7 +645,7 @@ def _read_owned_file(
     require_private_permissions: bool,
 ) -> bytes:
     try:
-        before = path.lstat()
+        before = fs.lstat(path)
     except FileNotFoundError as exc:
         raise CredentialError(f"{code_prefix}_missing") from exc
     except OSError as exc:
@@ -655,13 +658,13 @@ def _read_owned_file(
         require_single_link=True,
         require_private_permissions=require_private_permissions,
     )
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     try:
-        fd = os.open(path, flags)
+        fd = fs.open(path, flags)
     except OSError as exc:
         raise CredentialError(f"{code_prefix}_open_failed") from exc
     try:
-        after = os.fstat(fd)
+        after = fs.fstat(fd)
         if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
             raise CredentialError(f"{code_prefix}_changed")
         _validate_file_stat(
@@ -696,7 +699,7 @@ def _validate_file_stat(
         raise CredentialError(f"{code_prefix}_not_regular")
     if require_private_permissions and stat.S_IMODE(info.st_mode) != 0o600:
         raise CredentialError(f"{code_prefix}_permissions")
-    if info.st_uid != os.geteuid():
+    if info.st_uid != fs.geteuid():
         raise CredentialError(f"{code_prefix}_owner")
     if require_single_link and info.st_nlink != 1:
         raise CredentialError(f"{code_prefix}_hardlinked")
@@ -773,21 +776,21 @@ def _atomic_write(path: Path, payload: bytes) -> None:
     suffix = f".tmp-{os.getpid()}-{os.urandom(8).hex()}"
     temporary = path.with_name(path.name + suffix)
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     fd = -1
     try:
-        fd = os.open(temporary, flags, 0o600)
+        fd = fs.open(temporary, flags, 0o600)
         view = memoryview(payload)
         while view:
             written = os.write(fd, view)
             view = view[written:]
-        os.fsync(fd)
+        fs.fsync(fd)
         os.close(fd)
         fd = -1
-        os.replace(temporary, path)
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        fs.replace(temporary, path)
+        directory_fd = fs.open(path.parent, os.O_RDONLY | fs.O_DIRECTORY)
         try:
-            os.fsync(directory_fd)
+            fs.fsync(directory_fd)
         finally:
             os.close(directory_fd)
     except OSError as exc:
@@ -805,9 +808,9 @@ def _remove_private_file(path: Path) -> None:
     _reject_symlink_if_present(path, "credential_symlink")
     try:
         path.unlink()
-        directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+        directory_fd = fs.open(path.parent, os.O_RDONLY | fs.O_DIRECTORY)
         try:
-            os.fsync(directory_fd)
+            fs.fsync(directory_fd)
         finally:
             os.close(directory_fd)
     except FileNotFoundError:

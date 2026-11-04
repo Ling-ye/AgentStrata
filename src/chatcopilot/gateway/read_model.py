@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 import os
+from chatcopilot.core import storage_files as fs
 from pathlib import Path
 import re
 import sqlite3
@@ -22,7 +23,7 @@ _MAX_SNAPSHOT_BYTES = 64 * 1024 * 1024
 
 def _file_identity(path: Path) -> tuple[int, ...] | None:
     try:
-        info = path.lstat()
+        info = fs.lstat(path)
     except FileNotFoundError:
         return None
     _validate_private_file_metadata(info, path)
@@ -33,7 +34,7 @@ def _file_identity(path: Path) -> tuple[int, ...] | None:
 def _snapshot_database(root: Path) -> Iterator[Path]:
     """Copy a stable DB/WAL pair; SQLite sidecars may only be created in this private copy."""
     names = ("gateway.sqlite3", "gateway.sqlite3-wal", "gateway.sqlite3-journal")
-    directory_fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    directory_fd = fs.open(root, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
     try:
         before = {name: _file_identity(root / name) for name in names}
         if before[names[0]] is None:
@@ -45,13 +46,13 @@ def _snapshot_database(root: Path) -> Iterator[Path]:
             for name, identity in before.items():
                 if identity is None:
                     continue
-                descriptor = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory_fd)
+                descriptor = fs.open(name, os.O_RDONLY | fs.O_NOFOLLOW, dir_fd=directory_fd)
                 with os.fdopen(descriptor, "rb") as source:
-                    info = os.fstat(source.fileno())
+                    info = fs.fstat(source.fileno())
                     _validate_private_file_metadata(info, root / name)
                     if (info.st_dev, info.st_ino, info.st_size, info.st_mtime_ns, info.st_ctime_ns) != identity:
                         raise GatewayStateError("Gateway state changed during snapshot")
-                    output_fd = os.open(target / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                    output_fd = fs.open(target / name, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
                     with os.fdopen(output_fd, "wb") as output:
                         remaining = identity[2]
                         while remaining:
@@ -63,7 +64,7 @@ def _snapshot_database(root: Path) -> Iterator[Path]:
             _validate_private_root(root, trusted_anchor=root.parent)
             _validate_sqlite_files(root / names[0])
             after = {name: _file_identity(root / name) for name in names}
-            opened, current = os.fstat(directory_fd), root.stat()
+            opened, current = fs.fstat(directory_fd), root.stat()
             if before != after or (opened.st_dev, opened.st_ino) != (current.st_dev, current.st_ino):
                 raise GatewayStateError("Gateway state changed during snapshot; retry observation")
             yield target / names[0]

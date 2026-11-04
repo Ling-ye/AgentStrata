@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import hashlib
 import json
 import os
+from chatcopilot.core import storage_files as fs
 import re
 import stat
 from contextlib import contextmanager
@@ -207,7 +208,7 @@ class GroupConversationJournal:
     def _prepare_state_directory(self) -> None:
         created = False
         try:
-            os.mkdir(self._state_dir, 0o700)
+            fs.mkdir(self._state_dir, 0o700)
             created = True
         except FileExistsError:
             pass
@@ -223,10 +224,10 @@ class GroupConversationJournal:
                 expect_identity=False,
                 initialize_mode=created,
             )
-            state_stat = os.fstat(fd)
+            state_stat = fs.fstat(fd)
             self._state_identity = (state_stat.st_dev, state_stat.st_ino)
             if created:
-                os.fsync(fd)
+                fs.fsync(fd)
                 self._fsync_parent_directory()
         except GroupConversationJournalError:
             raise
@@ -246,25 +247,25 @@ class GroupConversationJournal:
         initialize_mode: bool = False,
     ) -> int:
         flags = os.O_RDONLY
-        flags |= getattr(os, "O_DIRECTORY", 0)
+        flags |= fs.O_DIRECTORY
         flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= fs.O_NOFOLLOW
         fd = -1
         try:
-            fd = os.open(self._state_dir, flags)
-            state_stat = os.fstat(fd)
+            fd = fs.open(self._state_dir, flags)
+            state_stat = fs.fstat(fd)
             if (
                 initialize_mode
                 and stat.S_ISDIR(state_stat.st_mode)
-                and state_stat.st_uid == os.geteuid()
+                and state_stat.st_uid == fs.geteuid()
             ):
-                os.fchmod(fd, 0o700)
-                state_stat = os.fstat(fd)
+                fs.fchmod(fd, 0o700)
+                state_stat = fs.fstat(fd)
             mode = stat.S_IMODE(state_stat.st_mode)
             identity = (state_stat.st_dev, state_stat.st_ino)
             if (
                 not stat.S_ISDIR(state_stat.st_mode)
-                or state_stat.st_uid != os.geteuid()
+                or state_stat.st_uid != fs.geteuid()
                 or mode != 0o700
                 or (
                     expect_identity
@@ -291,19 +292,19 @@ class GroupConversationJournal:
 
     def _fsync_parent_directory(self) -> None:
         flags = os.O_RDONLY
-        flags |= getattr(os, "O_DIRECTORY", 0)
+        flags |= fs.O_DIRECTORY
         flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= fs.O_NOFOLLOW
         try:
-            fd = os.open(self._state_dir.parent, flags)
+            fd = fs.open(self._state_dir.parent, flags)
             try:
-                parent_stat = os.fstat(fd)
-                if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != os.geteuid():
+                parent_stat = fs.fstat(fd)
+                if not stat.S_ISDIR(parent_stat.st_mode) or parent_stat.st_uid != fs.geteuid():
                     raise GroupConversationJournalError(
                         "group_journal_unsafe_storage",
                         "group conversation state parent is unsafe",
                     )
-                os.fsync(fd)
+                fs.fsync(fd)
             finally:
                 os.close(fd)
         except GroupConversationJournalError:
@@ -322,9 +323,9 @@ class GroupConversationJournal:
         lock_created = False
         try:
             base_flags = os.O_RDWR | getattr(os, "O_CLOEXEC", 0)
-            nofollow = getattr(os, "O_NOFOLLOW", 0)
+            nofollow = fs.O_NOFOLLOW
             try:
-                lock_fd = os.open(
+                lock_fd = fs.open(
                     _LOCK_FILENAME,
                     base_flags | nofollow | os.O_CREAT | os.O_EXCL,
                     0o600,
@@ -332,7 +333,7 @@ class GroupConversationJournal:
                 )
                 lock_created = True
             except FileExistsError:
-                lock_fd = os.open(
+                lock_fd = fs.open(
                     _LOCK_FILENAME,
                     base_flags | nofollow,
                     dir_fd=dir_fd,
@@ -345,8 +346,8 @@ class GroupConversationJournal:
                 size_limit=_MAX_METADATA_BYTES,
             )
             if lock_created:
-                os.fsync(lock_fd)
-                os.fsync(dir_fd)
+                fs.fsync(lock_fd)
+                fs.fsync(dir_fd)
             fcntl.flock(
                 lock_fd,
                 fcntl.LOCK_EX if exclusive else fcntl.LOCK_SH,
@@ -664,7 +665,7 @@ class GroupConversationJournal:
             metadata_payload,
             label="metadata",
         )
-        os.fsync(dir_fd)
+        fs.fsync(dir_fd)
         written_journal = self._read_required_file_unlocked(
             dir_fd,
             _JOURNAL_FILENAME,
@@ -704,16 +705,16 @@ class GroupConversationJournal:
         temp_name = f".{filename}.{os.getpid()}.{uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL
         flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= fs.O_NOFOLLOW
         fd = -1
         try:
-            fd = os.open(temp_name, flags, 0o600, dir_fd=dir_fd)
+            fd = fs.open(temp_name, flags, 0o600, dir_fd=dir_fd)
             self._write_all(fd, payload)
-            os.fsync(fd)
-            temp_stat = os.fstat(fd)
+            fs.fsync(fd)
+            temp_stat = fs.fstat(fd)
             if (
                 not stat.S_ISREG(temp_stat.st_mode)
-                or temp_stat.st_uid != os.geteuid()
+                or temp_stat.st_uid != fs.geteuid()
                 or temp_stat.st_nlink != 1
                 or stat.S_IMODE(temp_stat.st_mode) != 0o600
             ):
@@ -723,7 +724,7 @@ class GroupConversationJournal:
                 )
             os.close(fd)
             fd = -1
-            os.replace(
+            fs.replace(
                 temp_name,
                 filename,
                 src_dir_fd=dir_fd,
@@ -733,7 +734,7 @@ class GroupConversationJournal:
             if fd >= 0:
                 os.close(fd)
             try:
-                os.unlink(temp_name, dir_fd=dir_fd)
+                fs.unlink(temp_name, dir_fd=dir_fd)
             except FileNotFoundError:
                 pass
 
@@ -777,9 +778,9 @@ class GroupConversationJournal:
     ) -> bytes | None:
         flags = os.O_RDONLY
         flags |= getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        flags |= fs.O_NOFOLLOW
         try:
-            fd = os.open(filename, flags, dir_fd=dir_fd)
+            fd = fs.open(filename, flags, dir_fd=dir_fd)
         except FileNotFoundError:
             return None
         except OSError as exc:
@@ -832,16 +833,16 @@ class GroupConversationJournal:
         label: str,
         size_limit: int,
     ) -> os.stat_result:
-        opened = os.fstat(fd)
+        opened = fs.fstat(fd)
         try:
-            entry = os.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
+            entry = fs.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
         except FileNotFoundError as exc:
             raise GroupConversationJournalError(
                 "group_journal_unsafe_storage",
                 f"group conversation {label} changed identity",
             ) from exc
         try:
-            require_regular_file(opened, owner_uid=os.geteuid(), mode=0o600, single_link=True)
+            require_regular_file(opened, owner_uid=fs.geteuid(), mode=0o600, single_link=True)
         except FileMetadataError as exc:
             raise GroupConversationJournalError(
                 "group_journal_unsafe_storage",
@@ -859,11 +860,11 @@ class GroupConversationJournal:
 
     def _validate_optional_entry(self, dir_fd: int, filename: str, *, label: str) -> None:
         try:
-            entry = os.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
+            entry = fs.stat(filename, dir_fd=dir_fd, follow_symlinks=False)
         except FileNotFoundError:
             return
         try:
-            require_regular_file(entry, owner_uid=os.geteuid(), mode=0o600, single_link=True)
+            require_regular_file(entry, owner_uid=fs.geteuid(), mode=0o600, single_link=True)
         except FileMetadataError as exc:
             raise GroupConversationJournalError(
                 "group_journal_unsafe_storage",

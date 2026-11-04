@@ -90,46 +90,41 @@ Windows 桌面入口见下节；浏览器和 CLI 仍可独立使用。
 
 ## Windows 桌面客户端
 
-`integrations/live2d_desktop` 的 `0.2.0` 以独立应用安装目录为连接目标，默认进入透明桌宠模式。
-应用声明为 `bots/live2d-desktop`，默认使用自有 LangGraph Agent；应用只装配一个 Gateway 和
-Agent profile，`open-llm-vtuber 0.5.0` 仅提供角色、输入与语音呈现。角色生成器为可选组件。
-独立交付先按[应用交付流程](instances.md#独立应用交付与本机改进)取得已接受候选，安装到新目录；
-不把旧插件目录直接填入新客户端，不迁移旧会话与记忆。
+`integrations/live2d_desktop` 的 `0.3.0` 面向 Windows 11 x64。透明桌宠、Gateway、
+自有 LangGraph Agent、VTuber 和 Windows-MCP 均在 Windows 本机运行，不要求安装 WSL。
+应用仍使用 `bots/live2d-desktop` 的唯一 Agent profile 与 Gateway；VTuber 负责输入和呈现。
+开发侧 Harness/Eval 保持 Linux，Windows 首版不提供 M5 启用/撤回及角色生成工作台。
 
-1. 在 Windows 执行桌面源码中的 `scripts/prepare-windows-mcp.ps1`。脚本按
-   `windows-mcp.lock.json` 核对源码、uv 与 Python，创建独立原生环境，打印 Python 路径。
-2. 在新应用的 `bots/live2d-desktop/local.env` 引用该路径和私有模型配置；模型文件需要
-   `chat` 绑定，并支持图片输入。公开示例见[环境模板](../../bots/live2d-desktop/local.env.example)。
-3. 执行 `agentstrata app setup --root /absolute/application --artifacts /absolute/matching-artifacts`。
-   本地构建目录提供匹配源码的主包、插件 wheel 和 `SHA256SUMS`；已发布版本可省略 `--artifacts`。
-   setup 生成应用独立凭据、先准备呈现组件，再启动 Gateway。默认页面 `12494`、Gateway `18892`。
-4. 启动 Windows 安装版或 ZIP 中的 `AgentStrata Live2D.exe`，选择 WSL 发行版和上述应用目录。
-   也可以传入 `--distro Ubuntu-22.04 --application-root /absolute/application`。
-   桌面从安装记录读取组件与端口，通过 `app start/stop/status` 控制服务。
+1. 安装或解压带有匹配运行载荷的 Windows 桌面包，打开 `AgentStrata Live2D Native.exe`。
+2. 设置页默认使用 `%USERPROFILE%\.agentstrata\applications\live2d-desktop-native`。
+   选择独立新目录，点击“准备本机应用”。首次联网准备独立 Python、VTuber、Windows-MCP、
+   FFmpeg 和语音资源，不要求预装 Python、Git、Node，也不在用户机器构建上游前端。
+3. 填写模型名称，选择 OpenAI 兼容 API 或 ChatGPT 授权。API 凭据保存在本应用私有文件；
+   ChatGPT 使用“登录 ChatGPT”在系统浏览器重新认证。不会自动读取或复制旧 WSL 凭据。
+4. 点击“启动桌宠”。后台通过前台 `app run` 归属桌面进程，状态与地址来自安装记录。
+   默认页面端口 `12495`、Gateway `18893`；端口冲突时明确失败，不停止其他实例。
 
-首次显示只有透明角色；双击角色打开输入，回复气泡跟随角色。拖动调整位置，滚轮缩放；
-托盘可切换窗口模式、置顶、鼠标穿透、隐藏与显示。关闭窗口隐藏到托盘并停止麦克风与感知；
-退出桌面保留后台服务。语音通过麦克风按钮显式开启，不自动录音。
+首次显示只有透明角色；双击角色打开输入，气泡跟随角色。拖动调整位置，滚轮缩放；
+托盘可切换窗口模式、置顶、鼠标穿透、隐藏与显示。关闭窗口收起到托盘，停止麦克风与
+采样，后台保持就绪。明确退出取消本应用任务并停止自有后台；工具打开的记事本、浏览器等
+用户程序保留。语音通过麦克风按钮显式开启，不自动录音。
 
-“持续感知主屏”默认关闭。开启后桌面只比较当前主屏的本地缩略图摘要，画面变化且满足约
-30 秒间隔时触发观察回合。独立观察身份只能调用 `desktop_ObservePrimary`，屏幕内容属于
-不可信资料；有用的新提示通过语音与气泡呈现。隐藏、锁屏、关闭开关或退出停止采样，
-用户任务优先。截图由 Windows-MCP 工具返回并在宿主校验后传给模型，桌宠自身窗口排除于捕获。
-截图坐标使用 Windows 物理虚拟桌面像素，不能直接当作 Electron DIP 坐标使用。
+“持续感知主屏”默认关闭。开启后比较当前主屏的本地缩略图摘要，变化且满足约 30 秒
+间隔时触发观察回合。观察身份只能使用 `desktop_ObservePrimary`，屏幕内容属于不可信
+资料；新提示复用语音与气泡。隐藏、锁屏、关闭开关或退出停止采样，用户任务优先。
+截图沿统一 MCP 图片资源通路进入模型，角色窗口排除于捕获。工具坐标使用 Windows
+物理虚拟桌面像素，不能直接当作 Electron DIP 坐标。
 
-桌面任务通过原有 Registry/Executor 使用窗口查询、截图、点击、输入、滚动等能力。
-发生未知操作结果时不自动重放。涉及缺少明确授权的关键动作，Agent 结束本轮说明，
-由用户下一条明确指令继续。实体音频、主屏/DPI、人工接管和真实模型理解需在目标机器验收。
+桌面任务继续经过 Registry/Executor。未知操作结果不自动重放，缺少明确授权的关键动作
+结束当前回合说明，由用户下一条明确指令继续。真实模型理解、主屏/DPI、人工接管及实体
+音频需分别记录验收证据。首版平台迁移不代表既有记事本焦点问题已修复。
 
-可选安装 `live2d-generator 0.4.0` 到应用的 `.agentstrata-data/plugins`，使用
-`plugin --application-root` 绑定该应用；“我的角色”在组件存在时打开工作台。
-桌面应用预设时仅切换外观与声音，专用 Agent profile 仍由应用维护。CLI 使用
-`characters apply --presentation-only`。事务保留备份，启动失败尝试恢复。
-
-Windows 环境与构建默认位于 `%USERPROFILE%\.agentstrata\applications\live2d-desktop`，
-桌面设置与单实例锁按发行版和应用路径分隔，位于 `%USERPROFILE%\.agentstrata\desktop`。
-设置文件只保存路径与窗口偏好，控制凭据仅由本机主进程读取。构建与测试见
-[桌面源码说明](../../integrations/live2d_desktop/README.md)，职责见[桌面规格](../../specs/live2d-desktop/spec.md)。
+新安装保留旧 WSL 实例及旧 Windows 桌面目录，不迁移会话、记忆、工作区或凭据。
+Windows 设置和单实例锁按应用路径隔离，位于 `%USERPROFILE%\.agentstrata\desktop-native`。
+源码构建包记录精确内容摘要和构建来源，不能冒充已接受候选；运行记录保留实际版本。
+相同版本可续装依赖，不同版本需新目录，Windows 更新/撤回后续单独验收。
+构建方法见[桌面源码说明](../../integrations/live2d_desktop/README.md)，职责见
+[桌面规格](../../specs/live2d-desktop/spec.md)。
 
 ## Console 登记
 

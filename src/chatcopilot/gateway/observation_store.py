@@ -5,6 +5,7 @@ from contextlib import contextmanager
 import hashlib
 import json
 import os
+from chatcopilot.core import storage_files as fs
 from pathlib import Path
 import re
 import sqlite3
@@ -212,11 +213,11 @@ class ObservationStore:
             return {**provenance, "body_id": body_id, "state": "expired", "payload": None}
         folder = self._body_directory(run_id)
         _validate_private_root(folder, trusted_anchor=self.root)
-        directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+        directory = fs.open(folder, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
         try:
-            descriptor = os.open(body_id + ".json", os.O_RDONLY | os.O_NOFOLLOW, dir_fd=directory)
+            descriptor = fs.open(body_id + ".json", os.O_RDONLY | fs.O_NOFOLLOW, dir_fd=directory)
             with os.fdopen(descriptor, "rb") as stream:
-                info = os.fstat(stream.fileno())
+                info = fs.fstat(stream.fileno())
                 _validate_private_file_metadata(info, folder / (body_id + ".json"))
                 if info.st_size > CONTEXT_LIMIT or info.st_size != row["size"]:
                     raise GatewayStateError("Observation body size changed")
@@ -252,20 +253,20 @@ class ObservationStore:
                 folder = self._body_directory(run_id)
                 _ensure_private_root(folder, trusted_anchor=self.root)
                 body_id = uuid.uuid4().hex
-                directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
-                descriptor = os.open(body_id + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                directory = fs.open(folder, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
+                descriptor = fs.open(body_id + ".json", os.O_WRONLY | os.O_CREAT | os.O_EXCL | fs.O_NOFOLLOW,
                                      0o600, dir_fd=directory)
                 created = True
                 with os.fdopen(descriptor, "wb") as stream:
                     stream.write(raw)
                     stream.flush()
-                    os.fsync(stream.fileno())
+                    fs.fsync(stream.fileno())
                 connection.execute("INSERT INTO bodies VALUES(?,?,?,?,?,?)", (body_id, run_id, kind, len(raw), state, time.time()))
                 connection.execute("UPDATE runs SET body_bytes=body_bytes+? WHERE run_id=?", (len(raw), run_id))
         except BaseException:
             if created and directory is not None and body_id is not None:
                 try:
-                    os.unlink(body_id + ".json", dir_fd=directory)
+                    fs.unlink(body_id + ".json", dir_fd=directory)
                 except FileNotFoundError:
                     pass
             raise
@@ -347,22 +348,22 @@ class ObservationStore:
                 folder = self._body_directory(run_id)
                 if rows:
                     _validate_private_root(folder, trusted_anchor=self.root)
-                    directory = os.open(folder, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+                    directory = fs.open(folder, os.O_RDONLY | fs.O_DIRECTORY | fs.O_NOFOLLOW)
                     try:
                         checked = []
                         for row in rows:
                             filename = row[0] + ".json"
                             try:
-                                info = os.stat(filename, dir_fd=directory, follow_symlinks=False)
+                                info = fs.stat(filename, dir_fd=directory, follow_symlinks=False)
                                 _validate_private_file_metadata(info, folder / filename)
                                 checked.append((filename, info.st_dev, info.st_ino))
                             except FileNotFoundError:
                                 pass
                         for filename, device, inode in checked:
-                            info = os.stat(filename, dir_fd=directory, follow_symlinks=False)
+                            info = fs.stat(filename, dir_fd=directory, follow_symlinks=False)
                             if (info.st_dev, info.st_ino) != (device, inode):
                                 raise GatewayStateError("Observation detail changed during cleanup")
-                            os.unlink(filename, dir_fd=directory)
+                            fs.unlink(filename, dir_fd=directory)
                     finally:
                         os.close(directory)
                 connection.execute("UPDATE bodies SET state='expired' WHERE run_id=?", (run_id,))

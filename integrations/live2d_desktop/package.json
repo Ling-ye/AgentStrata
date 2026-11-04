@@ -1,8 +1,8 @@
 {
-  "name": "agentstrata-live2d-desktop",
-  "version": "0.2.0",
+  "name": "agentstrata-live2d-native",
+  "version": "0.3.0",
   "private": true,
-  "description": "Windows desktop companion for the local AgentStrata WSL plugins",
+  "description": "Windows native AgentStrata Live2D desktop companion",
   "author": "Lingye",
   "license": "AGPL-3.0-only",
   "main": "dist/main.js",
@@ -21,14 +21,39 @@
     "typescript": "5.9.3"
   },
   "build": {
-    "appId": "org.agentstrata.live2d",
-    "productName": "AgentStrata Live2D",
-    "directories": {"output": "release"},
-    "files": ["dist/**", "ui/**", "licenses/**", "package.json"],
+    "appId": "org.agentstrata.live2d.native",
+    "productName": "AgentStrata Live2D Native",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**",
+      "ui/**",
+      "licenses/**",
+      "package.json"
+    ],
     "asar": true,
     "electronDist": "node_modules/electron/dist",
-    "win": {"target": ["nsis", "zip"], "icon": "ui/icon.ico", "signExecutable": false},
-    "nsis": {"oneClick": false, "perMachine": false, "allowToChangeInstallationDirectory": true, "createDesktopShortcut": true},
-    "artifactName": "AgentStrata-Live2D-${version}-${arch}.${ext}"
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "icon": "ui/icon.ico",
+      "signExecutable": false
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true
+    },
+    "artifactName": "AgentStrata-Live2D-${version}-${arch}.${ext}",
+    "extraResources": [
+      {
+        "from": "runtime-payload",
+        "to": "runtime-payload"
+      }
+    ]
   }
 }

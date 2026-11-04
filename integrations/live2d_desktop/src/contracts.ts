@@ -1,6 +1,7 @@
+import {win32} from 'node:path';
 export type Mode = 'window' | 'pet';
 export type PluginId = 'open-llm-vtuber' | 'live2d-generator';
-export interface Connection { distro: string; root: string }
+export interface Connection { root: string }
 export interface Bounds { x: number; y: number; width: number; height: number }
 export interface Settings { connection?: Connection; mode: Mode; topmost: boolean; bounds?: Bounds }
 export function launchConnection(args: string[], saved?: Settings): Connection | undefined {
@@ -9,7 +10,7 @@ export function launchConnection(args: string[], saved?: Settings): Connection |
     return index < 0 ? undefined : args[index + 1];
   };
   if (args.includes('--application-root'))
-    return connection({root: value('--application-root'), distro: value('--distro') ?? 'Ubuntu-22.04'});
+    return connection({root: value('--application-root')});
   return saved?.connection ? connection(saved.connection) : undefined;
 }
 export interface Plugin { id: PluginId; status: string; url: string; installed_version: string | null }
@@ -23,14 +24,14 @@ function record(value: unknown): Record<string, unknown> {
 }
 export function connection(value: unknown): Connection {
   const v = record(value);
-  if (typeof v.distro !== 'string' || !/^[\w .-]{1,100}$/.test(v.distro) || v.distro.startsWith('-'))
-    throw new Error('请选择已安装的 WSL 发行版');
   for (const key of ['root']) {
-    if (typeof v[key] !== 'string' || !(v[key] as string).startsWith('/') ||
+    if (typeof v[key] !== 'string' || !/^[A-Za-z]:[\\/]/.test(v[key] as string) ||
         /[\x00-\x1f]/.test(v[key] as string) || (v[key] as string).length > 2048)
-      throw new Error('应用安装目录必须是 WSL 内的绝对路径');
+      throw new Error('应用安装目录必须是 Windows 本地磁盘的绝对路径');
   }
-  return {distro: v.distro, root: (v.root as string).replace(/\/+$/, '')};
+  const root = win32.normalize(v.root as string);
+  if (root === win32.parse(root).root) throw new Error('请为应用选择独立目录');
+  return {root: root.replace(/[\\/]+$/, '')};
 }
 export function identifier(value: unknown): string {
   if (typeof value !== 'string' || !/^[a-f0-9]{32}$/.test(value)) throw new Error('角色或备份 ID 无效');

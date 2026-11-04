@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.metadata
 import json
 import os
+import subprocess
 import sys
 
 TOOLS = ("ObservePrimary", "Snapshot", "Screenshot", "DisplayInventory", "App", "Click", "Type",
@@ -11,11 +12,35 @@ TOOLS = ("ObservePrimary", "Snapshot", "Screenshot", "DisplayInventory", "App", 
 UPSTREAM_VERSION = "0.8.8"
 
 
+def _external_app_lifetime():
+    """Keep user target applications outside the pet's owned backend job.
+
+    Windows-MCP 0.8.8's strict executable launch keeps all its own resolution and
+    argument validation. Only the process lifetime differs in our native host.
+    Start-menu launches are delegated to the desktop shell by upstream already.
+    """
+    from windows_mcp.tools import app
+
+    def launch(executable, args, cwd):
+        resolved = app._resolve_executable(executable)
+        directory = app._resolve_cwd(cwd)
+        arguments = app._as_args(args)
+        process = subprocess.Popen([str(resolved), *arguments],
+            cwd=str(directory) if directory is not None else None, shell=False,
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+            close_fds=True, creationflags=subprocess.CREATE_BREAKAWAY_FROM_JOB)
+        return json.dumps({"pid": process.pid, "executable": str(resolved), "args": arguments,
+                           "cwd": str(directory) if directory is not None else None}, indent=2)
+
+    app._launch_executable = launch
+
+
 def main():
     if sys.platform != "win32" or sys.version_info[:2] != (3, 14):
         raise RuntimeError("Desktop MCP requires its native Windows Python 3.14 environment")
     if importlib.metadata.version("windows-mcp") != UPSTREAM_VERSION:
         raise RuntimeError("Windows-MCP does not match the application's pinned version")
+    _external_app_lifetime()
     os.environ["ANONYMIZED_TELEMETRY"] = "false"
     # Screens are sampled only by explicit tools or the user's perception toggle.
     os.environ["WINDOWS_MCP_WATCHDOG"] = "false"

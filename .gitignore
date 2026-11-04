@@ -59,6 +59,7 @@ logs/
 *.pid
 *.lock
 !uv.lock
+!integrations/live2d_desktop/windows-host-requirements.lock
 !integrations/open_llm_vtuber/agentstrata_vtuber/resources/*.lock
 !integrations/live2d_generator/agentstrata_live2d/resources/*.lock
 

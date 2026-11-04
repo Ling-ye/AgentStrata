@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import sys
 import shutil
 import signal
 import stat
@@ -31,6 +32,8 @@ _PREFLIGHT_TIMEOUT_SECONDS = 15
 _TERMINATE_GRACE_SECONDS = 5
 _DEVICE_AUTH_SETTING = 'cli_auth_credentials_store="file"'
 _PASSTHROUGH_ENV_KEYS = (
+    "SystemRoot", "SYSTEMROOT", "SystemDrive", "WINDIR", "COMSPEC", "PATH", "PATHEXT",
+    "USERPROFILE", "APPDATA", "LOCALAPPDATA",
     "ALL_PROXY",
     "HTTPS_PROXY",
     "HTTP_PROXY",
@@ -127,6 +130,7 @@ def validate_auth_root(auth_root: str) -> Path:
 def login_lanes(
     config: CodexAuthOperatorConfig,
     selection: LaneSelection,
+    *, method: str = "device",
 ) -> tuple[CodexAuthLoginResult, ...]:
     """Run one or two independent device authorizations.
 
@@ -136,9 +140,11 @@ def login_lanes(
     this wrapper.
     """
 
+    if method not in {"device", "browser"}:
+        raise ValueError("Authentication method must be browser or device")
     lanes = selected_lanes(selection)
     try:
-        preflight_error = _device_auth_preflight(config)
+        preflight_error = _device_auth_preflight(config) if method == "device" else None
     except CodexAuthOperatorError as exc:
         preflight_error = exc.code
     if preflight_error is not None:
@@ -149,7 +155,7 @@ def login_lanes(
 
     results: list[CodexAuthLoginResult] = []
     for lane in lanes:
-        result = _login_lane(config, lane)
+        result = _login_lane(config, lane) if method == "device" else _login_lane(config, lane, method=method)
         results.append(result)
         if not result.ok:
             break
@@ -202,6 +208,7 @@ def _device_auth_preflight(config: CodexAuthOperatorConfig) -> str | None:
 def _login_lane(
     config: CodexAuthOperatorConfig,
     lane: CredentialLane,
+    *, method: str = "device",
 ) -> CodexAuthLoginResult:
     try:
         with credential_lock(
@@ -212,7 +219,8 @@ def _login_lane(
         ) as lock:
             staged_auth: bytes
             with _private_staging_home(lane) as staging_home:
-                error_code = _run_device_login(config, staging_home)
+                error_code = (_run_device_login(config, staging_home) if method == "device" else
+                              _run_device_login(config, staging_home, method=method))
                 if error_code is not None:
                     return CodexAuthLoginResult(
                         lane=lane,
@@ -242,11 +250,12 @@ def _login_lane(
 def _run_device_login(
     config: CodexAuthOperatorConfig,
     staging_home: Path,
+    *, method: str = "device",
 ) -> str | None:
     command = [
         str(config.codex_bin),
         "login",
-        "--device-auth",
+        *(["--device-auth"] if method == "device" else []),
         "-c",
         _DEVICE_AUTH_SETTING,
     ]
@@ -256,6 +265,7 @@ def _run_device_login(
             cwd=str(staging_home),
             env=_isolated_login_env(staging_home),
             start_new_session=True,
+            **({"stdout": sys.stderr, "stderr": sys.stderr} if method == "browser" else {}),
         )
     except OSError:
         return "codex_launch_failed"
@@ -277,6 +287,14 @@ def _run_device_login(
 
 def _terminate_process_group(process: subprocess.Popen[bytes]) -> None:
     if process.poll() is not None:
+        return
+    if os.name == "nt":
+        process.terminate()
+        try:
+            process.wait(timeout=_TERMINATE_GRACE_SECONDS)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
         return
     try:
         os.killpg(process.pid, signal.SIGTERM)
@@ -304,7 +322,8 @@ def _private_staging_home(label: str) -> Iterator[Path]:
     except OSError as exc:
         raise CodexAuthOperatorError("staging_create_failed") from exc
     try:
-        path.chmod(0o700)
+        from chatcopilot.core.storage_files import tighten
+        tighten(path)
     except OSError as exc:
         shutil.rmtree(path, ignore_errors=True)
         raise CodexAuthOperatorError("staging_create_failed") from exc

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -30,6 +31,15 @@ def main(argv=None) -> int:
     status.add_argument("--root", type=Path, required=True)
     desktop = commands.add_parser("desktop-info", help="Private connection handoff to the local native desktop process")
     desktop.add_argument("--root", type=Path, required=True)
+    run = commands.add_parser("run", help="Run an installed native application in the foreground")
+    run.add_argument("--root", type=Path, required=True)
+    run.add_argument("--watch-stdin", action="store_true", help="Stop when the owning desktop closes its pipe")
+    models = commands.add_parser("model-settings", help="Read or save this application's shared model configuration")
+    models.add_argument("--root", type=Path, required=True)
+    models.add_argument("--save", action="store_true", help="Read configuration from stdin; credentials are never argv")
+    login = commands.add_parser("login", help="Explicitly authenticate this application's ChatGPT model connection")
+    login.add_argument("--root", type=Path, required=True)
+    login.add_argument("--method", choices=("browser", "device"), default="browser")
     for name in ("start", "stop"):
         action = commands.add_parser(name, help="Control the registered services of this installation")
         action.add_argument("--root", type=Path, required=True)
@@ -42,7 +52,7 @@ def main(argv=None) -> int:
     try:
         if args.command == "inspect":
             record = read_bundle(args.bundle)
-            value = {key: record[key] for key in ("schema", "bot_id", "bot_relative", "source_digest", "accepted_candidate")}
+            value = {key: record[key] for key in ("schema", "bot_id", "bot_relative", "source_digest", "accepted_candidate", "origin") if key in record}
             value["source_files"] = len(record["source_manifest"])
         elif args.command == "install":
             value = install_bundle(args.bundle, args.root)
@@ -53,6 +63,11 @@ def main(argv=None) -> int:
                     return code
                 value["state"] = "needs_configuration"
         elif args.command == "setup":
+            if os.name == "nt":
+                from chatcopilot.plugins.windows_application import setup
+                value = _setup_windows(args, setup)
+                print(json.dumps(value, ensure_ascii=False))
+                return 0
             installed = installation(args.root)
             if installed is None:
                 raise ValueError("An explicit application installation is required")
@@ -74,10 +89,32 @@ def main(argv=None) -> int:
         elif args.command == "desktop-info":
             from chatcopilot.deployment.application_services import desktop_info
             value = desktop_info(args.root)
+        elif args.command == "run":
+            if os.name != "nt":
+                raise ValueError("Foreground app run currently targets native Windows; use app start on Linux")
+            from chatcopilot.deployment.windows_runtime import run as run_application
+            return run_application(args.root, watch_stdin=args.watch_stdin)
+        elif args.command == "model-settings":
+            from chatcopilot.deployment.application_models import model_settings
+            value = model_settings(args.root, json.load(sys.stdin) if args.save else None)
+        elif args.command == "login":
+            from chatcopilot.external_tools.codex_cli.auth_cli import CodexAuthOperatorConfig, login_lanes
+            from chatcopilot.core.settings import load_local_env_values
+            installed = installation(args.root)
+            if installed is None:
+                raise ValueError("Authentication requires an installed application")
+            environment = load_local_env_values(installed.control / "runtime.env", expand_home=True)
+            config = CodexAuthOperatorConfig.from_values(environment["CHATCOPILOT_CODEX_BOT_HOME"],
+                                                        environment["CHATCOPILOT_CODEX_BIN"])
+            value = login_lanes(config, "main", method=args.method)[0].to_dict()
+            print(json.dumps(value, ensure_ascii=False))
+            return 0 if value["ok"] else 1
         elif args.command in {"start", "stop"}:
             from chatcopilot.deployment.application_services import control
             value = control(args.root, args.command)
         else:
+            if os.name == "nt":
+                raise ValueError("Windows accepted-version activation and rollback are outside this runtime release")
             if installation(args.root) is None:
                 raise ValueError("No independent application is installed here")
             from chatcopilot.harness.api import HarnessController
@@ -92,6 +129,42 @@ def main(argv=None) -> int:
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"Application operation failed: {exc}", file=sys.stderr)
         return 1
+
+
+def _setup_windows(args, prepare_plugins):
+    if args.dry_run:
+        return prepare_plugins(args.root, artifacts=args.artifacts, dry_run=True)
+    from chatcopilot.botspec import load_botspec
+    from chatcopilot.botspec.deployment_env import deployment_environment
+    from chatcopilot.core.install_artifacts import private_directory, write_private
+    from chatcopilot.core.settings import load_local_env_values
+    from chatcopilot.plugins.application_components import prepare_configuration
+    root = args.root
+    installed = installation(root)
+    if installed is None:
+        raise ValueError("An explicit application installation is required")
+    local = root / Path(installed.bot_relative).parent / "local.env"
+    if not local.exists() and not local.is_symlink():
+        write_private(local, "")
+    requirements = prepare_configuration(root)
+    spec = load_botspec(root / installed.bot_relative)
+    values = load_local_env_values(root / Path(installed.bot_relative).parent / "local.env", expand_home=True)
+    for requirement in requirements:
+        if requirement["id"] == "open-llm-vtuber":
+            values[spec.gateway.port_env] = str(requirement["options"]["gateway_port"])
+    control = private_directory(installed.control)
+    values.update(AGENTSTRATA_LLM_CONFIG=str(control / "llm.json"),
+        CHATCOPILOT_GATEWAY_STATE_ROOT=str(root / ".agentstrata-data/gateway"),
+        AGENTSTRATA_WINDOWS_MCP_PYTHON=str(root / "windows-mcp/venv/Scripts/python.exe"),
+        CHATCOPILOT_CODEX_BOT_HOME=str(control / "model-auth"),
+        CHATCOPILOT_CODEX_BIN=str(root / "runtime/tools/codex/codex.exe"),
+        PATH=str(root / ".venv/Scripts") + os.pathsep + os.environ.get("PATH", ""))
+    private_directory(root / ".agentstrata-data/workspace")
+    private_directory(root / ".agentstrata-data/gateway")
+    environment = deployment_environment(spec, values, source_root=root, home=Path.home())
+    write_private(control / "runtime.env", "\n".join(key + "=" + json.dumps(value, ensure_ascii=False)
+                                                   for key, value in environment.items()) + "\n")
+    return prepare_plugins(root, artifacts=args.artifacts, requirements=requirements)
 
 
 if __name__ == "__main__":

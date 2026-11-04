@@ -1,14 +1,19 @@
 <!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8">
 <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentStrata Live2D · 连接设置</title>
+<meta name="viewport" content="width=device-width,initial-scale=1"><title>AgentStrata Live2D · 本机设置</title>
 <link rel="stylesheet" href="settings.css"></head><body><main>
 <p class="eyebrow">AGENTSTRATA / LIVE2D</p><h1>让角色来到桌面</h1>
-<p class="intro">连接本机 WSL 中独立安装的桌宠应用。角色和服务凭据继续保存在 WSL。</p>
-<form id="settings"><label>WSL 发行版<select id="distro" required></select></label>
-<label>应用安装目录<input id="root" placeholder="/home/你的用户名/AgentStrata-live2d" required></label>
-<p class="hint">填写 app install 创建的目录，并先完成 app setup。角色生成器可按需安装。</p>
-<div class="actions"><button type="submit" id="save">保存并连接</button><button type="button" id="connect" class="secondary">重新连接</button></div>
-</form><p id="status" role="status" aria-live="polite">正在检查 WSL…</p>
-<p class="hint">关闭角色窗口会隐藏到托盘。退出桌面程序后，后台与生成任务继续运行。</p>
+<p class="intro">桌宠和后台均在 Windows 本机运行。首次准备需要联网，模型凭据只保存在这个应用的私有目录。</p>
+<form id="settings"><label>应用安装目录<input id="root" required></label>
+<p class="hint">使用独立目录保存程序与数据。已有 WSL 桌宠保持独立。</p>
+<div class="actions"><button type="submit" id="save">保存目录</button><button type="button" id="prepare" class="secondary">准备本机应用</button></div></form>
+<form id="model-settings"><label>模型连接<select id="kind"><option value="openai_compatible">OpenAI 兼容 API</option><option value="chatgpt">ChatGPT 授权</option></select></label>
+<label>模型名称<input id="model" required placeholder="填写提供方支持的模型名称"></label>
+<div id="api-fields"><label>API 地址<input id="base_url" placeholder="https://api.example.com/v1"></label>
+<label>API Key<input id="api_key" type="password" autocomplete="off" placeholder="留空保留已保存的凭据"></label></div>
+<div class="actions"><button type="submit" id="save-model">保存模型</button><button type="button" id="login" class="secondary" hidden>登录 ChatGPT</button></div></form>
+<div class="actions"><button type="button" id="connect">启动桌宠</button></div>
+<p id="status" role="status" aria-live="polite">正在读取本机设置…</p>
+<p class="hint">关闭角色窗口会收起到托盘。明确退出会停止本应用后台；你打开的记事本、浏览器等程序会保留。</p>
 </main><script src="settings.js"></script></body></html>

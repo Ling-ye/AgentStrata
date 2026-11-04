@@ -10,6 +10,7 @@ import logging
 from functools import wraps
 import math
 import os
+from chatcopilot.core import storage_files as fs
 import re
 import sqlite3
 import stat
@@ -2157,13 +2158,13 @@ def _ensure_private_root(path: Path, *, trusted_anchor: Path) -> None:
     for part in relative.parts:
         current /= part
         try:
-            metadata = current.lstat()
+            metadata = fs.lstat(current)
         except FileNotFoundError:
             try:
                 current.mkdir(mode=0o700)
             except FileExistsError:
                 pass
-            metadata = current.lstat()
+            metadata = fs.lstat(current)
         _validate_private_directory_metadata(
             metadata,
             current,
@@ -2179,7 +2180,7 @@ def _validate_private_root(path: Path, *, trusted_anchor: Path) -> None:
     for part in relative.parts:
         current /= part
         try:
-            metadata = current.lstat()
+            metadata = fs.lstat(current)
         except FileNotFoundError as exc:
             raise GatewayStateError("Gateway state root does not exist") from exc
         _validate_private_directory_metadata(
@@ -2200,7 +2201,7 @@ def _relative_state_path(path: Path, trusted_anchor: Path) -> Path:
 
 def _validate_private_directory(path: Path, *, label: str) -> None:
     try:
-        metadata = path.lstat()
+        metadata = fs.lstat(path)
     except FileNotFoundError as exc:
         raise GatewayStateError(f"{label} does not exist") from exc
     _validate_private_directory_metadata(metadata, path, label=label)
@@ -2215,7 +2216,7 @@ def _validate_private_directory_metadata(
     if not stat.S_ISDIR(metadata.st_mode):
         raise GatewayStateError(f"{label} must be a directory: {path.name}")
     if os.name != "nt":
-        if metadata.st_uid != os.getuid():
+        if metadata.st_uid != fs.getuid():
             raise PermissionError(f"{label} must be owned by the service user: {path.name}")
         if stat.S_IMODE(metadata.st_mode) != 0o700:
             raise PermissionError(f"{label} must use mode 0700: {path.name}")
@@ -2223,41 +2224,39 @@ def _validate_private_directory_metadata(
 
 def _ensure_private_database_file(path: Path) -> None:
     flags = os.O_RDWR | os.O_CREAT | os.O_EXCL
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     try:
-        descriptor = os.open(path, flags, 0o600)
+        descriptor = fs.open(path, flags, 0o600)
     except FileExistsError:
         _validate_private_database_file(path)
         return
     except OSError as exc:
         raise GatewayStateError("Gateway database cannot be created safely") from exc
     try:
-        _validate_private_file_metadata(os.fstat(descriptor), path)
+        _validate_private_file_metadata(fs.fstat(descriptor), path)
     finally:
         os.close(descriptor)
 
 
 def _validate_private_database_file(path: Path) -> None:
     flags = os.O_RDONLY
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     try:
-        descriptor = os.open(path, flags)
+        descriptor = fs.open(path, flags)
     except OSError as exc:
         raise GatewayStateError("Gateway database cannot be opened safely") from exc
     try:
-        _validate_private_file_metadata(os.fstat(descriptor), path)
+        _validate_private_file_metadata(fs.fstat(descriptor), path)
     finally:
         os.close(descriptor)
 
 
 def _acquire_instance_lease(path: Path) -> GatewayInstanceLease:
-    if os.name != "posix" or not hasattr(os, "O_NOFOLLOW"):
-        raise GatewayStateError("Gateway instance leases require Linux or WSL")
-    import fcntl
+    from chatcopilot.core import file_lock as fcntl
 
-    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC | os.O_NOFOLLOW
+    flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
     try:
-        descriptor = os.open(path, flags, 0o600)
+        descriptor = fs.open(path, flags, 0o600)
     except OSError as exc:
         raise GatewayStateError("Gateway instance lease cannot be opened safely") from exc
     try:
@@ -2283,8 +2282,8 @@ def _acquire_instance_lease(path: Path) -> GatewayInstanceLease:
 
 def _validate_open_private_file(path: Path, descriptor: int) -> None:
     try:
-        opened = os.fstat(descriptor)
-        current = path.lstat()
+        opened = fs.fstat(descriptor)
+        current = fs.lstat(path)
     except OSError as exc:
         raise GatewayStateError("Gateway state file cannot be inspected safely") from exc
     _validate_private_file_metadata(opened, path)
@@ -2298,7 +2297,7 @@ def _validate_sqlite_files(database_path: Path) -> None:
     for suffix in ("-wal", "-shm", "-journal"):
         path = Path(str(database_path) + suffix)
         try:
-            metadata = path.lstat()
+            metadata = fs.lstat(path)
         except FileNotFoundError:
             continue
         if metadata.st_nlink == 0:
@@ -2311,15 +2310,13 @@ def _validate_sqlite_files(database_path: Path) -> None:
 def _validate_private_file_metadata(metadata: os.stat_result, path: Path) -> None:
     if not stat.S_ISREG(metadata.st_mode):
         raise GatewayStateError(f"Gateway state file is not regular: {path.name}")
+    if metadata.st_nlink != 1:
+        raise GatewayStateError(f"Gateway state file must have exactly one hard link: {path.name}")
     if os.name != "nt":
-        if metadata.st_uid != os.getuid():
+        if metadata.st_uid != fs.getuid():
             raise PermissionError(f"Gateway state file has the wrong owner: {path.name}")
         if stat.S_IMODE(metadata.st_mode) != 0o600:
             raise PermissionError(f"Gateway state file must use mode 0600: {path.name}")
-        if metadata.st_nlink != 1:
-            raise GatewayStateError(
-                f"Gateway state file must have exactly one hard link: {path.name}"
-            )
 
 
 def _reject_symlink_components(path: Path) -> None:
@@ -2330,7 +2327,7 @@ def _reject_symlink_components(path: Path) -> None:
             metadata = current.lstat()
         except FileNotFoundError:
             continue
-        if stat.S_ISLNK(metadata.st_mode):
+        if stat.S_ISLNK(metadata.st_mode) or getattr(metadata, "st_reparse_tag", 0):
             raise GatewayStateError("Gateway state path cannot contain a symlink")
 
 

@@ -1,10 +1,18 @@
 const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const {connection, launchConnection, identifier, applyInput, localUrl, settings, visibleBounds} = require('../dist/contracts');
-const {WslBackend, distributions} = require('../dist/wsl');
+const {NativeBackend} = require('../dist/backend');
+const {EventEmitter} = require('node:events');
+const {PassThrough} = require('node:stream');
+function processFixture(file,args,options) {
+  const child = new EventEmitter(); child.stdin=new PassThrough(); child.stdout=new PassThrough(); child.stderr=new PassThrough(); child.exitCode=null;
+  child.stdin.once('finish',()=>{child.exitCode=0;child.emit('exit',0);});
+  process.nextTick(()=>child.stdout.write(JSON.stringify({ok:true})+'\n'));
+  return child;
+}
 const {Controller} = require('../dist/controller');
 const {allowed, sameHttpOrigin} = require('../dist/security');
-const config = {distro: 'Ubuntu-22.04', root: '/srv/fixture/application'};
+const config = {root: 'C:\\fixture\\application'};
 const id = 'a'.repeat(32), backup = 'b'.repeat(32);
 const installed = [
   {id: 'open-llm-vtuber', status: 'ready', url: 'http://localhost:12493', installed_version: '0.4.0'},
@@ -12,19 +20,19 @@ const installed = [
 ];
 test('a shortcut and explicit launch resolve the same installed application before locking', () => {
   assert.deepEqual(launchConnection(['desktop.exe'], {connection: config, mode: 'pet', topmost: false}), config);
-  assert.deepEqual(launchConnection(['desktop.exe', '--application-root', config.root, '--distro', config.distro]), config);
+  assert.deepEqual(launchConnection(['desktop.exe', '--application-root', config.root]), config);
   assert.equal(launchConnection(['desktop.exe']), undefined);
 });
 test('an explicit target overrides the remembered app; incomplete targets fail', () => {
-  const other = {...config, root: '/srv/fixture/other'};
+  const other = {...config, root: 'C:\\fixture\\other'};
   assert.deepEqual(launchConnection(['desktop.exe', '--application-root', other.root],
     {connection: config, mode: 'pet', topmost: false}), other);
   assert.throws(() => launchConnection(['desktop.exe', '--application-root'],
     {connection: config, mode: 'pet', topmost: false}));
 });
-test('connection stores only nonsecret fields; commands are absolute WSL paths', () => {
+test('connection stores only nonsecret fields; commands use native installation paths', () => {
   assert.deepEqual(connection({...config, token: 'never persist'}), config);
-  for (const value of [{...config, root: 'relative'}, {...config, distro: '--exec'}, {...config, root: '/tmp\ncommand'}])
+  for (const value of [{...config, root: 'relative'}, {...config, root: '\\\\server\\share'}, {...config, root: '/tmp\ncommand'}])
     assert.throws(() => connection(value));
   assert.deepEqual(settings({connection: {...config, token: 'x'}, mode: 'pet', topmost: true, token: 'x'}),
     {connection: config, mode: 'pet', topmost: true});
@@ -54,11 +62,8 @@ test('IPC requires exact granted main frame and role; origin checks do not accep
     assert.equal(allowed({...caller, ...changed}, grant, ['manager']), false);
   assert.equal(allowed(caller, grant, ['settings']), false);
 });
-test('WSL discovery reads UTF-16 and installed backend versions', async () => {
-  assert.deepEqual(await distributions(async (args, utf16) => {
-    assert.deepEqual(args, ['--list', '--quiet']); assert.equal(utf16, true); return 'Ubuntu-22.04\r\nOther\r\n';
-  }), ['Ubuntu-22.04', 'Other']);
-  assert.equal((await new WslBackend(config, async args => JSON.stringify(args.includes('app') ? {bot_id:'fixture',plugins:installed} : installed)).list()).length, 2);
+test('the native backend reads application-scoped prepared components', async () => {
+  assert.equal((await new NativeBackend(config, 'payload', async () => JSON.stringify({bot_id:'fixture',plugins:installed})).list()).length, 1);
 });
 test('native media origins with trailing slashes retain strict scheme, host and port checks', () => {
   assert.equal(sameHttpOrigin('http://localhost:12493/', 'http://localhost:12493'), true);
@@ -66,26 +71,36 @@ test('native media origins with trailing slashes retain strict scheme, host and 
     'http://localhost.example.invalid:12493', 'http://127.0.0.1:12493'])
     assert.equal(sameHttpOrigin(origin, 'http://localhost:12493'), false);
 });
-test('missing WSL, missing plugins, incompatible versions and malformed results fail explicitly', async () => {
-  await assert.rejects(distributions(async () => {throw Error('WSL unavailable');}));
-  for (const result of [[], installed.map(x => ({...x, status: 'uninstalled'})),
-    installed.map(x => ({...x, installed_version: '0.1.0'})), {}, 'malformed']) {
-    await assert.rejects(new WslBackend(config, async args => JSON.stringify(args.includes('app') ? {bot_id:'fixture',plugins:installed} : result)).list());
-  }
+test('missing components and malformed status are not accepted', async () => {
+  for (const value of [{}, {bot_id:'fixture',plugins:[]}, {bot_id:'fixture',plugins:installed.map(x=>({...x,status:'missing'}))}])
+    await assert.rejects(new NativeBackend(config,'payload',async()=>JSON.stringify(value)).list());
 });
-test('CLI uses argv without shell expansion and role operations cannot choose executable', async () => {
-  const calls = [], backend = new WslBackend({...config, root: '/srv/fixture/a b;literal'}, async args => {
-    calls.push(args); return JSON.stringify({ok: true, backup});
+test('native CLI receives separated argv and secrets only over stdin', async () => {
+  const calls=[];
+  const backend=new NativeBackend(config,'payload',async(file,args,input)=>{
+    calls.push({file,args,input});return JSON.stringify({ok:true});
+  },processFixture);
+  await backend.modelSettings({model:'fixture-model',api_key:'fixture-secret'});
+  assert.equal(calls[0].file,config.root+'\\.venv\\Scripts\\python.exe');
+  assert.deepEqual(calls[0].args,['-m','chatcopilot','app','model-settings','--root',config.root,'--save']);
+  assert(!calls[0].args.join(' ').includes('fixture-secret'));
+  assert.equal(JSON.parse(calls[0].input).api_key,'fixture-secret');
+  await backend.start('open-llm-vtuber');
+  await backend.stop();
+  assert.equal(calls.length,1,'desktop shutdown must not signal another launch through app stop');
+  await assert.rejects(backend.apply(id,2));
+  await assert.rejects(backend.start('live2d-generator'));
+});
+test('a failed desktop launch never stops another supervisor for the installation', async () => {
+  const calls=[];
+  const backend=new NativeBackend(config,'payload',async(...args)=>{calls.push(args);return '{}';},()=>{
+    const child=new EventEmitter();child.stdin=new PassThrough();child.stdout=new PassThrough();child.stderr=new PassThrough();child.exitCode=null;
+    process.nextTick(()=>{child.exitCode=1;child.emit('exit',1);});
+    return child;
   });
-  await backend.start('open-llm-vtuber'); await backend.apply(id, 2); await backend.restore(backup);
-  assert.deepEqual(calls[0], ['--distribution', config.distro, '--exec', '/srv/fixture/a b;literal/.venv/bin/agentstrata',
-    'app', 'start', '--root', '/srv/fixture/a b;literal']);
-  assert.equal(calls[1][3], '/srv/fixture/a b;literal/.agentstrata-data/plugins/live2d-generator/runtime/venv/bin/agentstrata-live2d');
-  assert(calls[1].includes(id)); assert(calls[2].includes(backup));
-});
-test('port conflicts and failed doctor are not accepted as ready', async () => {
-  await assert.rejects(new WslBackend(config, async () => '{"ok":false}').start('open-llm-vtuber'));
-  await assert.rejects(new WslBackend(config, async () => {throw Error('port occupied');}).start('open-llm-vtuber'));
+  await assert.rejects(backend.start('open-llm-vtuber'));
+  await backend.stop();
+  assert.deepEqual(calls,[]);
 });
 function fixture(fail = {}) {
   const calls = [], counts = {};
@@ -142,7 +157,7 @@ test('concurrent apply or startup cannot stop the client twice', async () => {
 const {Perception}=require('../dist/perception');
 test('generator is optional for the independent desktop application',async()=>{
   const client=installed.slice(0,1);
-  const backend=new WslBackend(config,async args=>JSON.stringify(args.includes('app')?{bot_id:'fixture',plugins:client}:client));
+  const backend=new NativeBackend(config,'payload',async()=>JSON.stringify({bot_id:'fixture',plugins:client}));
   assert.equal((await backend.list()).length,1);
   assert.equal(settings({}).mode,'pet');
 });

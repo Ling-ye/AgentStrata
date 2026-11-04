@@ -1,60 +1,59 @@
-# AgentStrata Live2D Windows 客户端
+# AgentStrata Live2D Windows 原生桌宠
 
-版本 `0.2.0`，固定 Electron `45.0.0`。桌面端只管理窗口与本机 WSL 独立应用生命周期，
-交互页面来自 `open-llm-vtuber 0.5.0`，可选角色管理来自 `live2d-generator 0.4.0`。
-数据与凭据继续保存在 WSL。设计见[桌面规格](../../specs/live2d-desktop/spec.md)，
-安装和使用见[Live2D 指南](../../docs/guides/live2d.md#windows-桌面客户端)。
+版本 `0.3.0`，固定 Electron `45.0.0`。运行端使用 Windows 原生 Python、Gateway、
+LangGraph、VTuber 与 Windows-MCP，开发侧 Harness/Eval 保持 Linux。设计见
+[桌面规格](../../specs/live2d-desktop/spec.md)，安装与使用见
+[Live2D 指南](../../docs/guides/live2d.md#windows-桌面客户端)。
 
 ## 开发与构建
 
-Node.js 24，使用锁文件安装。WSL 可以运行 TypeScript 编译和纯逻辑单测：
+Node.js 24，使用锁文件安装。Linux 可以运行 TypeScript 编译和逻辑单测：
 
 ```bash
 ELECTRON_SKIP_BINARY_DOWNLOAD=1 npm ci
 npm test
 ```
 
-在 Windows PowerShell 中运行下列脚本。源码可以位于 WSL，但 npm、Electron 和打包器
-始终在 Windows 原生目录运行。`BuildRoot` 默认为`%USERPROFILE%\.agentstrata\applications\live2d-desktop\build`。
+先在 Linux 仓库根目录准备固定上游与前端构建，再冻结完整公开源码。输出目录必须不存在：
 
-```powershell
-.\scripts\build-windows.ps1
+```bash
+.venv/bin/python integrations/live2d_desktop/scripts/prepare-runtime.py \
+  --build-root /absolute/native-build --output /absolute/native-runtime-payload
 ```
 
-如果源码在 WSL，先把入口脚本复制到 Windows 本地，再传入 WSL 源码路径。这样无需改变
-PowerShell 执行策略，也不会把 UNC 路径作为 npm 的工作目录。替换示例中的源码位置：
+在 Windows PowerShell 中构建；源码与载荷可以来自 WSL，但用户运行时不访问它们。
+`BuildRoot` 默认 `%USERPROFILE%\.agentstrata\build\live2d-native\desktop`。
 
 ```powershell
-$desktopSource = '\\wsl.localhost\Ubuntu-22.04\path\to\AgentStrata\integrations\live2d_desktop'
-$desktopBuild = Join-Path $env:USERPROFILE '.agentstrata\applications\live2d-desktop\build'
-New-Item -ItemType Directory -Path $desktopBuild -Force | Out-Null
-Copy-Item "$desktopSource\scripts\build-windows.ps1" "$desktopBuild\build-windows.ps1" -Force
-& "$desktopBuild\build-windows.ps1" -SourceRoot $desktopSource
+.\scripts\build-windows.ps1 -RuntimePayload '\\wsl.localhost\Ubuntu-22.04\absolute\native-runtime-payload'
 ```
 
-脚本依次执行锁定依赖安装、逻辑单测、受控 HTTP 页面 Electron smoke 和 x64
-NSIS/ZIP 构建，结果在 `BuildRoot\release`。smoke 使用 Chromium 合成音频设备验证采集、
-隐藏停采和视频拒绝，不访问 WSL，不使用真实角色或实体麦克风。
-`npm start` 启动开发版；`npm run pack` 只构建安装包，不上传或自动更新。
-`build-windows.ps1 -VerifyOnly` 只安装依赖、测试和运行 smoke，不请求安装包或写入新校验和。
-日常 CI 在相关变更时使用该模式；手动完整 CI 和现有本地默认命令仍完整打包。
-安装包使用显式文件清单，排除源码测试、后台、私有角色和配置。发布或本地交付需同时
-提供匹配的完整 AgentStrata 源码快照及依赖锁文件；未经签名的本地测试包不代表商业发行。
+脚本先核对桌面代码与载荷源码一致，再执行锁定依赖安装、单测、受控页面 Electron smoke
+和 x64 NSIS/ZIP 构建，结果在 `BuildRoot\release`。构建包含匹配公开源码、上游源码、
+前端构建和许可，排除用户私有角色、配置与聊天数据，不上传或自动发布。
+`build-windows.ps1 -VerifyOnly` 只测试桌面壳，不要求或准备运行载荷，也不证明真实模型、
+桌面任务或硬件音频。`npm run pack` 也要求事先在本地提供 `runtime-payload`。
 
-## Windows 桌面工具
+## 原生环境与生命周期
 
-`./scripts/prepare-windows-mcp.ps1` 在独立目录准备固定 Windows-MCP 源码、Python 3.14.7
-与锁定依赖，复用上游 stdio，不创建控制网络服务。脚本核对下载摘要、拒绝接管不明目录，
-关闭遥测和自动界面监听。安装输出的原生 Python 路径填入应用 `local.env`。
-主屏读取扩展位于 `src/chatcopilot/external_tools/windows_desktop`，截图走统一 MCP 图片通路。
+`scripts/bootstrap-windows.ps1` 使用固定 uv 和 hash 锁准备 Python 3.13 主环境、Python 3.12
+VTuber 环境及 Python 3.14 Windows-MCP。来源文件与解释器均归属安装副本。
+`windows-runtime.lock.json` 固定原生工具；`windows-host-requirements.lock` 从主 `uv.lock`
+导出，VTuber 使用自己的 `requirements-windows.lock`。ChatGPT 认证辅助程序按需下载，
+日常 Agent 仍是 LangGraph。API 与授权信息由项目现有存储维护。
+
+桌面通过通用 `app` CLI 准备、查询与停止，通过 `app run --watch-stdin` 保持后台归属。
+Windows Job 管理后台与 MCP；用户程序显式脱离 Job。隐藏到托盘停止感知与麦克风，
+退出及桌面进程异常关闭停止自有后台。Windows 首版只提供新安装和同版本修复；
+不同源码不覆盖，M5 更新/撤回后续实现。
 
 ## 实现入口
 
-- `src/wsl.ts`：WSL 发行版探测与固定参数 CLI 调用，不经 shell。
-- `src/controller.ts`：空闲确认、停机、应用、启动、失败恢复与结果状态。
-- `src/desktop.ts`：单实例、托盘、窗口模式、媒体权限、管理页及受限 IPC。
-- `src/preload.ts`、`src/security.ts`：有限桥接、窗口与主 frame 来源校验。
-- `ui/`：独立本机设置页；设置文件仅保存路径与窗口偏好。
+- `src/backend.ts`：本机 CLI、运行进程及凭据传递，不经过 shell 拼接命令。
+- `src/desktop.ts`：单实例、托盘、透明窗口、媒体权限和受限 IPC。
+- `src/preload.ts`、`src/security.ts`：有限桥接及来源校验。
+- `ui/`：安装与模型设置，凭据不写入窗口偏好文件。
 
-前端适配仍在 VTuber 固定补丁内，保持其上游许可。Electron/Chromium 许可由打包器
-附带，插件/SDK/模型的许可不因桌面壳而改变，见 `licenses/NOTICE.md`。
+持续感知、任务授权和 MCP 图片结果保持原有契约。原生窗口和完整运行链须在 Windows
+独立验收；实体音频与合成播放回执分开报告。上游前端、模型与 SDK 保留各自许可，
+见 `licenses/NOTICE.md` 和仓库 `THIRD_PARTY_NOTICES.md`。

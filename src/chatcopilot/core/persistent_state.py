@@ -1,9 +1,10 @@
 """Protected filesystem implementation for persona and conversation memory."""
 from __future__ import annotations
 
-import fcntl
+from chatcopilot.core import file_lock as fcntl
 import hashlib
 import os
+from chatcopilot.core import storage_files as fs
 import stat
 import tempfile
 from contextlib import contextmanager
@@ -189,7 +190,7 @@ class FilesystemPersistentConversationState:
 
     def _read_protected(self, path: Path, *, max_bytes: int) -> str:
         try:
-            path.lstat()
+            fs.lstat(path)
         except FileNotFoundError:
             return ""
         except OSError as exc:
@@ -198,13 +199,13 @@ class FilesystemPersistentConversationState:
         return self._read_fd(path, max_bytes=max_bytes)
 
     def _read_fd(self, path: Path, *, max_bytes: int) -> str:
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
         try:
-            fd = os.open(path, flags)
+            fd = fs.open(path, flags)
         except OSError as exc:
             raise PersistentStateSecurityError("持久状态无法安全打开") from exc
         try:
-            file_stat = os.fstat(fd)
+            file_stat = fs.fstat(fd)
             self._validate_file(file_stat)
             if file_stat.st_size > max_bytes:
                 raise ValueError(f"持久状态体积超过上限 {max_bytes} 字节")
@@ -265,13 +266,13 @@ class FilesystemPersistentConversationState:
             except OSError as exc:
                 raise PersistentStateSecurityError("持久状态目录无法创建") from exc
             try:
-                directory_stat = current.lstat()
+                directory_stat = fs.lstat(current)
             except OSError as exc:
                 raise PersistentStateSecurityError("持久状态目录无法检查") from exc
             if (
                 stat.S_ISLNK(directory_stat.st_mode)
                 or not stat.S_ISDIR(directory_stat.st_mode)
-                or directory_stat.st_uid != os.geteuid()
+                or directory_stat.st_uid != fs.geteuid()
                 or (not created and stat.S_IMODE(directory_stat.st_mode) != 0o700)
             ):
                 raise PersistentStateSecurityError("持久状态目录类型、owner 或权限不安全")
@@ -290,13 +291,13 @@ class FilesystemPersistentConversationState:
         for part in relative.parts:
             current = current / part
             try:
-                directory_stat = current.lstat()
+                directory_stat = fs.lstat(current)
             except OSError as exc:
                 raise PersistentStateSecurityError("持久状态目录无法检查") from exc
             if (
                 stat.S_ISLNK(directory_stat.st_mode)
                 or not stat.S_ISDIR(directory_stat.st_mode)
-                or directory_stat.st_uid != os.geteuid()
+                or directory_stat.st_uid != fs.geteuid()
                 or stat.S_IMODE(directory_stat.st_mode) != 0o700
             ):
                 raise PersistentStateSecurityError("持久状态目录类型、owner 或权限不安全")
@@ -304,13 +305,13 @@ class FilesystemPersistentConversationState:
     @contextmanager
     def _locked(self, path: Path) -> Iterator[None]:
         lock_path = path.with_name(path.name + ".lock")
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
         try:
-            fd = os.open(lock_path, flags, 0o600)
+            fd = fs.open(lock_path, flags, 0o600)
         except OSError as exc:
             raise PersistentStateSecurityError("持久状态锁无法安全打开") from exc
         try:
-            self._validate_file(os.fstat(fd))
+            self._validate_file(fs.fstat(fd))
             fcntl.flock(fd, fcntl.LOCK_EX)
             yield
         finally:
@@ -322,23 +323,23 @@ class FilesystemPersistentConversationState:
     def _replace_atomic(self, path: Path, raw: bytes) -> None:
         if path.exists() or path.is_symlink():
             try:
-                self._validate_file(path.lstat())
+                self._validate_file(fs.lstat(path))
             except OSError as exc:
                 raise PersistentStateSecurityError("持久状态目标无法检查") from exc
         fd, temporary_name = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
         temporary = Path(temporary_name)
         try:
-            os.fchmod(fd, 0o600)
+            fs.fchmod(fd, 0o600)
             written = 0
             while written < len(raw):
                 written += os.write(fd, raw[written:])
-            os.fsync(fd)
+            fs.fsync(fd)
             os.close(fd)
             fd = -1
-            os.replace(temporary, path)
-            directory_fd = os.open(path.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
+            fs.replace(temporary, path)
+            directory_fd = fs.open(path.parent, os.O_RDONLY | fs.O_DIRECTORY)
             try:
-                os.fsync(directory_fd)
+                fs.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
         finally:
@@ -349,7 +350,7 @@ class FilesystemPersistentConversationState:
     @staticmethod
     def _validate_file(file_stat: os.stat_result) -> None:
         try:
-            require_regular_file(file_stat, owner_uid=os.geteuid(), mode=0o600, single_link=True)
+            require_regular_file(file_stat, owner_uid=fs.geteuid(), mode=0o600, single_link=True)
         except FileMetadataError as exc:
             raise PersistentStateSecurityError(
                 "持久状态文件的类型、owner、链接或权限不安全"

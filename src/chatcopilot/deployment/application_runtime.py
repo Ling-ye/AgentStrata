@@ -8,7 +8,7 @@ import shutil
 import subprocess
 import tempfile
 
-from chatcopilot.core.application_installation import RECORD, SCHEMA, installation
+from chatcopilot.core.application_installation import RECORD, SCHEMA, application_source, installation
 from chatcopilot.core.install_artifacts import write_private
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, source_manifest
 from chatcopilot.deployment.application_bundle import read_bundle
@@ -55,8 +55,11 @@ def install_bundle(bundle: Path, destination: Path) -> dict:
         raise ValueError("Application installation path cannot contain control characters")
     if destination.exists() or destination.is_symlink():
         installed = installation(destination)
-        if installed is None or installed.bot_id != record["bot_id"] or installed.delivered_digest != record["source_digest"]:
+        if (installed is None or installed.bot_id != record["bot_id"] or installed.delivered_digest != record["source_digest"]
+                or installed.artifact_digest != record.get("artifacts_digest")):
             raise ValueError("Destination already exists; updates must use the accepted-version controls")
+        if installed.artifact_digest is not None:
+            application_source(destination)
         return {"root": str(destination), "bot_id": installed.bot_id, "state": "installed", "reused": True}
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.parent.resolve() != destination.parent:
@@ -65,12 +68,18 @@ def install_bundle(bundle: Path, destination: Path) -> dict:
     try:
         copy_sources(bundle / "source", pending, record["source_manifest"])
         materialized = record["source_manifest"]
-        _initialize_source(pending, materialized)
+        native = record["schema"] == "agentstrata-windows-runtime/v1"
+        if native:
+            write_private(pending / ".agentstrata-source.json", json.dumps(materialized, sort_keys=True))
+        else:
+            _initialize_source(pending, materialized)
         write_private(pending / RECORD, json.dumps({"schema": SCHEMA, "bot_id": record["bot_id"],
             "bot_relative": record["bot_relative"], "delivered_digest": record["source_digest"],
-            "installed_digest": manifest_digest(materialized), "accepted_candidate": record["accepted_candidate"]},
+            "installed_digest": manifest_digest(materialized),
+            **({"origin": record["origin"], "platform": record["platform"], "artifacts_digest": record["artifacts_digest"]} if native
+               else {"accepted_candidate": record["accepted_candidate"]})},
             ensure_ascii=False, sort_keys=True) + "\n")
-        if source_manifest(pending) != materialized:
+        if not native and source_manifest(pending) != materialized:
             raise ValueError("Installed source differs from its accepted delivery")
         pending.rename(destination)
     finally:
@@ -110,6 +119,8 @@ def prepare_runtime(root: Path) -> int:
     installed = installation(root)
     if installed is None:
         raise ValueError("An explicit application installation is required")
+    if os.name == "nt":
+        raise ValueError("Use the Windows desktop bootstrap to prepare the pinned native runtime")
     return subprocess.run(["bash", str(installed.root / "deploy/wsl/install_wsl_env.sh"),
         "--no-system-packages", "--venv", str(installed.root / ".venv"), "--no-verify"],
         cwd=installed.root, env={**os.environ, "CHATCOPILOT_SOURCE_ROOT": str(installed.root)}, check=False).returncode

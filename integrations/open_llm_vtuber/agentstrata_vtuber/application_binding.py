@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 from pathlib import Path
 
 import yaml
@@ -52,7 +53,8 @@ def configure_application_client(request: dict, sources: dict[str, Path]) -> Non
         values.update(AGENTSTRATA_VTUBER_CONFIG=str(config / "adapter.json"),
                       AGENTSTRATA_APPLICATION_ROOT=str(installed.root),
                       CHATCOPILOT_SOURCE_URL=request["host"]["source_url"],
-                      PATH=str(root / "runtime/tools/ffmpeg/bin") + ":/usr/local/bin:/usr/bin:/bin",
+                      PATH=os.pathsep.join((str(root / "runtime/tools/ffmpeg/bin"), os.environ.get("PATH", "")))
+                           if os.name == "nt" else str(root / "runtime/tools/ffmpeg/bin") + ":/usr/local/bin:/usr/bin:/bin",
                       PYTHONUNBUFFERED="1")
         values["PYTHONPATH"] = os.pathsep.join((str(installed.root / "src"),
                                                str(installed.root / "integrations/open_llm_vtuber")))
@@ -71,6 +73,23 @@ def configure_application_client(request: dict, sources: dict[str, Path]) -> Non
                                              "application_root": str(installed.root)}))
     elif json.loads(configured.read_text()).get("application_root") != str(installed.root):
         raise InstallError("VTuber was configured for another application")
+    if os.name == "nt":
+        # Upstream relative data paths now resolve inside persistent data. Static
+        # inputs are prepared once; no Windows symlink privilege is required.
+        for name in ("frontend", "backgrounds", "avatars", "web_tool", "characters", "prompts", "config_templates"):
+            target = data / name
+            if not target.exists():
+                pending = target.with_name(name + ".preparing")
+                if pending.is_symlink():
+                    raise InstallError("Native static preparation cannot be a symbolic link")
+                if pending.exists():
+                    shutil.rmtree(pending)
+                shutil.copytree(sources["backend"] / name, pending)
+                pending.rename(target)
+        for name in ("models", "chat_history", "logs", "cache"):
+            private_directory(data / name)
+        shutil.copyfile(config / "upstream.yaml", data / "conf.yaml")
+        return
     for name, target in {"models": data / "models", "chat_history": data / "chat_history",
                          "logs": root / "logs/client", "cache": data / "audio-cache"}.items():
         persistent_link(sources["backend"] / name, target)

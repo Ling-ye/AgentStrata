@@ -130,6 +130,9 @@ def probe_environment(python: str) -> dict:
 
 
 def process_identity(pid: int) -> dict | None:
+    if os.name == "nt":
+        from chatcopilot.core.windows_process import identity
+        return identity(pid)
     try:
         path = Path(f"/proc/{pid}")
         if path.stat().st_uid != os.getuid():
@@ -145,6 +148,9 @@ def process_identity(pid: int) -> dict | None:
 
 
 def owns_listener(pid: int, port: int) -> bool:
+    if os.name == "nt":
+        from chatcopilot.core.windows_process import owns_listener as windows_listener
+        return windows_listener(pid, port)
     try:
         sockets = set()
         for path in Path(f"/proc/{pid}/fd").iterdir():

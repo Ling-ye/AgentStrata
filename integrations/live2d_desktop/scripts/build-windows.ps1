@@ -1,13 +1,14 @@
 param(
   [string]$SourceRoot = (Split-Path $PSScriptRoot -Parent),
-  [string]$BuildRoot = (Join-Path $env:USERPROFILE '.agentstrata\applications\live2d-desktop\build'),
+  [string]$BuildRoot = (Join-Path $env:USERPROFILE '.agentstrata\build\live2d-native\desktop'),
+  [string]$RuntimePayload,
   [switch]$VerifyOnly
 )
 $ErrorActionPreference = 'Stop'
 if ($BuildRoot.StartsWith('\\')) { throw 'BuildRoot must be on a native Windows drive, not UNC.' }
 New-Item -ItemType Directory -Path $BuildRoot -Force | Out-Null
 # Explicit public inputs. Do not copy a checkout cache, userData, WSL config or character assets.
-foreach ($name in @('package.json','package-lock.json','tsconfig.json','windows-mcp.lock.json')) {
+foreach ($name in @('package.json','package-lock.json','tsconfig.json','windows-mcp.lock.json','windows-runtime.lock.json')) {
   Copy-Item (Join-Path $SourceRoot $name) (Join-Path $BuildRoot $name) -Force
 }
 foreach ($name in @('src','ui','scripts','test','licenses')) {
@@ -15,6 +16,23 @@ foreach ($name in @('src','ui','scripts','test','licenses')) {
   Copy-Item (Join-Path $SourceRoot "$name\*") (Join-Path $BuildRoot $name) -Recurse -Force
 }
 $RepoRoot = Split-Path (Split-Path $SourceRoot -Parent) -Parent
+if (!$VerifyOnly) {
+  if (!$RuntimePayload) { throw 'Native packaging requires a prepared RuntimePayload; verification alone does not build one.' }
+  $PayloadRecord = Get-Content -LiteralPath (Join-Path $RuntimePayload 'application.json') -Raw | ConvertFrom-Json
+  $DesktopInputs = @(Get-ChildItem -LiteralPath (Join-Path $SourceRoot 'src') -Recurse -File) +
+    @(Get-ChildItem -LiteralPath (Join-Path $SourceRoot 'ui') -Recurse -File | Where-Object Extension -ne '.ico') +
+    @('package.json','package-lock.json','scripts\resources.cjs' | ForEach-Object { Get-Item -LiteralPath (Join-Path $SourceRoot $_) })
+  foreach ($File in $DesktopInputs) {
+    $Relative = $File.FullName.Substring($SourceRoot.TrimEnd('\').Length + 1)
+    $Expected = Join-Path $RuntimePayload ('source\integrations\live2d_desktop\' + $Relative)
+    if (!(Test-Path $Expected) -or (Get-FileHash $File.FullName).Hash -ne (Get-FileHash $Expected).Hash) {
+      throw 'Desktop source and native runtime payload differ. Rebuild the payload first.'
+    }
+  }
+  $Destination = Join-Path $BuildRoot 'runtime-payload'
+  if (Test-Path -LiteralPath $Destination) { Remove-Item -LiteralPath $Destination -Recurse -Force }
+  Copy-Item -LiteralPath $RuntimePayload -Destination $Destination -Recurse
+}
 foreach ($name in @('LICENSE','COPYRIGHT')) {
   Copy-Item (Join-Path $RepoRoot $name) (Join-Path $BuildRoot "licenses\$name") -Force
 }
@@ -28,7 +46,7 @@ foreach ($name in @('src','ui','scripts','test','licenses')) {
     $Inputs[$Relative] = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLower()
   }
 }
-foreach ($name in @('package.json','package-lock.json','tsconfig.json','windows-mcp.lock.json')) {
+foreach ($name in @('package.json','package-lock.json','tsconfig.json','windows-mcp.lock.json','windows-runtime.lock.json')) {
   $Inputs[$name] = (Get-FileHash -LiteralPath (Join-Path $BuildRoot $name) -Algorithm SHA256).Hash.ToLower()
 }
 Push-Location $BuildRoot

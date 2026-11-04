@@ -15,5 +15,5 @@ gateway:
 workspace:
   root_env: CHATCOPILOT_WORKSPACE_ROOT
 deploy:
-  target: wsl
+  target: windows
   instance_id: live2d-desktop
