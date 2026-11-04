@@ -70,6 +70,7 @@ M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求
 | 编写题目和验收样本 | [用例指南](guides/evaluation-cases.md) | [题目约束](reference/evaluation-cases.md) / [术语](reference/evaluation-glossary.md) |
 | 修改 Console | [Console](reference/console.md) | [观测](reference/observability.md) / [归档](reference/local-traces.md) |
 | 排查运行失败 | [诊断](guides/debugging.md) | [WSL 恢复](guides/wsl-troubleshooting.md) |
+| 维护产品介绍网站 | [网站预览与发布](guides/website.md) | [公开边界](reference/publication.md) |
 | 维护文档或准备发布 | [文档维护](maintenance.md) / [发布](guides/releasing.md) | [公开边界](reference/publication.md) / [规格](../specs/README.md) |
 
 ## 模块入口

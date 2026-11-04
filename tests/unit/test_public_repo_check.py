@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import importlib.util
 import json
 import os
@@ -1023,3 +1024,60 @@ def test_live2d_sources_are_exact_public_integrations():
     assert "unexpected-code-repository" in {
         finding.rule for finding in checker.scan_text(unreviewed, path="README.md")
     }
+
+
+@pytest.mark.parametrize("url", [
+    "https://ling-ye.github.io/AgentStrata/",
+    "https://ling-ye.github.io/AgentStrata/assets/demo-poster.webp",
+    "https://LING-YE.github.io:443/AgentStrata/demo.html",
+])
+def test_exact_product_website_urls_are_public(url):
+    assert not _load_checker().scan_text(url, path="website/index.html")
+
+
+@pytest.mark.parametrize("suffix", [
+    "Other/",
+    "AgentStrata/../Other/",
+    "AgentStrata/%2e%2e/Other/",
+    "AgentStrata/%5cOther/",
+])
+def test_product_website_does_not_allow_other_or_ambiguous_paths(suffix):
+    url = "https://" + "ling-ye.github.io/" + suffix
+    assert _load_checker().scan_text(url, path="website/index.html")
+
+
+@pytest.mark.parametrize("prefix", [
+    "http://" + "ling-ye.github.io/",
+    "https://" + "ling-ye.github.io:invalid/",
+    "https://" + "other.github.io/",
+])
+def test_product_website_requires_exact_https_origin(prefix):
+    assert _load_checker().scan_text(prefix + "AgentStrata/", path="website/index.html")
+
+
+def test_product_website_preserves_sensitive_query_checks():
+    url = "https://ling-ye.github.io/AgentStrata/?" + "access_token=unreviewed-secret"
+    findings = _load_checker().scan_text(url, path="website/index.html")
+    assert "sensitive-uri-query" in {item.rule for item in findings}
+
+
+@pytest.mark.parametrize("prefix", ["index:", "worktree:", "untracked:", "history:"])
+def test_reviewed_video_is_bound_to_exact_content_and_location(prefix):
+    checker = _load_checker()
+    content = b"binary\x00" + ("node" + ".internal").encode()
+    content += b" https://" + b"unreviewed.vendor.net"
+    name = "website/assets/agentstrata-v4.mp4"
+    checker.REVIEWED_PRODUCT_MEDIA = {name: hashlib.sha256(content).hexdigest()}
+    path = prefix + name + ("@abcdef" if prefix == "history:" else "")
+    assert not checker._scan_bytes(content, path=path)
+    assert checker._scan_bytes(content + b"changed", path=path)
+    assert checker._scan_bytes(content, path=prefix + "website/assets/other.mp4")
+    assert checker._scan_bytes(content, path=path, private_literals=["binary"])
+
+
+def test_reviewed_video_does_not_suppress_secret_findings():
+    checker = _load_checker()
+    content = ("-----BEGIN " + "PRIVATE KEY-----").encode()
+    name = "website/assets/agentstrata-v4.mp4"
+    checker.REVIEWED_PRODUCT_MEDIA = {name: hashlib.sha256(content).hexdigest()}
+    assert checker._scan_bytes(content, path=name)

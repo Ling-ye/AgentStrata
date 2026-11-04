@@ -1,0 +1,158 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#f7f4ed">
+  <title>AgentStrata — 让 Agent 走进你的应用</title>
+  <meta name="description" content="AgentStrata 是开源的 Agent 定制、运行与交付系统。观看产品演示，了解 Live2D、QQ 与自定义应用接入，从源码和文档开始使用。">
+  <meta property="og:type" content="website">
+  <meta property="og:locale" content="zh_CN">
+  <meta property="og:title" content="AgentStrata — 让 Agent 走进你的应用">
+  <meta property="og:description" content="从交互到执行，从需求到改进。一个可定制、可验证的开源 Agent 运行系统。">
+  <meta property="og:url" content="https://ling-ye.github.io/AgentStrata/">
+  <meta property="og:image" content="https://ling-ye.github.io/AgentStrata/assets/demo-poster.webp">
+  <meta name="twitter:card" content="summary_large_image">
+  <link rel="canonical" href="https://ling-ye.github.io/AgentStrata/">
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="styles.css">
+  <script src="main.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+  <header class="site-header">
+    <div class="container header-inner">
+      <a class="brand" href="#" aria-label="AgentStrata 首页">
+        <svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="m18 3 15 8-15 8L3 11Z"/><path d="m3 18 15 8 15-8M3 25l15 8 15-8" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linejoin="round"/></svg>
+        <span>AgentStrata</span>
+      </a>
+      <button class="menu-toggle" type="button" aria-expanded="false" aria-controls="navigation">菜单 <span aria-hidden="true">☰</span></button>
+      <nav id="navigation" aria-label="主导航">
+        <a href="#possibilities">产品</a>
+        <a href="#demo">演示</a>
+        <a href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md">文档 <span aria-hidden="true">↗</span></a>
+        <a href="https://github.com/Ling-ye/AgentStrata" class="github-link">GitHub <span aria-hidden="true">↗</span></a>
+        <a href="#start" class="button button-small">开始使用 <span aria-hidden="true">→</span></a>
+      </nav>
+    </div>
+  </header>
+
+  <main id="main">
+    <section class="hero container" aria-labelledby="hero-title">
+      <div class="hero-copy">
+        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> OPEN SOURCE · BUILT FOR YOUR APPS</p>
+        <h1 id="hero-title">让 Agent，<br>走进你的<span class="serif-accent">应用。</span></h1>
+        <p class="hero-description">从一个会回应的角色，<br>到一个真正为你工作的 Agent。</p>
+        <p class="hero-detail">用 AgentStrata 定制能力、连接工具与应用，<br class="desktop-break">让每一次改进都有可检查的结果。</p>
+        <div class="hero-actions">
+          <a class="button" href="#start">开始探索 <span aria-hidden="true">→</span></a>
+          <a class="text-link" href="https://github.com/Ling-ye/AgentStrata">查看 GitHub <span aria-hidden="true">↗</span></a>
+        </div>
+        <p class="hero-note">开源 · 自行部署 · 由你选择模型与应用</p>
+      </div>
+
+      <div class="hero-media" id="demo">
+        <div class="media-label"><span>见面，从一段真实演示开始</span><span class="edition">初版 · V4</span></div>
+        <div class="video-shell">
+          <video id="product-video" controls playsinline preload="none" poster="assets/demo-poster.webp" aria-label="AgentStrata 产品演示，由异世界情绪介绍，约三分十八秒" aria-describedby="video-description">
+            <source src="assets/agentstrata-v4.mp4" type="video/mp4">
+            <track kind="chapters" src="assets/chapters.vtt" srclang="zh" label="演示章节" default>
+            你的浏览器不支持视频播放，请<a href="assets/agentstrata-v4.mp4">下载 MP4 视频</a>观看。
+          </video>
+        </div>
+        <div class="video-caption"><p>异世界情绪，带你认识 AgentStrata</p><span>03:18 / 1080p</span></div>
+        <div class="chapter-links" aria-label="跳转演示章节" hidden>
+          <button type="button" data-time="25.76">00:26 <span>真实对话</span></button>
+          <button type="button" data-time="62.64">01:03 <span>运行轨迹</span></button>
+          <button type="button" data-time="83.64">01:24 <span>改进与评测</span></button>
+        </div>
+        <p id="video-description" class="media-note">原生客户端实录与历史任务回放；含教程配音。等待有剪短，对话有节选。QQ 段为隔离 OneBot 评测，尚未验证真实 QQ 往返。</p>
+        <p class="video-alternatives"><a href="demo.html">查看演示文字说明</a><span aria-hidden="true">·</span><a href="assets/agentstrata-v4.mp4" download>下载视频</a></p>
+        <p id="video-status" role="status" class="media-note"></p>
+      </div>
+    </section>
+
+    <div class="intro-strip container">
+      <p>一个运行底座，多种交互方式。</p>
+      <div><span>Live2D 桌面角色</span><span>QQ / NapCat</span><span>你的应用 & API</span></div>
+    </div>
+
+    <section class="section container possibilities" id="possibilities" aria-labelledby="possibilities-title">
+      <div class="section-heading">
+        <p class="eyebrow">01 / CONNECT</p>
+        <h2 id="possibilities-title">不同的应用，<br>同样值得认真定制。</h2>
+        <p>AgentStrata 提供自有 Agent 与运行底座。为每个应用独立配置模型、人格、工具和记忆，让能力适应场景。</p>
+      </div>
+      <div class="application-list">
+        <article>
+          <span class="item-number">01</span>
+          <div><h3>让角色成为交互界面</h3><p>通过 Live2D 客户端进行文字、语音与角色交互。Agent 负责上下文和工具，客户端负责呈现与播放。</p><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md">了解 Live2D 接入 <span aria-hidden="true">↗</span></a></div>
+          <svg viewBox="0 0 72 72" aria-hidden="true"><rect x="7" y="10" width="58" height="42" rx="7"/><path d="M25 63h22M36 52v11M26 28h.1M46 28h.1M28 39q8 6 16 0"/></svg>
+        </article>
+        <article>
+          <span class="item-number">02</span>
+          <div><h3>在熟悉的消息里工作</h3><p>通过 QQ / NapCat 接收和回复消息，由宿主统一处理身份、会话和工具权限。按部署指南连接自己的账号。</p><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md">部署 QQ 助手 <span aria-hidden="true">↗</span></a></div>
+          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M13 12h46a5 5 0 0 1 5 5v31a5 5 0 0 1-5 5H32L17 64V53h-4a5 5 0 0 1-5-5V17a5 5 0 0 1 5-5Z"/><path d="M22 27h28M22 38h17"/></svg>
+        </article>
+        <article>
+          <span class="item-number">03</span>
+          <div><h3>为你的项目增加 Agent 能力</h3><p>沿 Channel、Gateway、工具接口或 MCP 接入现有项目。复用已有协议，按需求开发适配器和能力模块。</p><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md">探索架构与接口 <span aria-hidden="true">↗</span></a></div>
+          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="m24 20-17 16 17 16M48 20l17 16-17 16M42 12 30 60"/></svg>
+        </article>
+      </div>
+    </section>
+
+    <section class="improve-section" aria-labelledby="improve-title">
+      <div class="container">
+        <div class="improve-heading"><div><p class="eyebrow">02 / UNDERSTAND & IMPROVE</p><h2 id="improve-title">让能力持续进步，<br>也让过程清楚可见。</h2></div><p>从运行中的问题出发，开发、对照验证，再决定是否启用。保留证据，让下一步有据可依。</p></div>
+        <div class="console-showcase">
+          <div class="console-image"><img src="assets/console-runtime.webp" alt="AgentStrata Console 的任务运行视图，展示 Channel、Gateway、Application、Agent 四层流程和执行详情" width="1680" height="1850" loading="lazy"><span>Console · 任务运行视图</span></div>
+          <div class="improve-points">
+            <article><span>开发</span><h3>Harness</h3><p>从接入需求、运行问题或能力改进入手，组织调查、编码、测试与审核。</p></article>
+            <article><span>验证</span><h3>Eval</h3><p>对照基线与候选，检查行为、工具结果和交付证据，识别改进与回归。</p></article>
+            <article><span>管理</span><h3>Console</h3><p>查看运行轨迹、评测与版本状态。在授权范围内启用通过验收的候选。</p></article>
+            <a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md">了解改进流程 <span aria-hidden="true">↗</span></a>
+          </div>
+        </div>
+        <p class="showcase-note">界面图片来自项目 README 的公开产品示例。具体执行与验收能力以项目文档为准。</p>
+      </div>
+    </section>
+
+    <section class="section container start-section" id="start" aria-labelledby="start-title">
+      <div class="start-heading"><p class="eyebrow">03 / YOUR FIRST STEP</p><h2 id="start-title">从你的第一个应用开始。</h2><p>当前提供源码与部署文档。选择适合你的入口，把 AgentStrata 运行在自己的环境中。</p></div>
+      <div class="start-grid">
+        <article class="start-primary">
+          <div class="start-card-top"><span class="tag">推荐起点</span><span>Linux / WSL2</span></div>
+          <h3>从源码启动 QQ 助手</h3>
+          <p>准备 Git、支持的 Linux / WSL2 环境、模型 API 及 QQ 账号。终端向导会引导配置与登录。</p>
+          <div class="code-block"><div><span>TERMINAL</span><button id="copy-command" type="button" hidden>复制命令</button></div><pre><code id="install-command">git clone https://github.com/Ling-ye/AgentStrata.git
+cd AgentStrata
+bash deploy/wsl/quickstart.sh</code></pre></div>
+          <p id="copy-status" class="copy-status" role="status"></p>
+          <a class="button" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md">阅读完整安装指南 <span aria-hidden="true">↗</span></a>
+          <a class="source-download" href="https://github.com/Ling-ye/AgentStrata/archive/refs/heads/main.zip">下载源码 ZIP <span aria-hidden="true">↓</span></a>
+        </article>
+        <div class="start-secondary">
+          <article><p class="eyebrow">WINDOWS 11 x64</p><h3>体验 Live2D 桌面角色</h3><p>原生桌面客户端代码已提供；当前尚无公开 Release 安装包。开发者可按构建说明准备安装包，再按指南配置模型与启动角色。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/integrations/live2d_desktop/README.md">构建说明 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md#windows-桌面客户端">使用指南 <span aria-hidden="true">↗</span></a></div></article>
+          <article><p class="eyebrow">DEVELOPERS</p><h3>接入应用，或参与改进</h3><p>阅读架构与开发文档，从明确的接入目标、复现场景或一个小改进开始。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md">文档中心 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md">贡献指南 <span aria-hidden="true">↗</span></a></div></article>
+        </div>
+      </div>
+      <p class="deployment-note"><span aria-hidden="true">ⓘ</span> 本站是产品介绍与使用入口。实际对话和工具调用需要你部署后端并配置模型；这里不提供托管聊天，也不收集 API Key。</p>
+    </section>
+
+    <section class="container faq-section" aria-labelledby="faq-title">
+      <div><p class="eyebrow">GOOD TO KNOW</p><h2 id="faq-title">开始之前，<br>你可能想知道。</h2></div>
+      <div class="faq-list">
+        <details><summary>可以直接在这个网页里和 Agent 聊天吗？<span aria-hidden="true">+</span></summary><p>这里提供产品视频、源码与文档入口。对话、语音和工具调用由你部署的 AgentStrata 应用运行。按上方指南完成安装、模型配置及应用连接后，再通过对应客户端使用。</p></details>
+        <details><summary>需要什么环境和模型？<span aria-hidden="true">+</span></summary><p>QQ 终端向导面向支持的 Linux / WSL2 主机，需要模型 API 和 QQ 账号。Windows 原生 Live2D 客户端面向 Windows 11 x64，运行时不要求 WSL，但目前需要开发者自行构建安装包。具体条件见各自指南。</p></details>
+        <details><summary>开源意味着所有使用都免费吗？<span aria-hidden="true">+</span></summary><p>AgentStrata 自有代码与文档采用 AGPL-3.0-only。模型 API、算力及其他外部服务可能产生费用。第三方 SDK、模型和客户端资产保留各自许可，使用和再分发前请查看<a href="https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md">第三方声明</a>。</p></details>
+        <details><summary>演示中的能力都经过实时验证了吗？<span aria-hidden="true">+</span></summary><p>视频包含本次原生 OpenAI API 对话、客户端原声与口型，以及标明来源的历史 Console、Harness、Eval 回放。角色动作片段为直接 SDK 操作；QQ 片段为隔离 OneBot 评测，不代表真实 QQ 往返已通过。详见<a href="demo.html">演示文字说明</a>。</p></details>
+      </div>
+    </section>
+
+    <section class="closing container"><svg class="brand-mark" viewBox="0 0 36 36" aria-hidden="true"><path d="m18 3 15 8-15 8L3 11Z"/><path d="m3 18 15 8 15-8M3 25l15 8 15-8" fill="none" stroke="currentColor" stroke-width="2.5"/></svg><h2>为你的应用，<br>构建下一种可能。</h2><a class="button" href="https://github.com/Ling-ye/AgentStrata">在 GitHub 探索 AgentStrata <span aria-hidden="true">↗</span></a></section>
+  </main>
+
+  <footer class="site-footer container"><a class="brand" href="#">AgentStrata</a><p>© 2026 Lingye · Open source, thoughtfully built.</p><nav aria-label="页脚导航"><a href="https://github.com/Ling-ye/AgentStrata">GitHub</a><a href="https://github.com/Ling-ye/AgentStrata/issues">反馈</a><a href="https://github.com/Ling-ye/AgentStrata/blob/main/LICENSE">许可</a><a href="https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md">第三方声明</a></nav></footer>
+</body>
+</html>

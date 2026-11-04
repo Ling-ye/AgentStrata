@@ -107,6 +107,12 @@ PUBLIC_URL_HOSTS = frozenset(
         "xxx.feishu.cn",
     }
 )
+# Exact, user-selected product footage. Other bytes and locations remain scanned.
+REVIEWED_PRODUCT_MEDIA = {
+    "website/assets/agentstrata-v4.mp4":
+        "38be8ff015dfc0043307ac9d9b9a90475cb233293c68105bf11a1b5b30bf212b",
+}
+
 SAFE_LOCAL_URL_HOSTS = frozenset(
     {
         "0.0.0.0",
@@ -546,8 +552,19 @@ def _scan_uri_candidate(candidate: str, *, path: str, line_number: int) -> set[F
     document_finding = _document_finding(candidate, path=path, line_number=line_number)
     if document_finding is not None:
         findings.add(document_finding)
+    # Only this project's requested HTTPS Pages site, not all owner Pages.
+    website_path = unquote(parsed.path)
+    is_product_website = (
+        parsed.scheme == "https"
+        and host == "ling-ye.github.io"
+        and parsed.netloc.casefold() in ("ling-ye.github.io", "ling-ye.github.io:443")
+        and website_path.startswith("/AgentStrata/")
+        and ".." not in website_path.split("/")
+        and "\\" not in website_path
+    )
     if (
         host not in PUBLIC_URL_HOSTS
+        and not is_product_website
         and host not in SAFE_LOCAL_URL_HOSTS
         and not _is_reserved_example_host(host)
         and not _is_documentation_address(host)
@@ -881,13 +898,25 @@ def _scan_bytes(
     path: str,
     private_literals: Sequence[str] = (),
 ) -> set[Finding]:
-    return set(
+    findings = set(
         scan_text(
             content.decode("utf-8", errors="replace"),
             path=path,
             private_literals=private_literals,
         )
     )
+
+    if (
+        REVIEWED_PRODUCT_MEDIA.get(_relative_scan_path(path))
+        == hashlib.sha256(content).hexdigest()
+    ):
+        # These two classes are false positives in this exact compressed video.
+        # Credential, private literal, identity, and other findings stay active.
+        findings = {
+            item for item in findings
+            if item.rule not in {"bare-private-or-local-host", "url-host-not-allowlisted"}
+        }
+    return findings
 
 
 def _relax_git_identity_header_emails(text: str, *, object_type: str) -> str:
@@ -1266,11 +1295,10 @@ def scan_history(
                     )
                 )
                 continue
-            text = contents[oid].decode("utf-8", errors="replace")
             for relative_path in sorted(mapped_paths):
                 findings.update(
-                    scan_text(
-                        text,
+                    _scan_bytes(
+                        contents[oid],
                         path=f"history:{relative_path}@{oid[:12]}",
                         private_literals=private_literals,
                     )
