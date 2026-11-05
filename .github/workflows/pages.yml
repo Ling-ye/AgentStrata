@@ -36,8 +36,8 @@ jobs:
         run: |
           test -s website/index.html
           test -s website/demo.html
-          test -s website/assets/agentstrata-v4.mp4
-          test -s website/assets/demo-poster.webp
+          test -s website/assets/agentstrata-v5.mp4
+          test -s website/assets/demo-poster-v5.webp
           node --check website/main.js
       - name: Configure GitHub Pages
         uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
