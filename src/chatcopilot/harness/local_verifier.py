@@ -99,6 +99,15 @@ class LocalVerifier:
             if source.get("original_input") and source.get("kind") != "application":
                 case["input"] = source["original_input"]
             case["expected_behavior"] = requirements["original"]
+            if source.get("kind") == "application":
+                case["expected_behavior"] = (
+                    "本用例评估开发完成后的应用运行行为。input 是用户对该应用的实际输入；"
+                    "以下是应用的开发目标，请据此判断本次输入触发的工具操作、回执和回答是否符合目标。"
+                    "不要要求运行中的 Agent 再次开发软件、解释实现或提交源码证明。"
+                    "实现是否持久保存、目标覆盖与其他功能的回归由 Harness 的源码检查、测试和 Review 独立验收。"
+                    "本次运行仍须满足开发目标中适用于该输入的全部行为要求，不能因上述分工忽略缺失动作或错误回答。"
+                    "\n应用开发目标：\n" + requirements["original"]
+                )
             if requirements["requires_image"]:
                 if not source.get("image_resources"):
                     raise HarnessError("image_required", "需要原图才能执行视觉验收")

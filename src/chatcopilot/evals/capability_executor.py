@@ -1926,7 +1926,9 @@ class _DisposableServiceHarness:
             "    def log_message(self, *_args):\n"
             "        pass\n"
             "server = http.server.ThreadingHTTPServer(('127.0.0.1', 0), Handler)\n"
-            "port_path.write_text(str(server.server_port))\n"
+            "pending = port_path.with_suffix('.pending')\n"
+            "pending.write_text(str(server.server_port))\n"
+            "pending.replace(port_path)\n"
             "server.serve_forever()\n",
             encoding="utf-8",
         )

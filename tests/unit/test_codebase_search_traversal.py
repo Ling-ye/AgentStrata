@@ -30,11 +30,12 @@ def test_denied_subtrees_are_not_opened(tmp_path, monkeypatch):
         opened.append(directory)
         return original(path)
 
-    monkeypatch.setattr(os, "scandir", inspect_directory)
-    assert list_visible_files(repository) == ["README.md", "src/app.py"]
-    assert root / "src" in opened
-    assert search_visible_files(repository, query="needle", search_root=root,
-                                fixed_strings=True) == ["README.md:1:needle", "src/app.py:1:needle"]
+    with monkeypatch.context() as patch:
+        patch.setattr(os, "scandir", inspect_directory)
+        assert list_visible_files(repository) == ["README.md", "src/app.py"]
+        assert root / "src" in opened
+        assert search_visible_files(repository, query="needle", search_root=root,
+                                    fixed_strings=True) == ["README.md:1:needle", "src/app.py:1:needle"]
 
 
 def test_file_denials_do_not_prune_visible_descendants(tmp_path):

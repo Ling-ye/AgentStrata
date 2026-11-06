@@ -337,7 +337,12 @@ def test_agent_goal_keeps_business_input_and_the_complete_application_suite(tmp_
     assert prepared["original_input"] == source["original_input"]
     assert prepared["agent_source"]["agent_case"]["input"] == "work cue"
     assert prepared["agent_source"]["agent_case"]["context"] == ""
-    assert prepared["agent_source"]["agent_case"]["expected_behavior"] == source["original_input"]
+    expectation = prepared["agent_source"]["agent_case"]["expected_behavior"]
+    assert expectation.endswith(source["original_input"])
+    assert "运行行为" in expectation and "不要要求运行中的 Agent 再次开发软件" in expectation
+    # The development goal stays in the judge's expectation, never in the actual turn.
+    assert source["original_input"] not in prepared["agent_source"]["agent_case"]["input"]
+    assert task["acceptance"]["original"] == source["original_input"]
     assert plan.primary_checks == (prepared["agent_source"]["case_snapshot_id"],)
     assert set(plan.checks) == {"protected", *plan.primary_checks, *([earlier_id] if retained else [])}
     assert plan.protected_checks == ((earlier_id,) if retained else ())
