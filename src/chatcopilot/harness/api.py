@@ -45,10 +45,13 @@ class HarnessController:
         image_reader: Callable[[str, str], builtins.list[bytes]] | None = None,
         worker_control: WorkerControlPort | None = None,
         gateway_state_root: Path | None = None,
+        evaluation_socket: Path | None = None,
         activation_factory: Callable | None = None,
     ) -> None:
         self.repository = repository.resolve(strict=True)
         self.settings = configuration()
+        if evaluation_socket is not None:
+            self.settings["CHATCOPILOT_EVALUATION_SOCKET"] = str(evaluation_socket)
         from chatcopilot.harness.assembly import controller_dependencies
         self.store, self.evaluator, self.task_reader, self.lifecycle = controller_dependencies(
             self.repository, root or default_root(self.repository, self.settings), self.settings,
@@ -70,10 +73,17 @@ class HarnessController:
         return self.start_case_instance(request.case_instance_id, request.options,
             request_id=request.request_id, feedback=request.feedback, launch=launch)
 
-    def start_improvement(self, request, options: RepairOptions, *, request_id=None, launch=True):
-        from chatcopilot.harness.improvement_runtime import source
-        return self._start(lambda: source(self.repository, request, self.evaluator),
-            {"kind": "application", **asdict(request)}, options, request_id=request_id, launch=launch)
+    def start_improvement(self, request, options: RepairOptions, *, request_id=None, launch=True,
+                          predecessor_task_id=None):
+        from chatcopilot.harness.improvement_runtime import source, predecessor_tests
+        def load():
+            tests = predecessor_tests(self, request.bot_id, predecessor_task_id) if predecessor_task_id else []
+            return source(self.repository, request, self.evaluator, regression_tests=tests,
+                          predecessor_task_id=predecessor_task_id)
+        identity = {"kind": "application", **asdict(request)}
+        if predecessor_task_id:
+            identity["predecessor_task_id"] = predecessor_task_id
+        return self._start(load, identity, options, request_id=request_id, launch=launch)
 
     def applications(self):
         from chatcopilot.harness.workbench import applications
@@ -635,9 +645,9 @@ class HarnessController:
     def retry_cleanup(self, task_id: str) -> dict[str, Any]:
         return self._delivery_action(task_id, "cleanup")
 
-    def resume(self, task_id: str) -> dict[str, Any]:
+    def resume(self, task_id: str, *, max_attempts: int | None = None) -> dict[str, Any]:
         self._require_standalone(task_id)
-        return self._resume_task(task_id)
+        return self._resume_task(task_id, max_attempts=max_attempts)
 
     def reconcile_pytest_gap(self, task_id: str, gap_digest: str) -> dict[str, Any]:
         """Host selects a declaration about the pytest draft; never waive other material."""
@@ -661,9 +671,18 @@ class HarnessController:
         if task["source"].get("kind") == "code_health":
             raise HarnessError("source_archived", "旧代码熵回收任务只读保留，请重新发起批次")
 
-    def _resume_task(self, task_id: str) -> dict[str, Any]:
+    def _resume_task(self, task_id: str, *, max_attempts: int | None = None) -> dict[str, Any]:
         with self.lifecycle.operation(task_id):
-            task = self.lifecycle.prepare_resume_locked(task_id)
+            original = self.store.get(task_id)
+            if max_attempts is not None:
+                if type(max_attempts) is not int or max_attempts <= original["options"]["max_attempts"]:
+                    raise ValueError("重试轮次上限必须明确增加")
+                if original.get("error_code") != "attempts_exhausted":
+                    raise HarnessError("conflict", "只有已耗尽轮次的任务可以增加重试轮次")
+                limit = original["options"]["timeout_seconds"]
+                if limit is not None and original.get("elapsed_seconds", 0) >= limit:
+                    raise HarnessError("budget_exhausted", "累计执行时间预算已用完")
+            task = self.lifecycle.prepare_resume_locked(task_id, max_attempts=max_attempts)
             if task.get("archive") and task.get("worktree") and not Path(task["worktree"]).exists():
                 from chatcopilot.harness.delivery_archive import restore
                 restore(self.store, task_id)
@@ -675,6 +694,11 @@ class HarnessController:
             if task.get("error_code") in {"verification_environment", "budget_exhausted"}:
                 from chatcopilot.harness.verification_retry_runtime import prepare_acceptance_retry
                 prepare_acceptance_retry(self.store, task_id)
+            if max_attempts is not None:
+                self.store.update(task_id, options={**task["options"], "max_attempts": max_attempts},
+                    attempt_budget_changes=[*task.get("attempt_budget_changes", []), {
+                        "previous": original["options"]["max_attempts"], "current": max_attempts,
+                        "elapsed_seconds": task.get("elapsed_seconds", 0), "at": time.time()}])
             task, claimed = self.lifecycle.claim_resume_locked(task_id)
             if claimed:
                 self._launch(task)

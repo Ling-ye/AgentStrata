@@ -54,8 +54,10 @@ def worker_execution(store: HarnessStore, task_id: str, *, delivery: bool = Fals
 
 
 class SystemdWorkerControl:
-    def __init__(self, repository: Path, root: Path, settings: Mapping[str, str]) -> None:
+    def __init__(self, repository: Path, root: Path, settings: Mapping[str, str], *,
+                 runtime_repository: Path | None = None) -> None:
         self.repository, self.root = repository, root
+        self.runtime_repository = runtime_repository or repository
         environment = {name: os.environ[name] for name in ("PATH", "LANG", "HTTP_PROXY", "HTTPS_PROXY",
             "ALL_PROXY", "NO_PROXY", "CHATCOPILOT_CODEX_BIN", "CHATCOPILOT_CODEX_BOT_HOME",
             "CHATCOPILOT_EVALUATION_SOCKET") if os.environ.get(name)}
@@ -118,7 +120,7 @@ class SystemdWorkerControl:
             directory = private_directory(self._directory(task))
             runtime = directory / "runtime"
             if not runtime.exists():
-                copy_sources(self.repository, runtime, source_manifest(self.repository))
+                copy_sources(self.runtime_repository, runtime, source_manifest(self.runtime_repository))
             module = "worker"
             if runtime.resolve() != runtime or not (runtime / f"src/chatcopilot/harness/{module}.py").is_file():
                 return DispatchResult("failed", "worker_runtime_missing", "冻结的 Harness 宿主不可用")

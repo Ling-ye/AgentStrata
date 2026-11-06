@@ -347,8 +347,9 @@ class ObservationRecorder:
                                 "AND COALESCE(json_extract(metadata,'$.depth'),0)=0)", (data["model"], run_id, run_id))
             event["data"] = data
             self.store.append(run_id, event, body=body, context=context)
-        except Exception:
-            _LOG.warning("Observation event unavailable")
+        except Exception as error:
+            _LOG.warning("Observation event unavailable | kind=%s error=%s", event.get("kind"),
+                         getattr(error, "sqlite_errorname", None) or type(error).__name__)
             try:
                 with self.store.connection(write=True) as connection:
                     connection.execute("UPDATE runs SET capture_state='capture_failed' WHERE run_id=?", (run_id,))

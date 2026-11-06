@@ -24,7 +24,7 @@ _WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$", *(
     prefix + suffix for prefix in ("COM", "LPT") for suffix in "123456789¹²³")}
 
 
-def read_bundle(root: Path) -> dict:
+def read_bundle(root: Path, *, native_volume: bool = False) -> dict:
     root = root.expanduser().absolute()
     if root.resolve() != root or (root / MANIFEST).is_symlink():
         raise ValueError("Application bundle must contain ordinary files at a canonical path")
@@ -103,7 +103,7 @@ def read_bundle(root: Path) -> dict:
             members.add(path.relative_to(source).as_posix())
     if members != set(manifest):
         raise ValueError("Application bundle contains missing or unrecorded files")
-    verify_copy(source, manifest)
+    verify_copy(source, manifest, native_volume=native_volume and value["schema"] == NATIVE_SCHEMA)
     relative = value.get("bot_relative")
     if not isinstance(relative, str) or relative not in manifest or not relative.startswith("bots/"):
         raise ValueError("Application bundle does not identify its application")
@@ -120,7 +120,6 @@ def read_bundle(root: Path) -> dict:
         "integrations/live2d_desktop/scripts/bootstrap-windows.ps1",
         "integrations/live2d_desktop/windows-runtime.lock.json",
         "integrations/live2d_desktop/windows-host-requirements.lock",
-        "integrations/open_llm_vtuber/agentstrata_vtuber/resources/requirements-windows.lock",
         "src/chatcopilot/deployment/windows_runtime.py",
     }.issubset(manifest):
         raise ValueError("Windows runtime source is missing its native installation inputs")

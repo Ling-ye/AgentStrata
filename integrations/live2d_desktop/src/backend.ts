@@ -28,7 +28,8 @@ export class NativeBackend implements Backend {
   private child?: ChildProcessWithoutNullStreams;
   constructor(private readonly config: Connection, private readonly payload: string,
     private readonly run: Run = runNative,
-    private readonly spawnProcess: typeof spawn = spawn) {}
+    private readonly spawnProcess: typeof spawn = spawn,
+    private readonly trialHost?: string) {}
   private get python() {return win32.join(this.config.root, '.venv', 'Scripts', 'python.exe');}
   private async application(operation: string, input?: unknown): Promise<any> {
     const raw = await this.run(this.python, ['-m', 'chatcopilot', 'app', operation, '--root', this.config.root,
@@ -38,8 +39,10 @@ export class NativeBackend implements Backend {
   async prepare(): Promise<void> {
     const powershell = win32.join(process.env.SystemRoot ?? 'C:\\Windows', 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe');
     await this.run(powershell, ['-NoProfile', '-NonInteractive', '-ExecutionPolicy', 'Bypass', '-File',
-      join(this.payload, 'source', 'integrations', 'live2d_desktop', 'scripts', 'bootstrap-windows.ps1'),
-      '-BundleRoot', this.payload, '-InstallRoot', this.config.root]);
+      this.trialHost ? join(this.trialHost, 'bootstrap-windows.ps1') :
+        join(this.payload, 'source', 'integrations', 'live2d_desktop', 'scripts', 'bootstrap-windows.ps1'),
+      '-BundleRoot', this.payload, '-InstallRoot', this.config.root,
+      ...(this.trialHost ? ['-TrialProvisioner', join(this.trialHost, 'windows_setup.py')] : [])]);
   }
   async list(): Promise<Plugin[]> {
     const application = await this.application('status');
@@ -52,6 +55,9 @@ export class NativeBackend implements Backend {
   }
   async start(id: PluginId): Promise<void> {
     if (id !== 'open-llm-vtuber') throw new Error('角色生成器尚未包含在原生运行端。');
+    return this.startApplication();
+  }
+  async startApplication(): Promise<void> {
     if (this.child && this.child.exitCode === null) {
       if ((await this.application('status')).ok === true) return;
       throw new Error('本机应用仍在启动或停止，请稍候。');

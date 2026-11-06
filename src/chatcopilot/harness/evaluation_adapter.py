@@ -20,13 +20,17 @@ from chatcopilot.harness.control_types import EVALUATION_TERMINAL_STATES
 
 class ServiceEvaluator:
     def __init__(
-        self, client: EvaluationServiceClient | None = None, *, socket_path: Path | None = None
+        self, client: EvaluationServiceClient | None = None, *, socket_path: Path | None = None,
+        application_checks: tuple[str, ...] = (),
     ) -> None:
         self.client = client or EvaluationServiceClient(socket_path)
+        self.application_checks = application_checks
 
     def application_source(self, bot_id: str, suite_id: str) -> dict[str, Any]:
         request = {"kind": "suite", "suite_id": suite_id, "preset": "full", "repetitions": 3,
                    "seed": 0, "max_wall_seconds": 0}
+        if self.application_checks:
+            request.update(preset="custom", case_ids=list(self.application_checks))
         preview = self.client.preview(bot_id=bot_id, request=request)
         targets = preview.get("targets", [])
         if not preview.get("ready") or len(targets) != 1 or targets[0].get("executor") != "agent_configured":

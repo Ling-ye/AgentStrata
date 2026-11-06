@@ -29,6 +29,71 @@ def application_source(**updates):
         **updates}
 
 
+def test_predecessor_tests_require_the_accepted_application_and_unchanged_test(repair, tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    import hashlib
+    from types import SimpleNamespace
+    from chatcopilot.harness import activation_runtime
+    from chatcopilot.harness.improvement_runtime import predecessor_tests
+
+    _store, _ident, repo = repair
+    content = b"def test_previous_feature():\n    assert True\n"
+    file = tmp_path / "accepted-test.py"
+    file.write_bytes(content)
+    file.chmod(0o600)
+    digest = hashlib.sha256(content).hexdigest()
+    previous = {"source": {"test_path": str(file), "test_sha256": digest}}
+    release = SimpleNamespace(bot_id="fixture", receipt={"candidate_digest": baseline(repo)["source_digest"]})
+    host = SimpleNamespace(repository=repo, store=SimpleNamespace(get=lambda _: previous),
+                           lifecycle=SimpleNamespace(operation=lambda _: nullcontext()))
+    monkeypatch.setattr(activation_runtime, "release_source", lambda *_: release)
+    assert predecessor_tests(host, "fixture", "first") == [
+        {"sha256": digest, "content": content.decode(), "source_task": "first"}]
+    with pytest.raises(HarnessError, match="基线不一致"):
+        predecessor_tests(host, "another", "first")
+    (repo / "src/chatcopilot/core/probe.py").write_text("VALUE = 42\n")
+    with pytest.raises(HarnessError, match="基线不一致"):
+        predecessor_tests(host, "fixture", "first")
+    release.receipt["candidate_digest"] = baseline(repo)["source_digest"]
+    file.write_bytes(content + b"# changed\n")
+    with pytest.raises(HarnessError, match="测试已变化"):
+        predecessor_tests(host, "fixture", "first")
+
+
+def test_inherited_checks_run_against_both_versions_without_changing_the_baseline(tmp_path):
+    import hashlib
+    from chatcopilot.core.source_snapshot import source_manifest
+    from chatcopilot.harness.local_verifier import LocalVerifier
+    from chatcopilot.harness.models import CandidateRef
+    from chatcopilot.harness.verification import CaseVerification
+
+    repo = tmp_path / "application"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    code = repo / "feature.py"
+    code.write_text("VALUE = 1\n")
+    content = "from feature import VALUE\ndef test_existing_feature():\n    assert VALUE == 1\n"
+    digest = hashlib.sha256(content.encode()).hexdigest()
+    task = {"task_id": "inherited", "source": {"kind": "application", "regression_tests": [
+        {"sha256": digest, "content": content, "source_task": "first"}]}}
+    local = LocalVerifier(tmp_path / "verification")
+    verifier = CaseVerification(None, local, None)
+    before = source_manifest(repo)
+    reference = CandidateRef(repo, "controlled", "controlled")
+    baseline_result = verifier.regressions(task, reference, lambda: None)
+    assert len(baseline_result["passed_cases"]) == 1 and baseline_result["failed_cases"] == []
+    assert source_manifest(repo) == before
+    assert not (repo / "tests").exists()
+    code.write_text("VALUE = 2\n")
+    candidate = verifier.regressions(task, reference, lambda: None, baseline_result["case_ids"])
+    assert candidate["failed_cases"] == baseline_result["passed_cases"]
+    with pytest.raises(HarnessError, match="未通过当前基线"):
+        verifier.regressions(task, reference, lambda: None)
+    task["source"]["regression_tests"][0]["content"] += "# changed"
+    with pytest.raises(HarnessError, match="继承的已验收测试内容已变化"):
+        local.regressions(task, repo, lambda: None)
+
+
 class GoalVerifier(Verifier):
     def prepare(self, *args):
         source, plan = super().prepare(*args)

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -43,6 +44,12 @@ def main() -> int:
                 call.excinfo and call.excinfo.errisinstance((AssertionError, pytest.fail.Exception))
             )
 
+        @pytest.hookimpl(optionalhook=True)
+        def pytest_xdist_node_collection_finished(self, node, ids):
+            # xdist verifies that every worker collected the same ordered IDs.
+            if not collected:
+                collected.extend(ids)
+
         def pytest_collection_modifyitems(self, items):
             collected.extend(item.nodeid for item in items)
             if request.get("selected") is not None:
@@ -82,6 +89,12 @@ def main() -> int:
         "-p",
         "no:cacheprovider",
     ]
+    if request.get("application_regressions") and importlib.util.find_spec("xdist"):
+        # Keep both isolated workers within the existing Harness service memory limit.
+        # The comparison still requires every selected node and its real outcome.
+        if request.get("selected") is not None:
+            args = [*request["selected"], *args[len(request["paths"]):]]
+        args.extend(["-n", "2", "--dist=loadfile", "-o", "tmp_path_retention_policy=failed"])
     if request.get("collect"):
         args.append("--collect-only")
     lint = None

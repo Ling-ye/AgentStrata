@@ -166,11 +166,31 @@ def test_exhausted_task_requires_an_explicit_budget_increase_before_resume(repai
         controller.resume(ident)
     assert store.claim_resume(ident)[1] is False
     before = store.get(ident)["elapsed_seconds"]
-    store.update(ident, options={**store.get(ident)["options"], "max_attempts": 2})
-    assert controller.resume(ident)["status"] == "queued"
+    timeout = store.get(ident)["options"]["timeout_seconds"]
+    assert controller.resume(ident, max_attempts=2)["status"] == "queued"
+    continued = store.get(ident)
+    assert continued["options"]["timeout_seconds"] == timeout
+    assert continued["elapsed_seconds"] == before
+    assert continued["attempt_budget_changes"][-1]["current"] == 2
     result = run_task(store, ident, Verifier(), Coder())
     assert result["status"] == "fixed", result.get("message")
     assert result["elapsed_seconds"] >= before and len(store.attempts(ident)) == 2
+
+
+def test_extra_round_cannot_extend_an_exhausted_time_budget(repair):
+    store, ident, repo = repair
+    store.update(ident, options={**store.get(ident)["options"], "max_attempts": 1})
+    result = run_task(store, ident, Verifier(), Coder(values=(0,)))
+    assert result["error_code"] == "attempts_exhausted"
+    limit = result["options"]["timeout_seconds"]
+    store.update(ident, elapsed_seconds=limit)
+    with pytest.raises(HarnessError) as failure:
+        controller_for(store, repo).resume(ident, max_attempts=2)
+    assert failure.value.code == "budget_exhausted"
+    current = store.get(ident)
+    assert current["options"]["max_attempts"] == 1
+    assert current["elapsed_seconds"] == limit
+    assert not current.get("attempt_budget_changes")
 
 
 def test_regression_budget_stop_resumes_verified_candidate_without_another_code_round(repair):

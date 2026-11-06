@@ -2239,16 +2239,12 @@ def _ensure_private_database_file(path: Path) -> None:
 
 
 def _validate_private_database_file(path: Path) -> None:
-    flags = os.O_RDONLY
-    flags |= getattr(os, "O_CLOEXEC", 0) | fs.O_NOFOLLOW
+    # Closing another descriptor for this inode releases SQLite's POSIX locks.
     try:
-        descriptor = fs.open(path, flags)
+        metadata = fs.lstat(path)
     except OSError as exc:
-        raise GatewayStateError("Gateway database cannot be opened safely") from exc
-    try:
-        _validate_private_file_metadata(fs.fstat(descriptor), path)
-    finally:
-        os.close(descriptor)
+        raise GatewayStateError("Gateway database cannot be inspected safely") from exc
+    _validate_private_file_metadata(metadata, path)
 
 
 def _acquire_instance_lease(path: Path) -> GatewayInstanceLease:

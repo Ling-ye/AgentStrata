@@ -22,7 +22,7 @@ def setup(root: Path, *, artifacts: Path | None, requirements=(), dry_run=False)
     if dry_run:
         return {"state": "planned", "root": str(root), "platform": "windows-x86_64"}
     native_python = root / "windows-mcp/venv/Scripts/python.exe"
-    if not native_python.is_file():
+    if requirements and not native_python.is_file():
         raise ValueError("Prepare the pinned Windows-MCP environment through the native bootstrap first")
     environment = load_local_env_values(installed.control / "runtime.env", expand_home=True)
     services, units, plugins = [], {}, []
@@ -57,5 +57,5 @@ def setup(root: Path, *, artifacts: Path | None, requirements=(), dry_run=False)
         write_private(plugin / "installation.json", json.dumps({"plugin_id": plugin_id, "root": str(plugin),
             "version": entry.version, "status": "ready", "url": url, "services": [asdict(service)]}))
     save_components(root, services=tuple(services), units=units,
-                    component_paths={"agentstrata_vtuber": "integrations/open_llm_vtuber/agentstrata_vtuber"}, plugins=plugins)
+                    component_paths={"agentstrata_vtuber": "integrations/open_llm_vtuber/agentstrata_vtuber"} if requirements else {}, plugins=plugins)
     return {"ok": True, "state": "needs_model_configuration", "root": str(root)}

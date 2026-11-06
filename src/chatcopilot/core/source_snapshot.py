@@ -66,13 +66,13 @@ def copy_sources(source: Path, destination: Path, manifest: dict[str, dict[str, 
         target.chmod(0o700 if expected["executable"] else 0o600)
 
 
-def verify_copy(root: Path, manifest: dict[str, dict[str, Any]]) -> None:
+def verify_copy(root: Path, manifest: dict[str, dict[str, Any]], *, native_volume: bool = False) -> None:
     for name, expected in manifest.items():
         path = root / name
         actual = trusted_source_sha256(path, root=root, max_bytes=max(1, path.lstat().st_size))
         if (
             actual != expected["sha256"]
-            or (os.name != "nt" and bool(path.stat().st_mode & stat.S_IXUSR) != expected["executable"])
+            or (os.name != "nt" and not native_volume and bool(path.stat().st_mode & stat.S_IXUSR) != expected["executable"])
         ):
             raise ValueError("frozen source identity changed")
 

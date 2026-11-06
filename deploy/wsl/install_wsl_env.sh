@@ -21,6 +21,7 @@ ARTIFACT_CACHE="$RUNTIME_ROOT/cache/artifacts"
 
 INSTALL_SYSTEM_PACKAGES=1
 INSTALL_CONSOLE=0
+INSTALL_NODE=0
 INSTALL_CONSOLE_DEPS=0
 INSTALL_WEIXIN_DEPS=0
 SKIP_WEB=0
@@ -37,6 +38,7 @@ Options:
   --with-console          Also install/repair the optional Console service.
   --with-weixin           Include the locked Weixin channel dependencies.
   --with-console-deps     Include the locked Console Python dependencies only.
+  --with-node             Prepare the pinned Node toolchain for local development.
   --skip-web              Pass --skip-web when --with-console is used.
   --no-system-packages    Do not install apt packages; isolated runtimes are still installed.
   --venv DIR              Python environment path (default: .venv).
@@ -51,6 +53,7 @@ while [ "$#" -gt 0 ]; do
     case "$1" in
         --with-console) INSTALL_CONSOLE=1; INSTALL_CONSOLE_DEPS=1 ;;
         --with-console-deps) INSTALL_CONSOLE_DEPS=1 ;;
+        --with-node) INSTALL_NODE=1 ;;
         --with-weixin) INSTALL_WEIXIN_DEPS=1 ;;
         --skip-web) SKIP_WEB=1 ;;
         --no-system-packages) INSTALL_SYSTEM_PACKAGES=0 ;;
@@ -342,7 +345,7 @@ print_runtime_plan() {
     info "uv sha256: $UV_SHA256"
     info "uv target: $UV_INSTALL_DIR"
     info "managed Python: $PYTHON_VERSION -> $PYTHON_INSTALL_DIR"
-    if [ "$INSTALL_CONSOLE" -eq 1 ]; then
+    if [ "$INSTALL_CONSOLE" -eq 1 ] || [ "$INSTALL_NODE" -eq 1 ]; then
         info "Node.js $NODE_VERSION: $NODE_URL"
         info "Node.js sha256: $NODE_SHA256"
         info "Node.js target: $NODE_INSTALL_DIR"
@@ -456,7 +459,7 @@ install_node() {
 }
 
 install_console_node() {
-    if [ "$INSTALL_CONSOLE" -eq 1 ]; then
+    if [ "$INSTALL_CONSOLE" -eq 1 ] || [ "$INSTALL_NODE" -eq 1 ]; then
         install_node
     else
         warn "private Node.js installation skipped; Python Gateway needs no Node toolchain"

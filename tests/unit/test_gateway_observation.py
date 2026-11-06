@@ -41,6 +41,38 @@ def state(tmp_path):
     return store, generation, run
 
 
+def test_recorder_retains_tool_pair_while_another_transaction_is_writing(state):
+    from concurrent.futures import ThreadPoolExecutor
+    import threading
+
+    store, generation, run = state
+    recorder = ObservationRecorder(store, generation)
+    events = recorder.store
+    span = {"name": "avatarapply_pose", "span_id": "pose-span", "tool_call_id": "pose-id"}
+    started = threading.Event()
+
+    def record_start():
+        started.set()
+        recorder.record(run, {"kind": "ToolStarted", "layer": "capability", "phase": "start",
+                              "data": {**span, "arguments": {"expression": "happy"}}})
+
+    with ThreadPoolExecutor(max_workers=1) as pool:
+        with events.connection(write=True) as transaction:
+            transaction.execute("UPDATE meta SET value=value WHERE key='schema_version'")
+            future = pool.submit(record_start)
+            assert started.wait(5)
+            # Overlap a real SQLite writer for longer than the reader busy timeout.
+            with pytest.raises(TimeoutError):
+                future.result(timeout=0.8)
+        future.result(timeout=10)
+    recorder.record(run, {"kind": "ToolFinished", "layer": "capability", "phase": "finish",
+                          "data": {**span, "ok": True}})
+    with events.connection() as connection:
+        rows = connection.execute("SELECT kind FROM events WHERE run_id=? AND span_id=? ORDER BY seq",
+                                  (run, span["span_id"])).fetchall()
+    assert [row[0] for row in rows] == ["ToolStarted", "ToolFinished"]
+
+
 def test_reader_is_read_only_and_does_not_advance_generation(state):
     store, generation, run = state
     before = store.database_path.read_bytes()

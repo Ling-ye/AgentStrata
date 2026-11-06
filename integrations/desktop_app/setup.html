@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'">
+<title>连接你的模型</title><link rel="stylesheet" href="desktop.css">
+<main><h1>连接你的模型</h1><p>首次打开需要联网准备本机运行环境。模型和凭据只保存在这个应用中。</p>
+<button id="prepare">准备运行环境</button>
+<form id="modelForm"><label>连接方式<select id="kind"><option value="openai_compatible">兼容 API</option><option value="chatgpt">ChatGPT 授权</option></select></label>
+<label>模型名称<input id="model" required></label><label>API 地址<input id="endpoint" placeholder="https://api.example.com/v1"></label>
+<label>API Key<input id="key" type="password" autocomplete="off"></label><button>保存连接</button></form>
+<button id="login">登录 ChatGPT</button> <button id="start">打开应用</button><p id="status" role="status"></p></main><script src="setup.js"></script></html>

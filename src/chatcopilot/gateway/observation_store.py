@@ -1,7 +1,7 @@
 """Private observation index and expiring bodies, separate from Gateway authority."""
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 import hashlib
 import json
 import os
@@ -102,36 +102,38 @@ class ObservationStore:
     def connection(self, *, write: bool = False) -> Iterator[sqlite3.Connection]:
         if write and not self.writable:
             raise GatewayStateError("Observation reader cannot write")
-        _validate_private_root(self.root, trusted_anchor=self.anchor)
-        _validate_sqlite_files(self.database)
-        connection = sqlite3.connect(self.database.as_uri() + ("?mode=rw" if write else "?mode=ro"),
-                                     uri=True, timeout=0.25)
-        try:
-            connection.row_factory = sqlite3.Row
-            connection.execute("PRAGMA trusted_schema=OFF")
-            if write:
-                connection.execute("PRAGMA journal_mode=DELETE")
-                connection.execute("PRAGMA synchronous=FULL")
-                connection.execute("BEGIN IMMEDIATE")
-            else:
-                connection.execute("PRAGMA query_only=ON")
-                deadline = time.monotonic() + 2
-                connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
-                connection.execute("BEGIN")
-                row = connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
-                if not row or row[0] != "3":
-                    raise GatewayStateError("Unsupported observation schema")
-            yield connection
-            if write:
-                connection.commit()
-        except BaseException:
-            if write:
-                connection.rollback()
-            raise
-        finally:
-            connection.close()
+        # Recorder callbacks and maintenance share this writer; standalone readers remain independent.
+        with self.lock if self.writable else nullcontext():
             _validate_private_root(self.root, trusted_anchor=self.anchor)
             _validate_sqlite_files(self.database)
+            connection = sqlite3.connect(self.database.as_uri() + ("?mode=rw" if write else "?mode=ro"),
+                                         uri=True, timeout=0.25)
+            try:
+                connection.row_factory = sqlite3.Row
+                connection.execute("PRAGMA trusted_schema=OFF")
+                if write:
+                    connection.execute("PRAGMA journal_mode=DELETE")
+                    connection.execute("PRAGMA synchronous=FULL")
+                    connection.execute("BEGIN IMMEDIATE")
+                else:
+                    connection.execute("PRAGMA query_only=ON")
+                    deadline = time.monotonic() + 2
+                    connection.set_progress_handler(lambda: int(time.monotonic() > deadline), 1000)
+                    connection.execute("BEGIN")
+                    row = connection.execute("SELECT value FROM meta WHERE key='schema_version'").fetchone()
+                    if not row or row[0] != "3":
+                        raise GatewayStateError("Unsupported observation schema")
+                yield connection
+                if write:
+                    connection.commit()
+            except BaseException:
+                if write:
+                    connection.rollback()
+                raise
+            finally:
+                connection.close()
+                _validate_private_root(self.root, trusted_anchor=self.anchor)
+                _validate_sqlite_files(self.database)
 
     def safe(self, payload: Any) -> Any:
         return bound_observability_payload(payload).value
@@ -145,7 +147,7 @@ class ObservationStore:
         raw = encoded(safe)
         if len(raw.encode()) > CONTEXT_LIMIT:
             raise ValueError("Configuration snapshot exceeds limits")
-        with self.lock, self.connection(write=True) as connection:
+        with self.connection(write=True) as connection:
             connection.execute("INSERT OR IGNORE INTO configurations VALUES(?,?,?)", (key, raw, time.time()))
         return key
 
@@ -155,7 +157,7 @@ class ObservationStore:
         return decoded(row[0]) if row else None
 
     def set_meta(self, key: str, value: Any) -> None:
-        with self.lock, self.connection(write=True) as connection:
+        with self.connection(write=True) as connection:
             connection.execute("INSERT INTO meta VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
                                (key, encoded(self.safe(value))))
 
@@ -171,7 +173,7 @@ class ObservationStore:
         safe = self.safe({key: run.get(key) for key in allowed})
         for key in ("receipts", "outbox"):
             safe[key] = encoded(safe[key] or [])
-        with self.lock, self.connection(write=True) as connection:
+        with self.connection(write=True) as connection:
             previous = connection.execute("SELECT state FROM runs WHERE run_id=?", (run["run_id"],)).fetchone()
             connection.execute(
                 f"INSERT INTO runs({','.join(allowed)}) VALUES({','.join('?' for _ in allowed)}) "
@@ -179,14 +181,14 @@ class ObservationStore:
                 tuple(safe[key] for key in allowed),
             )
         if run["state"] in TERMINAL:
-            with self.lock, self.connection(write=True) as connection:
+            with self.connection(write=True) as connection:
                 connection.execute("UPDATE runs SET capture_state='recorded' WHERE run_id=? AND capture_state='recording'", (run["run_id"],))
         if previous is None or previous[0] != run["state"]:
             self.append(run["run_id"], {"kind": "run_state", "layer": "gateway", "entity_id": "gateway:instance",
                         "status": run["state"], "created_at": run["updated_at"], "data": {"code": run.get("error_code")}})
 
     def bind_run(self, run_id: str, *, config_id: str, runtime_id: str = "", model: str = "", role: str = "") -> None:
-        with self.lock, self.connection(write=True) as connection:
+        with self.connection(write=True) as connection:
             snapshot = connection.execute("SELECT payload FROM configurations WHERE config_id=?", (config_id,)).fetchone()
             revision = decoded(snapshot[0]).get("configuration_revision", config_id) if snapshot else config_id
             connection.execute("UPDATE runs SET config_id=COALESCE(config_id,?),config_revision=COALESCE(config_revision,?),"
@@ -241,7 +243,7 @@ class ObservationStore:
         body_id = None
         created = False
         try:
-            with self.lock, self.connection(write=True) as connection:
+            with self.connection(write=True) as connection:
                 run = connection.execute("SELECT body_bytes,details_expired FROM runs WHERE run_id=?", (run_id,)).fetchone()
                 if run is None:
                     raise ValueError("Observation run is missing")
@@ -339,7 +341,7 @@ class ObservationStore:
     def expire(self, *, now: float | None = None) -> int:
         current = time.time() if now is None else now
         cleaned = 0
-        with self.lock, self.connection(write=True) as connection:
+        with self.connection(write=True) as connection:
             runs = connection.execute("SELECT run_id FROM runs WHERE state IN ('completed','failed','aborted') "
                                       "AND finished_at<=? AND details_expired=0 LIMIT 100", (current - RETENTION_SECONDS,)).fetchall()
             for run in runs:

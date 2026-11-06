@@ -1,6 +1,7 @@
 param(
   [Parameter(Mandatory=$true)][string]$BundleRoot,
   [string]$InstallRoot = (Join-Path $env:USERPROFILE '.agentstrata\applications\live2d-desktop-native'),
+  [string]$TrialProvisioner,
   [switch]$AuthOnly
 )
 $ErrorActionPreference = 'Stop'
@@ -55,8 +56,10 @@ function Prepare-Environment([string]$PythonVersion, [string]$Environment, [stri
   if (!(Test-Path -LiteralPath $Python)) {
     Run-Native $Uv @('venv','--clear','--no-config','--python',$PythonVersion,'--managed-python',$Environment) ($Name + '-venv')
   }
-  Run-Native $Uv @('pip','sync','--no-config','--python',$Python,'--require-hashes','--only-binary',':all:',
-    '--find-links',(Join-Path $BundleRoot 'wheels'),$Requirements) ($Name + '-dependencies')
+  $ArgsList = @('pip','sync','--no-config','--python',$Python,'--require-hashes','--only-binary',':all:')
+  $Wheels = Join-Path $BundleRoot 'wheels'
+  if (Test-Path -LiteralPath $Wheels -PathType Container) { $ArgsList += @('--find-links',$Wheels) }
+  Run-Native $Uv ($ArgsList + $Requirements) ($Name + '-dependencies')
   return $Python
 }
 function Install-AuthHelper {
@@ -96,6 +99,8 @@ $Python = Prepare-Environment $Lock.host_python (Join-Path $InstallRoot '.venv')
 # The public module entry always imports the installed source copy, without Git or an editable checkout.
 $Pth = Join-Path $InstallRoot '.venv\Lib\site-packages\agentstrata-source.pth'
 [IO.File]::WriteAllText($Pth, (Join-Path $InstallRoot 'src') + "`n", [Text.UTF8Encoding]::new($false))
+$Components = Join-Path (Split-Path (Join-Path $Source $Bundle.bot_relative)) 'components.yaml'
+if (Test-Path -LiteralPath $Components) {
 $Plugin = Join-Path $InstallRoot '.agentstrata-data\plugins\open-llm-vtuber'
 $PluginRequirements = Join-Path $BundleRoot 'vtuber-requirements.lock'
 $PluginPython = Prepare-Environment $Lock.vtuber_python (Join-Path $Plugin 'runtime\venv') $PluginRequirements 'vtuber'
@@ -109,8 +114,13 @@ $Ffmpeg = Join-Path $Extracted $Lock.ffmpeg.directory
 $FfmpegDestination = Join-Path $Plugin 'runtime\tools\ffmpeg'
 New-Item -ItemType Directory -Path $FfmpegDestination -Force | Out-Null
 Copy-Item (Join-Path $Ffmpeg '*') $FfmpegDestination -Recurse -Force
+}
 $env:PYTHONPATH = Join-Path $InstallRoot 'src'
-Run-Native $Python @('-m','chatcopilot','app','setup','--root',$InstallRoot,'--artifacts',$BundleRoot) 'setup-application'
+if ($TrialProvisioner) {
+  Run-Native $Python @($TrialProvisioner,$InstallRoot,$BundleRoot) 'setup-trial'
+} else {
+  Run-Native $Python @('-m','chatcopilot','app','setup','--root',$InstallRoot,'--artifacts',$BundleRoot) 'setup-application'
+}
 $Launcher = Join-Path $InstallRoot '.venv\Scripts\agentstrata.cmd'
 [IO.File]::WriteAllText($Launcher, '@"%~dp0python.exe" -m chatcopilot %*' + "`r`n", [Text.UTF8Encoding]::new($false))
-Write-Output 'Native runtime is prepared. Configure this application model connection, then start the pet.'
+Write-Output 'Native runtime is prepared. Configure the model connection, then open the application.'

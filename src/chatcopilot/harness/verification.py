@@ -213,4 +213,10 @@ class CaseVerification:
                 error.evidence = {"checks": [{"name": name, "exit_code": row.get("exit_code", 1),
                     "failed_ids": [name], "diagnostic": row.get("message", "")} ]}
                 raise error
+        if checks is None:
+            for inherited in task["source"].get("regression_tests", []):
+                prefix = f"tests/unit/harness_regressions/test_{inherited['sha256']}.py::"
+                rows = [row for name, row in value["rows"].items() if name.startswith(prefix)]
+                if not rows or any(row["outcome"] != "passed" for row in rows):
+                    raise HarnessError("verification_evidence", "前一版本的已验收测试未通过当前基线")
         return value

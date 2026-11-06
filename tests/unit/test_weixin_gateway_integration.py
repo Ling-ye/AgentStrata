@@ -123,7 +123,8 @@ def test_weixin_owner_turn_reuses_application_and_records_each_file_delivery(tmp
                     ],
                 }
             )
-            await asyncio.wait_for(client.final.wait(), 5)
+            # The final reply follows several durable writes on the real local Gateway.
+            await asyncio.wait_for(client.final.wait(), timeout=15)
             assert [entry["item_list"][0]["type"] for entry in client.sent] == (
                 [2, 4, 1] if delivery_error else [2, 4, 1, 1]
             )

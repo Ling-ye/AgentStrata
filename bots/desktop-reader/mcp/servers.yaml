@@ -1,0 +1,9 @@
+servers:
+  - id: application
+    transport: stdio
+    command: python
+    args: ["${CHATCOPILOT_SOURCE_ROOT}/integrations/desktop_app/bridge.py", "mcp", "${CHATCOPILOT_SOURCE_ROOT}", "desktop-reader", "${AGENTSTRATA_DESKTOP_DATA}"]
+    exposure: main
+    risk: interactive
+    tool_prefix: app_
+    retry_on_timeout: false

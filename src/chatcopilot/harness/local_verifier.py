@@ -19,7 +19,7 @@ from chatcopilot.contracts.execution_scope import ExecutionScope
 from chatcopilot.core.file_integrity import require_regular_file
 from chatcopilot.core.private_sqlite import json_text, private_directory, private_file
 from chatcopilot.core.scoped_process import sandbox_command
-from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest, source_manifest
+from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest, source_manifest, verify_copy
 from chatcopilot.harness.models import HarnessError
 from chatcopilot.harness.config import safe_error
 from chatcopilot.harness.preparation import classify, review_test
@@ -218,12 +218,13 @@ class LocalVerifier:
         cases: list[str] | None = None,
     ) -> dict[str, Any]:
         folder = worktree / "tests/unit"
-        if cases is None and not list(folder.rglob("test_*.py")):
+        if cases is None and not list(folder.rglob("test_*.py")) and not task.get("source", {}).get("regression_tests"):
             return {"case_ids": [], "passed_cases": [], "failed_cases": []}
         result = self._pytest(
             {**task, "source": {key: value for key, value in task.get("source", {}).items() if key != "test_relative_path" or task.get("delivery") or task.get("review_and_commit")}},
             worktree, ["tests/unit"], check_cancel,
-            selected=[name for name in cases if not name.startswith("repository:")] if cases is not None else None
+            selected=[name for name in cases if not name.startswith("repository:")] if cases is not None else None,
+            application_regressions=task.get("source", {}).get("kind") == "application",
         )
         static = self._static_checks(task, worktree, check_cancel,
                                      [name for name in cases if name.startswith("repository:")] if cases is not None else None)
@@ -294,6 +295,7 @@ class LocalVerifier:
         selected: list[str] | None = None,
         manifest: dict[str, Any] | None = None,
         lint_paths: list[str] | None = None,
+        application_regressions: bool = False,
     ) -> dict[str, Any]:
         output = private_directory(
             self.root / "jobs" / task["task_id"] / "checks" / uuid.uuid4().hex
@@ -305,7 +307,20 @@ class LocalVerifier:
             git_common = Path(git_output(worktree, "rev-parse", "--path-format=absolute", "--git-common-dir"))
             git_roots = tuple(dict.fromkeys((git_common, git_directory)))
         snapshot = output / "source"
-        copy_sources(worktree, snapshot, source_manifest(worktree) if manifest is None else manifest)
+        execution_manifest = dict(source_manifest(worktree) if manifest is None else manifest)
+        copy_sources(worktree, snapshot, execution_manifest)
+        for inherited in source.get("regression_tests", []):
+            content = inherited["content"].encode("utf-8")
+            digest = inherited["sha256"]
+            if hashlib.sha256(content).hexdigest() != digest:
+                raise HarnessError("reproducer_changed", "继承的已验收测试内容已变化")
+            target = snapshot / f"tests/unit/harness_regressions/test_{digest}.py"
+            if target.exists() and target.read_bytes() != content:
+                raise HarnessError("reproducer_changed", "继承的测试路径存在其他内容")
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes(content)
+            target.chmod(0o600)
+            execution_manifest[target.relative_to(snapshot).as_posix()] = {"sha256": digest, "executable": False}
         if source.get("test_relative_path"):
             content = _read(Path(source["test_path"]))
             if hashlib.sha256(content).hexdigest() != source["test_sha256"]:
@@ -319,6 +334,7 @@ class LocalVerifier:
             target.parent.mkdir(parents=True, exist_ok=True)
             target.write_bytes(content)
             target.chmod(0o600)
+            execution_manifest[relative] = {"sha256": source["test_sha256"], "executable": False}
         if git_roots:
             (snapshot / ".git").write_text("gitdir: " + str(git_directory) + "\n")
         worktree = snapshot
@@ -334,7 +350,7 @@ class LocalVerifier:
         request.write_text(
             json_text(
                 {"root": str(worktree), "paths": paths, "collect": collect, "selected": selected,
-                 "lint_paths": lint_paths}
+                 "lint_paths": lint_paths, "application_regressions": application_regressions}
             )
         )
         request.chmod(0o600)
@@ -383,6 +399,12 @@ class LocalVerifier:
             "1",
         ]
         log = output / "pytest.log"
+        def verify_execution_input():
+            try:
+                verify_copy(snapshot, execution_manifest)
+            except (OSError, ValueError) as exc:
+                raise HarnessError("verification_environment", "验证输入副本与冻结内容不一致，请检查验证存储") from exc
+        verify_execution_input()
         try:
             with log.open("xb") as stream:
                 process = subprocess.Popen(
@@ -403,6 +425,7 @@ class LocalVerifier:
                         process.wait()
         finally:
             shutil.rmtree(command_tmp, ignore_errors=True)
+        verify_execution_input()
         if not report.exists():
             raise HarnessError(
                 "test_runtime_unavailable",

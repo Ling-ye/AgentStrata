@@ -65,7 +65,8 @@ def main(argv=None) -> int:
         elif args.command == "setup":
             if os.name == "nt":
                 from chatcopilot.plugins.windows_application import setup
-                value = _setup_windows(args, setup)
+                from chatcopilot.windows_setup import setup as configure_windows
+                value = configure_windows(args.root, setup, artifacts=args.artifacts, dry_run=args.dry_run)
                 print(json.dumps(value, ensure_ascii=False))
                 return 0
             installed = installation(args.root)
@@ -129,42 +130,6 @@ def main(argv=None) -> int:
     except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as exc:
         print(f"Application operation failed: {exc}", file=sys.stderr)
         return 1
-
-
-def _setup_windows(args, prepare_plugins):
-    if args.dry_run:
-        return prepare_plugins(args.root, artifacts=args.artifacts, dry_run=True)
-    from chatcopilot.botspec import load_botspec
-    from chatcopilot.botspec.deployment_env import deployment_environment
-    from chatcopilot.core.install_artifacts import private_directory, write_private
-    from chatcopilot.core.settings import load_local_env_values
-    from chatcopilot.plugins.application_components import prepare_configuration
-    root = args.root
-    installed = installation(root)
-    if installed is None:
-        raise ValueError("An explicit application installation is required")
-    local = root / Path(installed.bot_relative).parent / "local.env"
-    if not local.exists() and not local.is_symlink():
-        write_private(local, "")
-    requirements = prepare_configuration(root)
-    spec = load_botspec(root / installed.bot_relative)
-    values = load_local_env_values(root / Path(installed.bot_relative).parent / "local.env", expand_home=True)
-    for requirement in requirements:
-        if requirement["id"] == "open-llm-vtuber":
-            values[spec.gateway.port_env] = str(requirement["options"]["gateway_port"])
-    control = private_directory(installed.control)
-    values.update(AGENTSTRATA_LLM_CONFIG=str(control / "llm.json"),
-        CHATCOPILOT_GATEWAY_STATE_ROOT=str(root / ".agentstrata-data/gateway"),
-        AGENTSTRATA_WINDOWS_MCP_PYTHON=str(root / "windows-mcp/venv/Scripts/python.exe"),
-        CHATCOPILOT_CODEX_BOT_HOME=str(control / "model-auth"),
-        CHATCOPILOT_CODEX_BIN=str(root / "runtime/tools/codex/codex.exe"),
-        PATH=str(root / ".venv/Scripts") + os.pathsep + os.environ.get("PATH", ""))
-    private_directory(root / ".agentstrata-data/workspace")
-    private_directory(root / ".agentstrata-data/gateway")
-    environment = deployment_environment(spec, values, source_root=root, home=Path.home())
-    write_private(control / "runtime.env", "\n".join(key + "=" + json.dumps(value, ensure_ascii=False)
-                                                   for key, value in environment.items()) + "\n")
-    return prepare_plugins(root, artifacts=args.artifacts, requirements=requirements)
 
 
 if __name__ == "__main__":

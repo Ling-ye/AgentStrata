@@ -40,12 +40,14 @@ class HarnessLifecycle:
         if ident and not self._evaluation_stopped(ident):
             raise HarnessError("conflict", "原验证尚未确认结束")
 
-    def prepare_resume_locked(self, task_id: str) -> dict[str, Any]:
+    def prepare_resume_locked(self, task_id: str, *, max_attempts: int | None = None) -> dict[str, Any]:
         task = self.store.get(task_id)
         self.require_current(task)
         self.require_stopped(task)
         task = self._reconcile_locked(task_id)
         self._require_evaluation_stopped(task)
+        if max_attempts is not None:
+            task = {**task, "options": {**task["options"], "max_attempts": max_attempts}}
         if any(row.get("kind") == "role" and row.get("state") in {"started", "unknown"}
                for row in task.get("operations", {}).values()):
             raise HarnessError("session_unconfirmed", "角色会话终态未确认；先核对原执行或创建保留证据的接续任务")

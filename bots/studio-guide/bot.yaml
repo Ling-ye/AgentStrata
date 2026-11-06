@@ -1,0 +1,15 @@
+id: studio-guide
+display_name: 应用开发助手
+agent_profile: agent.yaml
+gateway:
+  port_env: CHATCOPILOT_GATEWAY_PORT
+  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+  clients:
+    - id: studio-owner
+      token_env: AGENTSTRATA_STUDIO_GATEWAY_TOKEN
+      role: owner
+workspace:
+  root_env: CHATCOPILOT_WORKSPACE_ROOT
+deploy:
+  target: wsl
+  instance_id: studio-guide

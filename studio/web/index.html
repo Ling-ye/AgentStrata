@@ -1,0 +1,9 @@
+<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>AgentStrata · 应用工作台</title>
+<link rel="stylesheet" href="/style.css"><div class="layout"><aside><strong>AgentStrata</strong><button id="new">＋ 新聊天</button><button id="live">连接 Live2D 桌宠</button><h2>最近聊天</h2><nav id="history"></nav><button id="settings">模型与账号</button></aside>
+<main><header><b id="title">应用工作台</b></header><section id="messages" aria-live="polite"></section><section id="welcome"><span>本机开发</span><h1>你想做一个什么应用？</h1><p>从一个想法开始。做好以后，你会得到能发给朋友的 Windows 桌面软件。</p></section>
+<form id="compose"><textarea id="input" placeholder="例如，做一个能记书单的读书助手" aria-label="你的需求" required></textarea><button id="send">发送</button></form><p id="notice" role="status"></p></main></div>
+<dialog id="config"><form id="model-form"><h2>模型与账号</h2><label>日常聊天<select id="kind"><option value="api">兼容 API</option><option value="chatgpt">ChatGPT 授权</option></select></label>
+<label>聊天模型<input id="model" required></label><label>API 地址<input id="endpoint" placeholder="https://api.example.com/v1"></label><label>API Key<input id="key" type="password" autocomplete="off"></label><label>Codex 开发模型<input id="worker" required></label><button>保存连接</button></form>
+<p id="authStatus"></p><button id="workerLogin">登录开发账号</button> <button id="chatLogin">登录聊天账号</button> <button id="close">关闭</button><p id="settingsNotice" role="status"></p></dialog>
+<script src="/app.js"></script></html>

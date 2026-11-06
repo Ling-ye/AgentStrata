@@ -1,0 +1,14 @@
+prompts:
+  schema_version: 2
+  identity: prompts/identity.md
+  response_style: prompts/response-style.md
+agents:
+  runtime: langgraph
+llm:
+  chat:
+    binding: chat
+  research:
+    binding: chat
+tools:
+  mcp:
+    servers: mcp/servers.yaml

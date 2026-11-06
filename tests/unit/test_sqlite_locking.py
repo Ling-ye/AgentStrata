@@ -64,6 +64,25 @@ def test_other_process_stays_locked_during_same_process_store_operations(tmp_pat
         assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
 
 
+@pytest.mark.skipif(os.name != "posix", reason="POSIX record locks are process-owned")
+def test_gateway_observation_reads_preserve_the_active_writer_lock(tmp_path):
+    from chatcopilot.gateway.observation_store import ObservationStore
+
+    root = tmp_path / "gateway"
+    root.mkdir(mode=0o700)
+    store = ObservationStore(root, writable=True)
+    with store.connection(write=True) as connection:
+        connection.executescript(SCHEMA)
+    with store.connection(write=True) as writer:
+        writer.execute("UPDATE probe SET value=1")
+        with store.connection() as reader:
+            assert reader.execute("SELECT value FROM probe").fetchone()[0] == 0
+        assert competitor(store.database) == {"code": sqlite3.SQLITE_BUSY}
+    assert competitor(store.database) == {"committed": True}
+    with store.connection() as connection:
+        assert connection.execute("SELECT value FROM probe").fetchone()[0] == 11
+
+
 def _initialize(path, ready, results):
     try:
         assert ready.wait(10)
