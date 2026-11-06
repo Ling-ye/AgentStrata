@@ -694,6 +694,9 @@ class HarnessController:
             if task.get("error_code") in {"verification_environment", "budget_exhausted"}:
                 from chatcopilot.harness.verification_retry_runtime import prepare_acceptance_retry
                 prepare_acceptance_retry(self.store, task_id)
+            if task.get("error_code") == "fixture_missing":
+                from chatcopilot.harness.verification_retry_runtime import inspect_blocked_agent_draft
+                inspect_blocked_agent_draft(self.store, task_id, self.evaluator)
             if max_attempts is not None:
                 self.store.update(task_id, options={**task["options"], "max_attempts": max_attempts},
                     attempt_budget_changes=[*task.get("attempt_budget_changes", []), {

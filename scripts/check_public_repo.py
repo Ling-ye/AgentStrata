@@ -109,6 +109,12 @@ PUBLIC_URL_HOSTS = frozenset(
 )
 # Exact, user-selected product footage. Other bytes and locations remain scanned.
 REVIEWED_PRODUCT_MEDIA = {
+    "website/assets/agentstrata-v6.mp4":
+        "6acd1664b3f39594114c389f9cdfe8c635d739fd8b32cbd0e916e30913508ac4",
+    "website/assets/agentstrata-v7.mp4":
+        "9063fa8b6a3bd95f82552da534575bd16581ccaa9e0591c6beb6fee6009bd646",
+    "website/assets/demo-poster-v6.webp":
+        "5bc9b3448dd093fdeedfc17d8782105c21d9db28d9f19b3b6b27e248183dc35f",
     "website/assets/agentstrata-v5.mp4":
         "0320c26c83e08709bde04aa1b2d1736902a6b9944b57489a43e9b2cb47fd41ce",
     # Preserve the previously reviewed V4 fingerprint for Git history scans.
@@ -913,7 +919,7 @@ def _scan_bytes(
         REVIEWED_PRODUCT_MEDIA.get(_relative_scan_path(path))
         == hashlib.sha256(content).hexdigest()
     ):
-        # These two classes are false positives in this exact compressed video.
+        # Suppress only reviewed host findings in these exact media bytes.
         # Credential, private literal, identity, and other findings stay active.
         findings = {
             item for item in findings

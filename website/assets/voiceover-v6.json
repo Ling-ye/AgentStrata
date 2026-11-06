@@ -1,0 +1,186 @@
+{
+  "title": "用 AgentStrata 做一个桌面 App",
+  "revision": "V6",
+  "sourceRevision": "fccaa618151e0469d1d557298c7a31a693c5db2c",
+  "durationSeconds": 221.76,
+  "voice": "异世界情绪：用户训练并授权的音源",
+  "chapters": [
+    {
+      "title": "异世界情绪",
+      "startSeconds": 0.0,
+      "endSeconds": 5.88,
+      "narration": [
+        "大家好，我是异世界情绪。"
+      ],
+      "footage": "原生客户端实录 · 2026-11-05 · 实际声音与口型",
+      "references": [
+        "V5 原生客户端播放回执及实录"
+      ]
+    },
+    {
+      "title": "从需求到桌面应用",
+      "startSeconds": 5.88,
+      "endSeconds": 23.08,
+      "narration": [
+        "想做一个自己会用的小工具，可以从这里开始。",
+        "在工作台里说清楚需求，等它开发、检查完，再把做好的应用装到桌面上。",
+        "我们来做一个管理书单的小应用。"
+      ],
+      "footage": "操作介绍 · 当前 main 的桌面开发工作台",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/workspace.py"
+      ]
+    },
+    {
+      "title": "准备工作台与模型",
+      "startSeconds": 23.08,
+      "endSeconds": 44.24,
+      "narration": [
+        "先安装并打开开发工作台，跟着向导完成环境准备。",
+        "目前支持 Windows 十一，六十四位系统。开发还需要用到子系统，向导会帮你准备。",
+        "在模型与账号里，设置聊天用的模型，再登录开发账号，选择开发用的模型。"
+      ],
+      "footage": "工作台界面实录 · Windows 11 x64 + WSL2 · 空白录制环境",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/setup.py",
+        "studio/windows/bootstrap.sh"
+      ]
+    },
+    {
+      "title": "把需求说清楚",
+      "startSeconds": 44.24,
+      "endSeconds": 65.6,
+      "narration": [
+        "点击新聊天，在下面输入你想做的功能。",
+        "比如，做一个读书助手，能添加书名、勾选已读；我说读完了哪本书，它也能帮我更新书单。",
+        "需要哪些按钮，助手要完成哪些操作，都可以在这里说明。"
+      ],
+      "footage": "需求输入实录 · 未发送 · 未启动开发任务",
+      "references": [
+        "studio/web/index.html",
+        "studio/web/app.js",
+        "docs/guides/desktop-studio.md"
+      ]
+    },
+    {
+      "title": "开发、验收和安装包",
+      "startSeconds": 65.6,
+      "endSeconds": 84.56,
+      "narration": [
+        "发出需求后，工作台会修改代码，运行检查，再单独审核改动。",
+        "检查和审核通过之后，工作台才会打包。",
+        "你可以点试用桌面版，自己装上试一试；也可以下载安装包，发给别人使用。"
+      ],
+      "footage": "开发与交付步骤说明 · 本片未执行完整生成任务",
+      "references": [
+        "studio/workspace.py",
+        "studio/runtime.py",
+        "studio/delivery.py",
+        "studio/web/app.js"
+      ]
+    },
+    {
+      "title": "看一个读书助手示例",
+      "startSeconds": 84.56,
+      "endSeconds": 105.24,
+      "narration": [
+        "这是仓库自带的读书助手，先看看成品是什么样。",
+        "这里可以把书加进列表，读完以后，点一下就能标记。",
+        "你也可以告诉助手，哪本书读完了。",
+        "按钮和助手用的是同一套操作，改的也是同一份数据。"
+      ],
+      "footage": "已有桌面验证截图 · 仓库读书助手示例 · 非本次聊天生成",
+      "references": [
+        "integrations/desktop-reader/index.html",
+        "integrations/desktop-reader/page.js",
+        "integrations/desktop-reader/actions.py"
+      ]
+    },
+    {
+      "title": "安装包里包含什么",
+      "startSeconds": 105.24,
+      "endSeconds": 139.92,
+      "narration": [
+        "交出去的应用里，有界面、业务操作，还有这个应用自己的助手配置、工具连接和运行程序。",
+        "对应的源码、依赖锁文件和许可说明，也会一起带上。",
+        "你的模型密钥、聊天记录和私人数据，不会跟着安装包发给别人。",
+        "接收方首次运行还要联网准备依赖，并设置自己的模型连接；用应用时，不需要再开着你的开发工作台。"
+      ],
+      "footage": "Windows 安装包内容说明 · 以实际打包代码为准",
+      "references": [
+        "studio/delivery.py:native_inputs",
+        "integrations/desktop_app/package.cjs",
+        "integrations/desktop_app/main.cjs",
+        "src/chatcopilot/core/source_manifest.py",
+        "docs/guides/desktop-studio.md"
+      ]
+    },
+    {
+      "title": "在原聊天里继续改",
+      "startSeconds": 139.92,
+      "endSeconds": 158.08,
+      "narration": [
+        "用过之后想加功能，就回到原来的聊天里接着说。",
+        "比如，再加一个搜索框，原来的书单和已读状态要保留。",
+        "后续开发会从上一次验收的版本继续，检查通过后，再给你新的安装包。"
+      ],
+      "footage": "后续需求输入示例 · 未发送",
+      "references": [
+        "studio/workspace.py",
+        "studio/projects.py",
+        "docs/guides/desktop-studio.md"
+      ]
+    },
+    {
+      "title": "Linux / WSL 源码交付",
+      "startSeconds": 158.08,
+      "endSeconds": 189.56,
+      "narration": [
+        "如果你使用的是 Linux 或 WSL，还可以走源码交付。",
+        "通过验收的任务，可以导出一份源码目录。",
+        "里面有内容清单、公开源码和安装脚本，还保留控制台、检查和部署工具。",
+        "把它安装到一个新文件夹，配置好模型和应用连接，然后启动服务。",
+        "这条流程和前面的桌面安装包，是两种交付方式。"
+      ],
+      "footage": "Linux / WSL 源码交付 · 命令说明 · 未在本片执行",
+      "references": [
+        "docs/guides/instances.md:独立应用交付与本机改进",
+        "docs/reference/delivery.md",
+        "src/chatcopilot/deployment/application_bundle.py"
+      ]
+    },
+    {
+      "title": "查看运行和检查记录",
+      "startSeconds": 189.56,
+      "endSeconds": 206.68,
+      "narration": [
+        "应用哪里没做好，可以回头看任务记录：当时说了什么，执行到了哪一步，哪些检查没通过。",
+        "控制台看运行过程，开发工作台处理改进，测评用来检查改动有没有影响原来的功能。"
+      ],
+      "footage": "Console / Harness / Eval 历史界面 · 2026-10-31、11-03",
+      "references": [
+        "docs/reference/console.md",
+        "docs/reference/harness.md",
+        "docs/reference/evaluation.md",
+        "V4 历史实录"
+      ]
+    },
+    {
+      "title": "从一个小工具开始",
+      "startSeconds": 206.68,
+      "endSeconds": 221.76,
+      "narration": [
+        "像我这样的桌宠，也可以作为应用入口。已有的桌宠，可以从工作台连接后继续改。",
+        "先选一个你自己会用的小工具，把想做的事说清楚，装到桌面上试一试。"
+      ],
+      "footage": "原生角色历史实录 · 训练音源旁白",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py:import_live2d",
+        "V4 原生角色实录"
+      ]
+    }
+  ]
+}

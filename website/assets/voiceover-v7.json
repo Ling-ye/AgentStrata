@@ -1,0 +1,211 @@
+{
+  "title": "用 AgentStrata 做当前的 Live2D 桌宠",
+  "revision": "V7",
+  "sourceRevision": "fccaa618151e0469d1d557298c7a31a693c5db2c",
+  "durationSeconds": 250.28,
+  "voice": "异世界情绪：用户训练并授权的音源",
+  "chapters": [
+    {
+      "title": "先看桌宠的实际效果",
+      "startSeconds": 0.0,
+      "endSeconds": 13.16,
+      "narration": [
+        "大家好，我是异世界情绪。",
+        "我可以和桌面角色聊天，也能在控制台查看任务过程。"
+      ],
+      "footage": "原生客户端实录 · 2026-11-05 · 实际声音与口型 · 前两句节选",
+      "references": [
+        "docs/guides/live2d.md",
+        "integrations/live2d_desktop/README.md"
+      ]
+    },
+    {
+      "title": "要做一个怎样的桌宠",
+      "startSeconds": 13.16,
+      "endSeconds": 33.6,
+      "narration": [
+        "这次就用眼前这个角色，讲讲怎样做一个能在桌面上聊天的应用。",
+        "我们要的效果很具体：能打字聊天，把回答读出来，角色跟着声音动。",
+        "再加上拖动、缩放和停止播放，才方便每天用。"
+      ],
+      "footage": "需求与流程说明 · 以当前 Live2D 工具为例",
+      "references": [
+        "docs/guides/live2d.md",
+        "integrations/live2d_desktop/README.md"
+      ]
+    },
+    {
+      "title": "准备开发工作台",
+      "startSeconds": 33.6,
+      "endSeconds": 49.16,
+      "narration": [
+        "先打开开发工作台，在模型与账号里设置聊天连接，再登录开发账号。",
+        "目前支持 Windows 十一，六十四位系统。开发还需要用到子系统，向导会帮你准备。"
+      ],
+      "footage": "工作台界面实录 · 隔离录制工作区 · Windows 11 x64 + WSL2",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js"
+      ]
+    },
+    {
+      "title": "连接当前桌宠",
+      "startSeconds": 49.16,
+      "endSeconds": 67.72,
+      "narration": [
+        "电脑上已经有这个应用，就点左边连接桌宠的按钮。",
+        "工作台会检查安装版本，找到配套源码，再从这个版本继续改。",
+        "找不到唯一的匹配项时，就手动选择已经装好的程序。"
+      ],
+      "footage": "实际连接与公开源码导入 · 等待已剪短 · 未提交开发任务",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js",
+        "integrations/desktop_app/select-live2d.ps1"
+      ]
+    },
+    {
+      "title": "把想要的效果说清楚",
+      "startSeconds": 67.72,
+      "endSeconds": 88.48,
+      "narration": [
+        "接下来，把你想改的地方写在这段聊天里。",
+        "比如，保留双击输入、气泡和语音，让回答短一点；说到动作时，用角色现有的表情和动作。",
+        "输入框、角色行为和设置页，也可以接着改。"
+      ],
+      "footage": "真实需求输入 · 未发送 · 没有在本片现场生成新版本",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js",
+        "bots/live2d-desktop/agent.yaml"
+      ]
+    },
+    {
+      "title": "开发、检查和验收",
+      "startSeconds": 88.48,
+      "endSeconds": 107.96,
+      "narration": [
+        "发出需求后，工作台会修改代码、运行检查，再独立审核这次改动。",
+        "通过验收以后，才会生成 Windows 安装包。",
+        "如果失败了，就回到这段聊天里看原因，处理好再继续。"
+      ],
+      "footage": "开发与验收步骤说明 · 非本次执行记录",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js",
+        "studio/delivery.py"
+      ]
+    },
+    {
+      "title": "上手检查真实效果",
+      "startSeconds": 107.96,
+      "endSeconds": 131.08,
+      "narration": [
+        "装好试用版，先发一句话，看看文字、声音和口型能不能对上。",
+        "再试试拖动、缩放、表情和停止播放。需要语音输入时，点麦克风再说话。",
+        "这些都要在真实客户端里检查，不能只看自动测试通过。"
+      ],
+      "footage": "验收项目说明 · 右侧为 2026-11-05 原生客户端历史实录",
+      "references": [
+        "docs/guides/live2d.md",
+        "integrations/live2d_desktop/README.md"
+      ]
+    },
+    {
+      "title": "交出去的 App 包含什么",
+      "startSeconds": 131.08,
+      "endSeconds": 162.64,
+      "narration": [
+        "交出去的是可以安装的桌面程序，里面有角色窗口、输入和播放功能，也有它自己的助手配置与运行代码。",
+        "对应源码、依赖锁文件、许可说明，以及构建时选定的上游资源，也会一起带上。",
+        "这台电脑上的私人角色、语音模型、密钥和聊天记录，不会自动打进安装包。"
+      ],
+      "footage": "Windows 桌宠安装包内容说明 · 以实际构建代码为准",
+      "references": [
+        "studio/delivery.py",
+        "integrations/desktop_app/package.cjs",
+        "docs/guides/live2d.md",
+        "integrations/live2d_desktop/README.md"
+      ]
+    },
+    {
+      "title": "安装并运行自己的桌宠",
+      "startSeconds": 162.64,
+      "endSeconds": 190.04,
+      "narration": [
+        "在这段聊天里，点击试用桌面版，也可以下载安装包，交给另一台电脑。",
+        "首次运行要联网准备依赖，并设置自己的模型连接。桌宠运行时，不需要开着开发工作台。",
+        "我现在的声音来自单独运行的本地语音服务。换一台电脑，也要把这项服务和声音连接准备好。"
+      ],
+      "footage": "安装步骤说明 · 当前训练音源另有本地服务",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js",
+        "docs/guides/live2d.md",
+        "integrations/live2d_desktop/README.md"
+      ]
+    },
+    {
+      "title": "继续修改并查看记录",
+      "startSeconds": 190.04,
+      "endSeconds": 211.88,
+      "narration": [
+        "想继续改，就留在原来的聊天里说。新的改动会接着上次验收的版本做。",
+        "比如，把输入框调大一点，保留现有的说话方式。",
+        "出了问题，可以在控制台看任务过程，再用开发和测评记录查哪些检查没通过。"
+      ],
+      "footage": "需求输入未发送 · Console 2026-11-03 / Harness、Eval 2026-10-31",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js",
+        "docs/reference/console.md",
+        "docs/reference/evaluation.md"
+      ]
+    },
+    {
+      "title": "Linux / WSL 的源码交付",
+      "startSeconds": 211.88,
+      "endSeconds": 237.52,
+      "narration": [
+        "如果你选的是子系统或 Linux 部署，也可以把验收后的应用导出成源码目录。",
+        "目录里有内容清单、源码和安装脚本，也保留控制台与检查工具。",
+        "这和 Windows 桌宠安装包，是两种交付方式。"
+      ],
+      "footage": "另一条交付方式 · 命令说明 · 未在本片执行",
+      "references": [
+        "docs/guides/instances.md",
+        "docs/reference/delivery.md"
+      ]
+    },
+    {
+      "title": "从能用的桌宠继续改",
+      "startSeconds": 237.52,
+      "endSeconds": 250.28,
+      "narration": [
+        "先让角色能聊、能说，再把角色行为和使用习惯慢慢改到合适。",
+        "从能聊天的角色开始，再一步步改成自己会每天打开的应用。"
+      ],
+      "footage": "原生角色历史实录 · 训练音源旁白",
+      "references": [
+        "docs/guides/desktop-studio.md",
+        "studio/projects.py",
+        "studio/workspace.py",
+        "studio/web/app.js",
+        "docs/guides/live2d.md",
+        "integrations/live2d_desktop/README.md"
+      ]
+    }
+  ]
+}

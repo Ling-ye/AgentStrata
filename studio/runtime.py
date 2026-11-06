@@ -29,10 +29,15 @@ def verification_runtime(state):
 
 
 @lru_cache(maxsize=None)
+def task_verification_id(repo, state, task_id):
+    return HarnessController(repo, root=state / "harness").get(task_id)["source"].get("verification_runtime")
+
+
+@lru_cache(maxsize=None)
 def task_verification_runtime(repo, state, task_id):
     import re
     from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
-    digest = HarnessController(repo, root=state / "harness").get(task_id)["source"].get("verification_runtime")
+    digest = task_verification_id(repo, state, task_id)
     if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise ValueError("此任务没有独立验证快照，原记录已保留；请在同一聊天发送新的开发请求。")
     frozen = state / "verification" / digest

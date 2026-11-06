@@ -1061,13 +1061,12 @@ def test_product_website_preserves_sensitive_query_checks():
     assert "sensitive-uri-query" in {item.rule for item in findings}
 
 
-@pytest.mark.parametrize("version", ["v4", "v5"])
+@pytest.mark.parametrize("name", tuple(_load_checker().REVIEWED_PRODUCT_MEDIA))
 @pytest.mark.parametrize("prefix", ["index:", "worktree:", "untracked:", "history:"])
-def test_reviewed_video_is_bound_to_exact_content_and_location(prefix, version):
+def test_reviewed_media_is_bound_to_exact_content_and_location(prefix, name):
     checker = _load_checker()
     content = b"binary\x00" + ("node" + ".internal").encode()
     content += b" https://" + b"unreviewed.vendor.net"
-    name = f"website/assets/agentstrata-{version}.mp4"
     checker.REVIEWED_PRODUCT_MEDIA = {name: hashlib.sha256(content).hexdigest()}
     path = prefix + name + ("@abcdef" if prefix == "history:" else "")
     assert not checker._scan_bytes(content, path=path)
@@ -1076,10 +1075,9 @@ def test_reviewed_video_is_bound_to_exact_content_and_location(prefix, version):
     assert checker._scan_bytes(content, path=path, private_literals=["binary"])
 
 
-@pytest.mark.parametrize("version", ["v4", "v5"])
-def test_reviewed_video_does_not_suppress_secret_findings(version):
+@pytest.mark.parametrize("name", tuple(_load_checker().REVIEWED_PRODUCT_MEDIA))
+def test_reviewed_media_does_not_suppress_secret_findings(name):
     checker = _load_checker()
     content = ("-----BEGIN " + "PRIVATE KEY-----").encode()
-    name = f"website/assets/agentstrata-{version}.mp4"
     checker.REVIEWED_PRODUCT_MEDIA = {name: hashlib.sha256(content).hexdigest()}
     assert checker._scan_bytes(content, path=name)

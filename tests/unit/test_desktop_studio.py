@@ -454,8 +454,30 @@ def test_verification_runtime_is_frozen_and_socket_tracks_host_version(tmp_path,
         assert runtime.task_verification_runtime(platform, state, "existing") == (frozen, identity)
         (frozen / "src/chatcopilot/evals/rules.py").write_text("TAMPERED = True\n")
         runtime.task_verification_runtime.cache_clear()
+        runtime.task_verification_id.cache_clear()
         with pytest.raises(ValueError, match="验证快照已变化"):
             runtime.task_verification_runtime(platform, state, "existing")
     finally:
         runtime.verification_runtime.cache_clear()
         runtime.task_verification_runtime.cache_clear()
+
+
+def test_old_task_retry_is_read_only_and_new_request_can_use_same_conversation(tmp_path, monkeypatch):
+    project, previous, current = (uuid4() for _ in range(3))
+    app = application(tmp_path, ROOT, "fixture-key", run_worker=False)
+    studio = app.state.studio
+    studio.create(project.hex)
+    with studio.db.connect(write=True) as db:
+        db.execute("UPDATE projects SET version='initial' WHERE id=?", (project.hex,))
+    studio.submit(project.hex, previous.hex, "old goal")
+    studio.update(previous.hex, "failed", "原失败证据", task="old-task", version="initial")
+    monkeypatch.setattr(runtime, "task_verification_id", lambda *_: None)
+    before = studio.conversation(project.hex)[0]
+    assert before["retryable"] is False
+    with TestClient(app, base_url="http://localhost") as client:
+        client.post("/api/login", json={"token":"fixture-key"})
+        response = client.post(f"/api/projects/{project}/messages/{previous}/retry", json={})
+        assert response.status_code == 409 and "只读" in response.json()["detail"]
+        assert studio.conversation(project.hex)[0] == before
+        assert client.post(f"/api/projects/{project}/messages", json={"id":current.hex,"text":"new goal"}).status_code == 200
+        assert studio.conversation(project.hex)[0] == before

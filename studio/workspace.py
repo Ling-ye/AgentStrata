@@ -57,8 +57,19 @@ class Studio:
         with self.db.connect() as db:
             if not db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
                 raise KeyError("会话不存在")
-            return [dict(row) for row in db.execute(
-                "SELECT id,text,state,reply,task,build,launched FROM messages WHERE project=? ORDER BY rowid", (project_id,))]
+            rows = [dict(row) for row in db.execute(
+                "SELECT id,text,state,reply,task,build,launched,version FROM messages WHERE project=? ORDER BY rowid", (project_id,))]
+        for row in rows:
+            if row["state"] == "failed":
+                row["retryable"] = self.retryable(project_id, row)
+            row.pop("version")
+        return rows
+
+    def retryable(self, project_id, row):
+        if not row["task"]:
+            return True
+        work = self.directory(project_id)
+        return bool(runtime.task_verification_id(work / row["version"], work, row["task"]))
 
     def submit(self, project_id, message_id, text):
         text = text.strip()

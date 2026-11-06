@@ -12,6 +12,48 @@ from chatcopilot.harness.integrations.scenarios import ImprovementScenario, Repa
 from chatcopilot.harness.models import HarnessError
 
 
+def inspect_blocked_agent_draft(store, task_id, evaluator):
+    """Give Test authoritative schema evidence; leave its blocked report intact."""
+    import hashlib
+    import json
+    from chatcopilot.harness.integrations.briefs import build_failure_brief
+    from chatcopilot.harness.local_verifier import _read
+
+    task = store.get(task_id)
+    runtime = task["source"].get("verification_runtime")
+    if task["status"] != "blocked" or task.get("error_code") != "fixture_missing" or not runtime:
+        return
+    attempt = next(row for row in store.attempts(task_id) if row["number"] == task["current_attempt"])
+    submission = attempt.get("submission", {})
+    if (attempt.get("feedback") or submission.get("decision") != "blocked"
+            or submission.get("verification_kind") not in {"agent", "mixed"}):
+        return
+    if getattr(evaluator, "verification_runtime", None) != runtime:
+        raise HarnessError("verification_evidence", "草案核验必须使用任务原先绑定的宿主验证服务")
+    records = ArtifactRepository(store.root / "jobs" / task_id)
+    draft = records.directory / f"attempt-{attempt['number']}" / "draft" / "agent_case.json"
+    if not draft.exists():
+        return  # No definition to inspect; the original material gap remains.
+    raw = _read(draft)
+    case = {**json.loads(raw), "runtime_replay": True, "expected_behavior": task["acceptance"]["original"]}
+    normalized = evaluator.validate_agent_case(case)
+    proof = asdict(records.put("definition_inspection", attempt["number"], {
+        "verification_runtime": runtime, "draft_sha256": hashlib.sha256(raw).hexdigest(),
+        "reported_submission": submission, "validated_case": normalized,
+        "scope": "schema_only", "product_verified": False,
+    }))
+    message = ("任务原先绑定的宿主验证服务已接受此 Agent Case 定义，见 definition_inspection 引用。"
+               "目标应用内的旧校验器不代表宿主验证能力。请 Test 依据该证据重新判断原材料缺口并提交完整草案；"
+               "这只是定义校验，尚未执行模型、基线、候选、确认或回归，不能据此宣布目标通过。")
+    brief = build_failure_brief(attempt=attempt, stage="definition", code="test_definition",
+                               message=message, signature=proof["sha256"], evidence_ref=proof)
+    ref = asdict(records.put("failure_brief", attempt["number"], brief))
+    attempt.update(definition_inspection=proof, feedback={
+        "stage": "definition", "code": "test_definition", "message": message, "brief_ref": ref,
+    })
+    store.save_attempt(task_id, attempt["number"], attempt)
+
+
 def prepare_acceptance_retry(store, task_id):
     """Called under the lifecycle guard, after proving worker and Evaluation stopped."""
     task = store.get(task_id)

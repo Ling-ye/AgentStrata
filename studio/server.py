@@ -150,6 +150,8 @@ def application(home, framework, token, *, run_worker=True):
                              "WHERE m.id=? AND p.id=?", (message.hex, project.hex)).fetchone()
             if not row or row["state"] != "failed" or row["version"] != row["current"]:
                 raise HTTPException(409, "原任务无法在当前版本重试，请提出新的改进")
+            if not studio.retryable(project.hex, row):
+                raise HTTPException(409, "旧任务及证据保持只读，请在当前聊天发送新的开发请求。")
             try:
                 db.execute("UPDATE messages SET state=?,reply='' WHERE id=?", (
                     "starting" if row["task"] or row["goal"] else "thinking", message.hex))

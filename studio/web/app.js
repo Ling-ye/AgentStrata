@@ -26,7 +26,10 @@ function turn(row,id) {
   const reply=document.createElement('p');reply.textContent=row.reply;card.append(reply);
   const actions=document.createElement('div');actions.className='actions';
   if(row.state==='new_project') actions.append(button('为它新建聊天',async()=>{await create();el('input').value=row.text;el('input').focus();}));
-  if(row.state==='failed')actions.append(button('重试此请求',async()=>{await api('projects/'+id+'/messages/'+row.id+'/retry',{});await refresh();}));
+  if(row.state==='failed'){
+    if(row.retryable)actions.append(button('重试此请求',async()=>{await api('projects/'+id+'/messages/'+row.id+'/retry',{});await refresh();}));
+    else {const note=document.createElement('p');note.textContent='旧任务及证据已保留，只读查看。请在下方提出新的开发请求。';actions.append(note);}
+  }
   if(row.state==='ready'){
     const url='projects/'+id+'/builds/'+row.id;
     actions.append(button('试用桌面版',async()=>{el('notice').textContent=(await api(url+'/try',{})).message;}));
