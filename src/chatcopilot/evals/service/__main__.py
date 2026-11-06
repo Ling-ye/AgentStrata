@@ -24,6 +24,8 @@ def main(argv: list[str] | None = None) -> int:
     serve.add_argument("--socket", type=Path, default=None)
     serve.add_argument("--repository-root", type=Path, default=None)
     serve.add_argument("--artifact-root", type=Path, default=None)
+    serve.add_argument("--verification-root", type=Path, default=None,
+                       help="Host-owned frozen verification source, separate from the application baseline.")
     health = subparsers.add_parser("health", help="Query the local service.")
     health.add_argument("--socket", type=Path, default=None)
     health.add_argument("--json", action="store_true")
@@ -75,6 +77,7 @@ def _serve(args: argparse.Namespace) -> int:
     runtime = build_runtime(
         repository_root=repository_root,
         artifact_root=artifact_root,
+        verification_root=args.verification_root,
     )
     server = EvaluationUnixServer(
         args.socket or default_socket_path(),

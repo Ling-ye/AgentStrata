@@ -96,7 +96,7 @@ class LocalVerifier:
                     raise HarnessError("fixture_missing", "原始历史上下文尚无三层回放材料")
             if case.get("resources") and not source.get("image_resources"):
                 raise HarnessError("image_scope", "草案只能使用宿主绑定的原图")
-            if source.get("original_input"):
+            if source.get("original_input") and source.get("kind") != "application":
                 case["input"] = source["original_input"]
             case["expected_behavior"] = requirements["original"]
             if requirements["requires_image"]:

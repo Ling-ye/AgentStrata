@@ -99,6 +99,13 @@ QQ 未知交付题专门验证“如实保留未知且不盲目重发”，该�
 真实浏览器渲染、语音硬件和 QQ 接收方交付需要分别取得实际证据；
 主计划 M7 的真实模型与隔离对端闭环不代替这些平台验收。
 
+声明式 Agent Case 可以通过 `bridge: live2d` 复用同一桥接运行链。首版支持私聊 Owner、
+`avatar_list_actions`、`avatar_set_expression`、`avatar_play_motion` 和 `avatar_apply_pose`，
+隔离对端提供 `happy` 表情与 `greet` 动作。用例只包含实际业务输入，开发需求和预期不进入目标模型上下文。
+`avatar_executed` 断言使用 `action: expression` 或 `motion` 及目录中的 `name`，核对实际工具调用、
+动作请求、同一请求的成功回执，以及回执先于客户端收到回复的顺序；正确文字或工具成功声明不能替代这些证据。
+浏览器对端仍是受控 fixture，真实 Windows 渲染和语音另行验证。
+
 ## 版本绑定与基线候选对照
 
 服务以既有 `code_source` 接收同仓库工作区及其源码摘要，复制隔离源码，覆盖宿主受信评分实现。
@@ -106,6 +113,8 @@ Core 从服务拥有的请求和源码回执生成 `config_snapshot.version_snap
 不能授权版本身份。快照包含提交源码与实际执行源码摘要、验证实现摘要、Target fingerprint、
 runtime 依赖版本和参与的桥接组件哈希。配置与权限沿既有 Target/conditions 绑定；Codex 执行还绑定原生二进制内容。
 检查执行期间的源码和 runtime 漂移，发生漂移即停止，不能继续形成完整可比结果。
+开发宿主可在启动服务时提供 `--verification-root`，将冻结的验证实现与应用仓库分开。
+该位置由服务拥有，不接受候选或 RPC 请求选择；只替换受保护的验证文件，应用代码与 Bot 配置仍来自目标基线或候选。
 模型服务端未公开的精确版本仍为未知，保留既有 `model_version_note`，不由模型名称推定。
 
 普通 standalone 结果保留原有严格对比。产品源码变化导致 Target fingerprint 变化时，只有两份有效版本快照、

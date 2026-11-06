@@ -17,7 +17,7 @@ from chatcopilot.botspec.model import ChannelsSpec, CodebaseSpec, GatewayClientS
 from chatcopilot.contracts.gateway_rpc import RunsGetParams
 from chatcopilot.contracts.runtime import McpServerConfig
 from chatcopilot.core.private_sqlite import private_directory
-from chatcopilot.evals.bridge_cases import component_identity, live2d_module, unavailable, validate
+from chatcopilot.evals.bridge_cases import AVATAR_EXPRESSIONS, AVATAR_MOTIONS, component_identity, live2d_module, unavailable, validate
 from chatcopilot.evals.evaluation_runtime import load_evaluation_runtime
 from chatcopilot.evals.execution_support import usage_summary
 from chatcopilot.evals.frozen_agent_runtime import tool_observations
@@ -37,14 +37,15 @@ def _port():
 
 
 @contextmanager
-def _avatar_peer(port, token, *, timeout):
+def _avatar_peer(port, token, *, timeout, timeline):
     """Only the browser is simulated; adapter controller and HTTP MCP remain real."""
     import uvicorn
     from starlette.applications import Starlette
     config_module = live2d_module("config")
     config = config_module.AdapterConfig(
         GatewayClientConfig("ws://127.0.0.1:1", "g" * 48, client_id="bridge-eval", client_mode="interactive"),
-        token, "fixture-avatar", {"happy": 0}, {"greet": config_module.Motion("TapBody", 0)},
+        token, "fixture-avatar", dict(AVATAR_EXPRESSIONS),
+        {name: config_module.Motion(**value) for name, value in AVATAR_MOTIONS.items()},
         (f"http://127.0.0.1:{port}",), action_timeout_seconds=1.0,
     )
     controller = live2d_module("avatar").BrowserAvatarController(config)
@@ -53,8 +54,10 @@ def _avatar_peer(port, token, *, timeout):
     async def consume(message):
         action = json.loads(message)
         actions.append(action)
+        timeline.append({"event": "avatar_action", "request_id": action["request_id"]})
         ack = {"request_id": action["request_id"], "status": "executed"}
         acknowledgements.append({**ack, "matched": controller.acknowledge("eval-browser", ack)})
+        timeline.append({"event": "avatar_ack", **ack, "matched": acknowledgements[-1]["matched"]})
 
     controller.attach("eval-browser", "fixture-avatar", consume)
     app = Starlette()
@@ -109,22 +112,26 @@ def run(definition, *, bot: str, workspace_root: Path) -> TrialObservation:
     with ExitStack() as stack:
         stack.enter_context(patch.dict(os.environ, env))
         avatar = ([], [])
-        if definition.scenario_id in {"avatar-action", "avatar-pose"}:
-            avatar = stack.enter_context(_avatar_peer(avatar_port, control_token, timeout=definition.policy.timeout_seconds))
+        timeline = []
+        interaction = definition.scenario_id == "avatar-interaction"
+        if definition.scenario_id in {"avatar-action", "avatar-pose"} or interaction and definition.policy.allowed_tools:
+            avatar = stack.enter_context(_avatar_peer(avatar_port, control_token, timeout=definition.policy.timeout_seconds,
+                                                      timeline=timeline))
             runtime = replace(runtime, mcp_servers=(McpServerConfig(
                 id="bridge-avatar", transport="streamable_http", url=f"http://127.0.0.1:{avatar_port}/agentstrata/mcp/",
                 headers={"Authorization": "Bearer " + control_token}, exposure="main", risk="interactive", stateless_http=True,
-                tool_prefix="avatar", allowed_tools=("list_actions", "play_motion", "set_expression",
-                    *(("apply_pose",) if definition.scenario_id == "avatar-pose" else ())),
+                tool_prefix="avatar_" if interaction else "avatar",
+                allowed_tools=tuple(name.removeprefix("avatar_") for name in definition.policy.allowed_tools) if interaction else
+                    ("list_actions", "play_motion", "set_expression", *(("apply_pose",) if definition.scenario_id == "avatar-pose" else ())),
             ),))
         with execution_phase("runtime"):
-            result = asyncio.run(_execute(definition, runtime, root, env, owner_token, other_token, avatar))
+            result = asyncio.run(_execute(definition, runtime, root, env, owner_token, other_token, avatar, timeline))
     if component_identity() != identity:
         raise unavailable("Bridge implementation changed during the Trial", code="artifact_integrity_error")
     return result
 
 
-async def _execute(definition, runtime, root, env, owner_token, other_token, avatar):
+async def _execute(definition, runtime, root, env, owner_token, other_token, avatar, timeline):
     application = definition.scenario_params["application"]
     scenario = definition.scenario_id
     peer = OneBotFixtureConnection("unknown" if scenario == "delivery-unknown" else "acknowledged")
@@ -139,7 +146,8 @@ async def _execute(definition, runtime, root, env, owner_token, other_token, ava
     gateway_url = f"ws://127.0.0.1:{env[runtime.gateway.port_env]}"
     bridge = None
     state = {"application": application, "scenario": scenario, "production_delivery": False,
-             "platform_peer": "controlled", "model_execution": "configured", "runs": [], "receipts": []}
+             "platform_peer": "controlled", "model_execution": "configured", "runs": [], "receipts": [],
+             "stages": [], "timeline": timeline}
     captured = []
     deadline = time.monotonic() + definition.policy.timeout_seconds
 
@@ -162,6 +170,7 @@ async def _execute(definition, runtime, root, env, owner_token, other_token, ava
             bridge = live2d_module("bridge").ConversationBridge(client, client_id="bridge-eval")
             bridge.select_history("fixture-avatar", definition.case_id)
         for index, turn in enumerate(definition.turns):
+            timeline.append({"event": "client_input", "turn": index})
             record = {"conversation_id": definition.case_id, "turn_index": index, "input": turn.text, "completed": False}
             record_turn(record)
             client_error = None
@@ -170,6 +179,7 @@ async def _execute(definition, runtime, root, env, owner_token, other_token, ava
                 try:
                     reply = await bridge.chat(turn.text)
                     client_reply = {key: getattr(reply, key) for key in ("session_id", "run_id", "state", "text")}
+                    timeline.append({"event": "client_reply", "run_id": reply.run_id})
                 except RuntimeError as exc:
                     client_error = type(exc).__name__
             else:
@@ -198,6 +208,7 @@ async def _execute(definition, runtime, root, env, owner_token, other_token, ava
             final, stop = str(result.get("final_text", "")), str(result.get("stop_reason", ""))
             events, _stages = read_run_observations(host.state_store, current.run_id)
             captured.extend(events)
+            state["stages"].extend(_stages)
             state["runs"].append({"run_id": current.run_id, "session_id": current.session_id,
                 "state": current.state, "error_code": current.error_code, "final_text": final,
                 "stop_reason": stop, "client_error": client_error, "client_reply": client_reply,

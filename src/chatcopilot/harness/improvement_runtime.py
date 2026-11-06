@@ -9,7 +9,7 @@ from chatcopilot.harness.workspace import permitted_change
 import hashlib
 
 
-def predecessor_tests(controller, bot_id, task_id):
+def predecessor_checks(controller, bot_id, task_id):
     """Freeze accepted application tests while preserving the exact product baseline."""
     from chatcopilot.harness.activation_runtime import release_source
     from chatcopilot.harness.improvement_repository import baseline
@@ -28,10 +28,17 @@ def predecessor_tests(controller, bot_id, task_id):
             if hashlib.sha256(content).hexdigest() != digest:
                 raise HarnessError("reproducer_changed", "前一版本的已验收测试已变化")
             tests[digest] = {"sha256": digest, "content": content.decode("utf-8"), "source_task": task_id}
-        return list(tests.values())
+        cases = {item["snapshot_id"]: item for item in previous.get("regression_cases", [])}
+        goal = previous.get("agent_source", {})
+        if goal.get("agent_case"):
+            identity = controller.evaluator.prepare_agent_case(goal, lambda: None)["case_snapshot_id"]
+            if identity != goal.get("case_snapshot_id"):
+                raise HarnessError("reproducer_changed", "前一版本的已验收 Agent 用例已变化")
+            cases[identity] = {"snapshot_id": identity, "case": goal["agent_case"], "source_task": task_id}
+        return {"regression_tests": list(tests.values()), "regression_cases": list(cases.values())}
 
 
-def source(repository: Path, request, evaluator, *, regression_tests=(), predecessor_task_id=None):
+def source(repository: Path, request, evaluator, *, regression_tests=(), regression_cases=(), predecessor_task_id=None):
     from chatcopilot.core.application_installation import application_source
     selected = application_source(repository, request.bot_id)
     product = selected[0] if selected else repository
@@ -48,7 +55,8 @@ def source(repository: Path, request, evaluator, *, regression_tests=(), predece
              "repetitions": 3, "failure_signature": [], "warnings": [], "blockers": [],
              "request": {**verification["request"], "preset": "custom", "case_ids": ids}}
     if predecessor_task_id:
-        value.update(predecessor_task_id=predecessor_task_id, regression_tests=regression_tests)
+        value.update(predecessor_task_id=predecessor_task_id, regression_tests=regression_tests,
+                     regression_cases=regression_cases)
     if request.source_envelope:
         envelope = AdapterApprovalEnvelope(**request.source_envelope)
         value["source_envelope"] = envelope.canonical_payload()

@@ -67,7 +67,7 @@ def avatar_session(monkeypatch, *, query, role="owner", expose_combined=True):
     config.runtime.hard_iteration_cap = 6
     names = ("list_actions", "set_expression", "play_motion") + (("apply_pose",) if expose_combined else ())
     port, token = _port(), "d" * 48
-    with _avatar_peer(port, token, timeout=10) as (actions, acknowledgements):
+    with _avatar_peer(port, token, timeout=10, timeline=[]) as (actions, acknowledgements):
         agent = build_agent_runtime(chat_config=config,
             route=ResolvedRuntimeRoute("langgraph", model_config.model_route()),
             tool_packs=(), assembly_profile="detached",

@@ -11,6 +11,9 @@ from chatcopilot.evals.models import EvalCase, JudgeResult, TrialObservation
 def score(case: EvalCase, observation: TrialObservation) -> tuple[JudgeResult, dict[str, Any]]:
     declaration = validate_case(case.metadata["agent_case"])
     checks = []
+    if declaration.get("bridge") == "live2d":
+        from chatcopilot.evals.live2d_replay import verify_delivery
+        checks.append({"assertion": {"kind": "bridge_delivery"}, "passed": verify_delivery(case, observation)})
     replay = next((entry["runtime_replay"] for entry in observation.evidence if "runtime_replay" in entry), {})
     if declaration.get("runtime_replay"):
         denied = declaration.get("admission") == "denied"
@@ -20,7 +23,10 @@ def score(case: EvalCase, observation: TrialObservation) -> tuple[JudgeResult, d
     for check in declaration["assertions"]:
         kind = check["kind"]
         calls = [c for c in observation.tool_calls if c["name"] == check.get("name")]
-        if kind == "admission_denied":
+        if kind == "avatar_executed":
+            from chatcopilot.evals.live2d_replay import avatar_executed
+            passed = avatar_executed(check, observation)
+        elif kind == "admission_denied":
             passed = replay.get("admission") == "denied" and replay.get("layers") == ["gateway"]
         elif kind == "final_contains":
             passed = check["value"] in observation.final_text

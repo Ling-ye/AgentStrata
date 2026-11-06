@@ -127,37 +127,47 @@ class CaseVerification:
             original = source.get("original_case_source")
             original_ids = [name for name in checks if original and name in original["case_ids"]
                             and name not in agent_ids]
-            local_ids = [name for name in checks if name not in agent_ids and name not in original_ids]
+            bindings = [("original_case_source", None, original_ids, "original"),
+                        ("agent_source", None, agent_ids, "agent")]
+            external_ids = set(agent_ids) | set(original_ids)
+            for index, retained in enumerate(source.get("retained_agent_sources", [])):
+                selected = [name for name in checks if name in retained["case_ids"] and name not in external_ids]
+                bindings.append(("retained_agent_sources", index, selected, f"retained-{index}"))
+                external_ids.update(selected)
+            local_ids = [name for name in checks if name not in external_ids]
             results = []
             if local_ids:
                 receipt = self.local_verifier.run(task, candidate.path, run_id + "-local", local_ids, check_cancel)
                 results.append(result_from_trials(receipt, "local-pytest", candidate))
-            if original_ids:
-                self._bind_external(task["task_id"], run_id + "-original")
-                receipt = self.evaluator.run({**task, "source": original}, candidate.path,
-                                             run_id + "-original", original_ids, check_cancel)
-                results.append(result_from_trials(receipt, receipt["target_id"], candidate))
-            if agent_ids:
-                self._bind_external(task["task_id"], run_id + "-agent")
-                receipt = self.evaluator.run({**task, "source": agent_source}, candidate.path, run_id + "-agent", agent_ids, check_cancel)
-                if agent_source.get("kind") == "application":
+            for field, index, selected, phase in bindings:
+                if not selected:
+                    continue
+                external = source[field] if index is None else source[field][index]
+                evaluation_id = run_id + "-" + phase
+                self._bind_external(task["task_id"], evaluation_id)
+                receipt = self.evaluator.run({**task, "source": external}, candidate.path, evaluation_id,
+                                             selected, check_cancel)
+                if external.get("kind") == "application":
                     version = receipt["result"]["config_snapshot"]["version_snapshot"]
                     identity = {key: version[key] for key in ("runtime", "verification_sha256")}
                     identity["model_identity"] = receipt["result"]["config_snapshot"].get("activation_model_identity")
-                    if agent_source.get("version_conditions") and agent_source["version_conditions"] != identity:
+                    if external.get("version_conditions") and external["version_conditions"] != identity:
                         raise HarnessError("verification_environment", "基线与候选的 runtime 或验证实现版本发生变化")
-                    if not agent_source.get("version_conditions"):
-                        agent_source = {**agent_source, "version_conditions": identity}
-                        source = {**source, "agent_source": agent_source}
-                        self.store.update(task["task_id"], source=source)
+                    external = {**external, "version_conditions": identity}
                 observed = result_from_trials(receipt, receipt["target_id"], candidate)
-                self._require_runtime_evidence(observed, agent_source)
+                if field != "original_case_source":
+                    self._require_runtime_evidence(observed, external)
                 results.append(observed)
-                if not agent_source.get("conditions"):
+                if not external.get("conditions"):
                     if not receipt.get("conditions"):
                         raise HarnessError("verification_evidence", "首次 Agent 验证缺少冻结条件")
-                    self.store.update(task["task_id"], source={**source, "agent_source": {**agent_source,
-                        "conditions": receipt["conditions"], "target_id": receipt["target_id"]}})
+                    external = {**external, "conditions": receipt["conditions"], "target_id": receipt["target_id"]}
+                value = external
+                if index is not None:
+                    value = list(source[field])
+                    value[index] = external
+                source = {**source, field: value}
+                self.store.update(task["task_id"], source=source)
             return VerificationResult(run_id, candidate.digest, tuple(c for r in results for c in r.checks),
                                       tuple(ref for r in results for ref in r.evidence_refs),
                                       {key: value for result in results for key, value in result.versions.items()})

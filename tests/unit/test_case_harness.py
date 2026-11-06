@@ -562,7 +562,15 @@ def test_repair_markers_are_not_limited_to_recent_global_history(repository, tmp
 
 @pytest.mark.parametrize("dry_run", [True, False])
 def test_managed_candidate_bootstrap_and_database(tmp_path, dry_run):
-    application = EvaluationApplication(tmp_path / "evaluations", repository_root=ROOT, worker=LocalEvaluationWorker())
+    from chatcopilot.core.source_snapshot import copy_sources
+    from chatcopilot.deployment.application_runtime import _initialize_source
+    # Other parallel tests own scratch directories in ROOT. The candidate test
+    # must use its own exact source rather than hash a concurrently changing parent.
+    source = tmp_path / "source"
+    manifest = source_manifest(ROOT)
+    copy_sources(ROOT, source, manifest)
+    _initialize_source(source, manifest)
+    application = EvaluationApplication(tmp_path / "evaluations", repository_root=source, worker=LocalEvaluationWorker())
     record = application.start(
         bot_id="lingye-copilot-qq",
         evaluation_id="eval-source-smoke",
@@ -573,7 +581,7 @@ def test_managed_candidate_bootstrap_and_database(tmp_path, dry_run):
             "case_ids": ["qq-synthetic-roundtrip"],
             "dry_run": dry_run,
         },
-        code_source={"path": str(ROOT), "sha256": manifest_digest(source_manifest(ROOT))},
+        code_source={"path": str(source), "sha256": manifest_digest(manifest)},
     )
     deadline = time.monotonic() + 40
     try:
@@ -600,3 +608,27 @@ def test_managed_candidate_bootstrap_and_database(tmp_path, dry_run):
     finally:
         if record["status"] in {"queued", "running"}:
             application.cancel(record["evaluation_id"])
+
+
+def test_application_baseline_cannot_replace_separate_host_verification(repository, tmp_path):
+    host = tmp_path / "host"
+    subprocess.run(["git", "clone", "--quiet", "--shared", str(repository), str(host)], check=True)
+    scorer = "src/chatcopilot/evals/capability_verifiers.py"
+    (host / scorer).write_text("HOST_RULE = 'current verifier'\n")
+    (host / "src/chatcopilot/evals/new_goal_fixture.py").write_text("HOST_FIXTURE = True\n")
+    (host / "src/chatcopilot/core/config.py").write_text("VALUE = 'must not replace application'\n")
+    snapshot = tmp_path / "isolated"
+    before = source_manifest(repository)
+    receipt = prepare_code_source(repository,
+        {"path": str(repository), "sha256": manifest_digest(before)}, snapshot, verification_root=host)
+    assert (snapshot / scorer).read_bytes() == (host / scorer).read_bytes()
+    assert (snapshot / "src/chatcopilot/evals/new_goal_fixture.py").is_file()
+    assert (snapshot / "src/chatcopilot/core/config.py").read_bytes() == (
+        repository / "src/chatcopilot/core/config.py").read_bytes()
+    assert receipt["sha256"] == manifest_digest(before)
+    assert source_manifest(repository) == before
+    frozen_rules = source_manifest(host)
+    (host / scorer).write_text("HOST_RULE = 'changed during task'\n")
+    with pytest.raises(ValueError, match="source changed"):
+        prepare_code_source(repository, {"path": str(repository), "sha256": manifest_digest(before)},
+                            tmp_path / "changed-rules", verification_root=host, verification_manifest=frozen_rules)

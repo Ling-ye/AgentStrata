@@ -29,12 +29,12 @@ def application_source(**updates):
         **updates}
 
 
-def test_predecessor_tests_require_the_accepted_application_and_unchanged_test(repair, tmp_path, monkeypatch):
+def test_predecessor_checks_require_the_accepted_application_and_unchanged_test(repair, tmp_path, monkeypatch):
     from contextlib import nullcontext
     import hashlib
     from types import SimpleNamespace
     from chatcopilot.harness import activation_runtime
-    from chatcopilot.harness.improvement_runtime import predecessor_tests
+    from chatcopilot.harness.improvement_runtime import predecessor_checks
 
     _store, _ident, repo = repair
     content = b"def test_previous_feature():\n    assert True\n"
@@ -47,17 +47,17 @@ def test_predecessor_tests_require_the_accepted_application_and_unchanged_test(r
     host = SimpleNamespace(repository=repo, store=SimpleNamespace(get=lambda _: previous),
                            lifecycle=SimpleNamespace(operation=lambda _: nullcontext()))
     monkeypatch.setattr(activation_runtime, "release_source", lambda *_: release)
-    assert predecessor_tests(host, "fixture", "first") == [
-        {"sha256": digest, "content": content.decode(), "source_task": "first"}]
+    assert predecessor_checks(host, "fixture", "first") == {"regression_tests": [
+        {"sha256": digest, "content": content.decode(), "source_task": "first"}], "regression_cases": []}
     with pytest.raises(HarnessError, match="基线不一致"):
-        predecessor_tests(host, "another", "first")
+        predecessor_checks(host, "another", "first")
     (repo / "src/chatcopilot/core/probe.py").write_text("VALUE = 42\n")
     with pytest.raises(HarnessError, match="基线不一致"):
-        predecessor_tests(host, "fixture", "first")
+        predecessor_checks(host, "fixture", "first")
     release.receipt["candidate_digest"] = baseline(repo)["source_digest"]
     file.write_bytes(content + b"# changed\n")
     with pytest.raises(HarnessError, match="测试已变化"):
-        predecessor_tests(host, "fixture", "first")
+        predecessor_checks(host, "fixture", "first")
 
 
 def test_inherited_checks_run_against_both_versions_without_changing_the_baseline(tmp_path):
@@ -275,3 +275,111 @@ def test_goal_cli_uses_the_public_controller(command, tmp_path, monkeypatch, cap
     assert called[0][0].task_type == command and called[0][1].model == "worker"
     assert called[0][2]["request_id"] == "stable"
     assert "fixture" in capsys.readouterr().out
+
+
+@pytest.mark.parametrize("retained", [False, True])
+def test_agent_goal_keeps_business_input_and_the_complete_application_suite(tmp_path, retained):
+    import json
+    from copy import deepcopy
+    from chatcopilot.core.private_sqlite import private_directory
+    from chatcopilot.evals.agent_case import case_identity, validate_case
+    from chatcopilot.harness.improvement_verification import ImprovementVerification
+    from chatcopilot.harness.local_verifier import LocalVerifier
+    from chatcopilot.harness.models import CandidateRef, VerificationRequest
+    from chatcopilot.harness.preparation import acceptance
+    from test_live2d_goal_replay import declaration
+
+    data = declaration()
+    output = private_directory(tmp_path / "proposal")
+    draft = private_directory(output / "draft") / "agent_case.json"
+    draft.write_text(json.dumps(data))
+    draft.chmod(0o600)
+    source = application_source(goal_case_ids=[], case_ids=["protected"], goal="Add the work cue behavior",
+                                original_input="Add the work cue behavior")
+    earlier = declaration(input="earlier cue")
+    earlier_id = case_identity(earlier)
+    if retained:
+        source["regression_cases"] = [{"case": earlier, "snapshot_id": earlier_id, "source_task": "previous"}]
+    task = {"task_id": "new-goal", "source": source, "acceptance": acceptance(source)}
+    class Store:
+        def get(self, _):
+            return task
+        def update(self, _, **values):
+            task.update(values)
+            return task
+    class Evaluator:
+        bad_rules = False
+        broken_suite = False
+        broken_retained = False
+        calls = []
+        def capabilities(self):
+            return {"schema": "agentstrata.agent-case/v1"}
+        validate_agent_case = staticmethod(validate_case)
+        def prepare_agent_case(self, source, cancel):
+            case = source["agent_case"]
+            return {**source, "case_ids": [case_identity(case)], "case_snapshot_id": case_identity(case),
+                    "conditions": None, "target_id": "", "repetitions": 3}
+        def run(self, current, _path, run, checks, cancel):
+            self.calls.append((run, tuple(checks)))
+            return {"evaluation_id": run, "target_id": "model", "conditions": {"frozen": True}, "result": {
+                "config_snapshot": {"version_snapshot": {"runtime": {"id": "fixed"},
+                    "verification_sha256": "changed" if self.bad_rules else "fixed"}},
+                "trials": [{"case_id": name, "target_id": "model", "attempt": attempt,
+                    "outcome": "failed" if (self.broken_suite and name == "protected" or self.broken_retained and name == earlier_id) else "passed",
+                    "execution": {"metadata": {"runtime_replay": {"layers": ["gateway", "application", "agent"]}}}}
+                    for name in checks for attempt in range(1, 4)]}}
+    evaluator = Evaluator()
+    verifier = ImprovementVerification(evaluator, LocalVerifier(tmp_path / "local"), Store())
+    candidate = CandidateRef(tmp_path, "candidate", "base")
+    prepared, plan = verifier.prepare(task, candidate, output,
+        {"verification_kind": "agent", "summary": "actual dialogue", "coverage": [
+            {"requirement": "expected_behavior", "checks": ["agent_case"]}]}, lambda: None)
+    assert prepared["original_input"] == source["original_input"]
+    assert prepared["agent_source"]["agent_case"]["input"] == "work cue"
+    assert prepared["agent_source"]["agent_case"]["context"] == ""
+    assert prepared["agent_source"]["agent_case"]["expected_behavior"] == source["original_input"]
+    assert plan.primary_checks == (prepared["agent_source"]["case_snapshot_id"],)
+    assert set(plan.checks) == {"protected", *plan.primary_checks, *([earlier_id] if retained else [])}
+    assert plan.protected_checks == ((earlier_id,) if retained else ())
+    task.update(source=prepared, verification_plan=plan.to_payload())
+    result = verifier.run(VerificationRequest.from_task(task), candidate, "first", list(plan.checks), lambda: None)
+    result.require_valid(plan.checks, 3)
+    assert result.passed
+    for field in ("agent_source", "original_case_source"):
+        assert task["source"][field]["version_conditions"]["verification_sha256"] == "fixed"
+    evaluator.broken_suite = True
+    rejected = verifier.run(VerificationRequest.from_task(task), candidate, "candidate", list(plan.checks), lambda: None)
+    assert "protected" not in rejected.passed and {c.check_id for c in rejected.checks if c.outcome == "failed"} == {"protected"}
+    evaluator.bad_rules = True
+    with pytest.raises(HarnessError, match="版本发生变化"):
+        verifier.run(VerificationRequest.from_task(deepcopy(task)), candidate, "drift", list(plan.checks), lambda: None)
+    if retained:
+        evaluator.bad_rules = evaluator.broken_suite = False
+        evaluator.broken_retained = True
+        task["delivery"] = {"source_digest": "candidate"}
+        with pytest.raises(HarnessError, match="Agent 用例未通过当前基线"):
+            verifier.run(VerificationRequest.from_task(task), candidate, "inherited-baseline", list(plan.checks), lambda: None)
+
+
+def test_accepted_agent_case_is_retained_and_tampering_is_rejected(repair, tmp_path, monkeypatch):
+    from contextlib import nullcontext
+    from types import SimpleNamespace
+    from chatcopilot.evals.agent_case import case_identity
+    from chatcopilot.harness import activation_runtime
+    from chatcopilot.harness.improvement_runtime import predecessor_checks
+    from test_live2d_goal_replay import declaration
+
+    _, _, repo = repair
+    case = declaration()
+    previous = {"source": {"agent_source": {"agent_case": case, "case_snapshot_id": case_identity(case)}}}
+    release = SimpleNamespace(bot_id="fixture", receipt={"candidate_digest": baseline(repo)["source_digest"]})
+    host = SimpleNamespace(repository=repo, store=SimpleNamespace(get=lambda _: previous),
+        lifecycle=SimpleNamespace(operation=lambda _: nullcontext()),
+        evaluator=SimpleNamespace(prepare_agent_case=lambda source, cancel: {"case_snapshot_id": case_identity(source["agent_case"])}))
+    monkeypatch.setattr(activation_runtime, "release_source", lambda *_: release)
+    checks = predecessor_checks(host, "fixture", "accepted")
+    assert checks == {"regression_tests": [], "regression_cases": [
+        {"snapshot_id": case_identity(case), "case": case, "source_task": "accepted"}]}
+    case["input"] = "another trigger"
+    with pytest.raises(HarnessError, match="Agent 用例已变化"):
+        predecessor_checks(host, "fixture", "accepted")

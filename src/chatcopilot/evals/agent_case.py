@@ -12,7 +12,7 @@ from chatcopilot.evals.models import EvalCase
 
 SCHEMA = "agentstrata.agent-case/v1"
 SUITE = "agentstrata-regression-v1"
-_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources", "external_fixtures", "runtime_replay", "admission"}
+_FIELDS = {"schema", "title", "input", "context", "role", "channel_kind", "allowed_tools", "fixtures", "assertions", "expected_behavior", "semantic", "resources", "external_fixtures", "runtime_replay", "admission", "bridge"}
 _ASSERTIONS = {
     "final_contains": {"kind", "value"}, "final_not_contains": {"kind", "value"},
     "tool_called": {"kind", "name", "arguments"}, "tool_not_called": {"kind", "name"},
@@ -20,6 +20,7 @@ _ASSERTIONS = {
     "file_equals": {"kind", "path", "value"}, "file_exists": {"kind", "path"},
     "image_delivered": {"kind"},
     "admission_denied": {"kind"},
+    "avatar_executed": {"kind", "action", "name"},
 }
 # These tools operate through the real product handlers and the trial workspace.
 # External tools require a purpose-built dependency fixture before registration.
@@ -32,7 +33,14 @@ IMAGE_TOOLS = frozenset({"download_image_urls", "send_image_urls_to_user", "send
 
 
 def capabilities() -> dict[str, Any]:
+    from chatcopilot.evals.bridge_cases import AVATAR_TOOLS, AVATAR_EXPRESSIONS, AVATAR_MOTIONS
     return {"schema": SCHEMA, "tools": sorted(ISOLATED_TOOLS | IMAGE_TOOLS | {"search_information"}), "fixtures": ["workspace", "input_image", "http", "delivery"],
+            "bridges": {"live2d": {"tools": sorted(AVATAR_TOOLS), "expressions": sorted(AVATAR_EXPRESSIONS),
+                "motions": sorted(AVATAR_MOTIONS), "role": "owner", "channel_kind": "private",
+                "assertion_example": {"kind": "avatar_executed", "action": "expression", "name": "happy"},
+                "case_fields": {"bridge": "live2d", "runtime_replay": True, "allowed_tools": sorted(AVATAR_TOOLS)},
+                "browser_peer": "controlled",
+                "ordering": "matching executed acknowledgement before the client receives the reply"}},
             "runtime_replay": {"entrypoint": "gateway_application_agent", "production_delivery": False},
             "external_network": False, "production_delivery": False,
             "case_fields": sorted(_FIELDS), "assertions": sorted(_ASSERTIONS)}
@@ -77,6 +85,16 @@ def validate_case(value: Any) -> dict[str, Any]:
     supported = ISOLATED_TOOLS | (IMAGE_TOOLS if case.get("external_fixtures") else frozenset())
     if case.get("runtime_replay") and case.get("external_fixtures"):
         supported = supported | {"search_information"}
+    if "bridge" in case:
+        from chatcopilot.evals.bridge_cases import AVATAR_TOOLS
+        if case["bridge"] != "live2d":
+            raise CaseCapabilityUnavailable("unsupported application bridge")
+        if (case.get("runtime_replay") is False or case["role"] != "owner" or case["channel_kind"] != "private"
+                or case.get("context") or case.get("fixtures") or case.get("resources")
+                or case.get("external_fixtures") or case.get("admission", "allowed") != "allowed"):
+            raise CaseCapabilityUnavailable("Live2D replay supports an isolated private owner conversation and avatar tools")
+        supported = AVATAR_TOOLS
+        case["runtime_replay"] = True
     if set(names) - supported:
         raise CaseCapabilityUnavailable("required tool has no isolated dependency fixture")
     if not isinstance(case["fixtures"], dict):
@@ -93,6 +111,17 @@ def validate_case(value: Any) -> dict[str, Any]:
             raise ValueError("untrusted Agent Case assertion")
         if check["kind"] == "image_delivered" and not case.get("external_fixtures"):
             raise CaseCapabilityUnavailable("image delivery assertion requires isolated dependency fixture")
+        if check["kind"] == "avatar_executed":
+            from chatcopilot.evals.bridge_cases import AVATAR_EXPRESSIONS, AVATAR_MOTIONS
+            action = check.get("action")
+            if action not in ("expression", "motion"):
+                raise ValueError("unknown avatar action kind")
+            catalog = AVATAR_EXPRESSIONS if action == "expression" else AVATAR_MOTIONS
+            if case.get("bridge") != "live2d" or not isinstance(check.get("name"), str) or check["name"] not in catalog:
+                raise ValueError("avatar assertion requires a configured isolated avatar action")
+            writers = {"avatar_apply_pose", "avatar_set_expression" if action == "expression" else "avatar_play_motion"}
+            if not writers.intersection(names):
+                raise ValueError("avatar assertion is outside the frozen allowed tools")
         fields = _ASSERTIONS[check["kind"]]
         if set(check) - fields or fields - {"arguments"} - set(check):
             raise ValueError("invalid assertion fields")

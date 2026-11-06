@@ -125,7 +125,7 @@ class Studio:
             repo = work / row["version"]
             if state == "starting":
                 if row["task"]:
-                    host = runtime.controller(repo, work, start_eval=True)
+                    host = runtime.controller(repo, work, start_eval=True, task_id=row["task"])
                     task = host.get(row["task"])
                     if task["status"] in TERMINAL and task["status"] != "fixed":
                         extra = {}
@@ -146,7 +146,7 @@ class Studio:
                                           **({"predecessor_task_id": previous["task"]} if previous else {}))
                 self.update(msg, "developing", row["reply"], task=task["task_id"])
                 return
-            host = runtime.controller(repo, work)
+            host = runtime.controller(repo, work, task_id=row["task"])
             task = host.get(row["task"])
             if task["status"] not in TERMINAL:
                 stage = str(task.get("stage") or task["status"])
@@ -157,11 +157,11 @@ class Studio:
                 self.update(msg, "verifying" if verifying else "developing",
                             "正在检查改动和已有功能。" if verifying else "开发任务正在处理这次需求。")
             elif task["status"] != "fixed" or not task.get("accepted_candidate"):
-                runtime.stop_evaluation(repo)
+                runtime.stop_evaluation(repo, work, row["task"])
                 reason = str(task.get("message") or task.get("error") or task["status"])
                 self.update(msg, "failed", ("验证未完成。" if state == "verifying" else "开发未完成。") + reason)
             elif state != "packaging":
-                runtime.stop_evaluation(repo)
+                runtime.stop_evaluation(repo, work, row["task"])
                 self.update(msg, "packaging", "改动已通过开发验收，正在生成 Windows 安装包。")
             else:
                 self.finish(row, app, repo, work, host, task)

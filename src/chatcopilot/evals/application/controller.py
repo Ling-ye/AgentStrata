@@ -438,6 +438,7 @@ class EvaluationApplication:
         root: Path | None = None,
         *,
         repository_root: Path | None = None,
+        verification_root: Path | None = None,
         worker: EvaluationWorkerPort,
         validator: Validator | None = None,
         bot_resolver: BotResolver | None = None,
@@ -447,6 +448,13 @@ class EvaluationApplication:
             repository_value = repository_value.absolute()
         _reject_symlink_components(repository_value)
         self.repository_root = repository_value
+        self.verification_root = (verification_root or self.repository_root).expanduser().absolute()
+        _reject_symlink_components(self.verification_root)
+        if verification_root is not None:
+            from chatcopilot.core.source_snapshot import source_manifest
+            self.verification_manifest = source_manifest(self.verification_root)
+        else:
+            self.verification_manifest = None
         root_value = root or self.repository_root / "reports" / "evals" / "evaluations"
         root_path = root_value.expanduser()
         if not root_path.is_absolute():
@@ -704,7 +712,9 @@ class EvaluationApplication:
                 if code_source is not None:
                     source_root = self.root / ".sources"
                     source_root.mkdir(mode=0o700, exist_ok=True)
-                    receipt = prepare_code_source(self.repository_root, code_source, source_root / evaluation_id)
+                    receipt = prepare_code_source(self.repository_root, code_source, source_root / evaluation_id,
+                                                  verification_root=self.verification_root,
+                                                  verification_manifest=self.verification_manifest)
                     write_source_receipt(source_root / f"{evaluation_id}.json", receipt)
                     stored_request["code_source"] = {key: value for key, value in receipt.items() if key != "manifest"}
                     stored_request["bot_spec_sha256"] = receipt["manifest"][stored_request["bot_spec"]]["sha256"]

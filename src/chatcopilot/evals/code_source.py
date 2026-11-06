@@ -45,7 +45,8 @@ _TRUSTED_FILES = frozenset(
 
 
 def prepare_code_source(
-    repository: Path, source: Mapping[str, Any], output: Path
+    repository: Path, source: Mapping[str, Any], output: Path, *, verification_root: Path | None = None,
+    verification_manifest: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if set(source) != {"path", "sha256"}:
         raise ValueError("code source requires path and sha256")
@@ -61,8 +62,9 @@ def prepare_code_source(
     candidate = installed[1] if installed_source else source_manifest(path)
     if manifest_digest(candidate) != source["sha256"]:
         raise ValueError("candidate source changed since submission")
-    trusted = source_manifest(repository)
-    baseline_root, baseline = installed if installed else (repository, trusted)
+    baseline_root, baseline = installed if installed else (repository, source_manifest(repository))
+    verifier = verification_root or repository
+    trusted = source_manifest(verifier) if verification_manifest is None else verification_manifest
     for name in candidate.keys() | baseline.keys():
         if not name.startswith("bots/") or candidate.get(name) == baseline.get(name):
             continue
@@ -73,19 +75,19 @@ def prepare_code_source(
                 raise ValueError("candidate cannot add or remove a Bot runtime envelope")
             validate_configuration((baseline_root / name).read_bytes(), (path / name).read_bytes())
     members = {
-        name: (repository if name.startswith(_TRUSTED_PREFIXES) or name in _TRUSTED_FILES else path)
+        name: (verifier if name.startswith(_TRUSTED_PREFIXES) or name in _TRUSTED_FILES else path)
         for name in candidate
     }
     for name in trusted:
         if name.startswith(_TRUSTED_PREFIXES) or name in _TRUSTED_FILES:
-            members[name] = repository
+            members[name] = verifier
     manifest = {
-        name: (trusted if root == repository else candidate)[name]
+        name: (trusted if root == verifier else candidate)[name]
         for name, root in members.items()
-        if name in (trusted if root == repository else candidate)
+        if name in (trusted if root == verifier else candidate)
     }
     try:
-        for root in dict.fromkeys((path, repository)):
+        for root in dict.fromkeys((path, verifier)):
             subset = {name: value for name, value in manifest.items() if members[name] == root}
             if subset:
                 copy_sources(root, output, subset)

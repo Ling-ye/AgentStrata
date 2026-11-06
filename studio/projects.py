@@ -115,7 +115,7 @@ def import_live2d(parent, root, assets):
     return source_tree(parent, "initial", root, manifest)
 
 
-def socket_path(root):
+def socket_path(root, verification=""):
     base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
-    key = hashlib.sha256(str(root).encode()).hexdigest()[:20]
+    key = hashlib.sha256((str(root) + ("\0" + verification if verification else "")).encode()).hexdigest()[:20]
     return private_directory(base / "as-studio") / (key + ".sock")

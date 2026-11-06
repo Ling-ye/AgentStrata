@@ -75,10 +75,10 @@ class HarnessController:
 
     def start_improvement(self, request, options: RepairOptions, *, request_id=None, launch=True,
                           predecessor_task_id=None):
-        from chatcopilot.harness.improvement_runtime import source, predecessor_tests
+        from chatcopilot.harness.improvement_runtime import source, predecessor_checks
         def load():
-            tests = predecessor_tests(self, request.bot_id, predecessor_task_id) if predecessor_task_id else []
-            return source(self.repository, request, self.evaluator, regression_tests=tests,
+            prior = predecessor_checks(self, request.bot_id, predecessor_task_id) if predecessor_task_id else {}
+            return source(self.repository, request, self.evaluator, **prior,
                           predecessor_task_id=predecessor_task_id)
         identity = {"kind": "application", **asdict(request)}
         if predecessor_task_id:
@@ -914,6 +914,7 @@ class HarnessController:
                 "kind",
                 "scope",
                 "snapshot_digest",
+                "verification_runtime",
                 "governance_version",
                 "original_branch",
                 "run_id",

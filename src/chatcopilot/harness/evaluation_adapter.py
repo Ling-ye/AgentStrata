@@ -22,9 +22,11 @@ class ServiceEvaluator:
     def __init__(
         self, client: EvaluationServiceClient | None = None, *, socket_path: Path | None = None,
         application_checks: tuple[str, ...] = (),
+        verification_runtime: str | None = None,
     ) -> None:
         self.client = client or EvaluationServiceClient(socket_path)
         self.application_checks = application_checks
+        self.verification_runtime = verification_runtime
 
     def application_source(self, bot_id: str, suite_id: str) -> dict[str, Any]:
         request = {"kind": "suite", "suite_id": suite_id, "preset": "full", "repetitions": 3,
@@ -39,6 +41,7 @@ class ServiceEvaluator:
         if target["runtime_id"] not in {"langgraph", "codex"}:
             raise HarnessError("verification_missing", "应用必须选择 LangGraph 或 Codex")
         return {"request": request, "case_ids": list(preview["conditions"]["cases"]),
+                **({"verification_runtime": self.verification_runtime} if self.verification_runtime else {}),
                 "conditions": preview["conditions"], "runtime_id": target["runtime_id"], "target_id": target["target_id"],
                 "evidence": {"run": {key: target[key] for key in
                     ("model", "runtime_id", "provider", "model_api", "auth_mode") if key in target}}}

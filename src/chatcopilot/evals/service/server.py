@@ -45,6 +45,7 @@ class EvaluationServiceRuntime:
         artifact_root: Path,
         application: EvaluationApplication | None = None,
         bot_resolver: EvaluationBotResolver | None = None,
+        verification_root: Path | None = None,
     ) -> None:
         self.repository_root = repository_root.expanduser().resolve()
         self.bot_resolver = bot_resolver or EvaluationBotResolver(self.repository_root)
@@ -53,6 +54,7 @@ class EvaluationServiceRuntime:
             worker=LocalEvaluationWorker(),
             repository_root=self.repository_root,
             bot_resolver=self.bot_resolver,
+            verification_root=verification_root,
         )
 
     def dispatch(self, operation: str, payload: Mapping[str, Any]) -> Any:
@@ -494,12 +496,14 @@ def build_runtime(
     *,
     repository_root: Path,
     artifact_root: Path | None = None,
+    verification_root: Path | None = None,
 ) -> EvaluationServiceRuntime:
     repository = repository_root.expanduser().resolve()
     root = artifact_root or managed_evaluation_root(repository)
     return EvaluationServiceRuntime(
         repository_root=repository,
         artifact_root=root,
+        verification_root=verification_root,
     )
 
 

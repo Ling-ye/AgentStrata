@@ -148,7 +148,10 @@ def test_project_card_reflects_recorded_harness_stages(tmp_path, monkeypatch, st
     studio.submit(project, message, "改一下窗口")
     studio.update(message, "developing", version="initial", task="controlled-task")
     task = {"status": "running", "stage": stage}
-    monkeypatch.setattr(runtime, "controller", lambda *_: SimpleNamespace(get=lambda _: task))
+    def controller(_repo, _state, *, task_id):
+        assert task_id == "controlled-task"
+        return SimpleNamespace(get=lambda _: task)
+    monkeypatch.setattr(runtime, "controller", controller)
     studio.step(message)
     assert studio.conversation(project)[0]["state"] == expected
 
@@ -229,7 +232,10 @@ def test_followup_uses_last_accepted_source_and_reports_verified_behavior(tmp_pa
     host = SimpleNamespace(get=lambda _id: task, lifecycle=SimpleNamespace(operation=lambda _id: nullcontext()))
     release = SimpleNamespace(receipt={"candidate_digest":version}, candidate=candidate,
                               candidate_manifest=manifest, bot_relative="bots/sample/bot.yaml")
-    monkeypatch.setattr(runtime, "controller", lambda *_: host)
+    def controller(_repo, _state, *, task_id):
+        assert task_id == "controlled-first"
+        return host
+    monkeypatch.setattr(runtime, "controller", controller)
     monkeypatch.setattr(activation_runtime, "release_source", lambda *_: release)
     def pack(_repo, stage, **_opts):
         stage.mkdir(parents=True)
@@ -328,7 +334,10 @@ def test_studio_runs_its_own_worker_for_the_imported_project(tmp_path):
     worker = host.lifecycle.workers
     assert isinstance(worker, SystemdWorkerControl)
     assert worker.repository == repo
-    assert worker.runtime_repository == ROOT
+    frozen, digest = runtime.verification_runtime(tmp_path / "state")
+    assert worker.runtime_repository == frozen
+    assert host.evaluator.verification_runtime == digest
+    assert (frozen / "src/chatcopilot/harness/worker.py").read_bytes() == (ROOT / "src/chatcopilot/harness/worker.py").read_bytes()
 
 
 def test_new_project_runs_and_preserves_its_application_regressions(tmp_path):
@@ -413,3 +422,40 @@ def test_trial_ports_are_distinct_and_stable():
     assert ports["port"] != ports["gateway_port"]
     assert ports == trial_ports({"PORT":str(ports["gateway_port"]),
         "AGENTSTRATA_AVATAR_MCP_URL":f"http://127.0.0.1:{ports['port']}/agentstrata/mcp/"}, "PORT")
+
+
+def test_verification_runtime_is_frozen_and_socket_tracks_host_version(tmp_path, monkeypatch):
+    import subprocess
+    from types import SimpleNamespace
+    from studio import runtime
+    from studio.projects import socket_path
+
+    platform = tmp_path / "host"
+    platform.mkdir()
+    subprocess.run(["git", "init", "-q", str(platform)], check=True)
+    module = platform / "src/chatcopilot/evals/rules.py"
+    module.parent.mkdir(parents=True)
+    module.write_text("VALUE = 'first'\n")
+    monkeypatch.setattr(runtime, "__file__", str(platform / "studio/runtime.py"))
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(tmp_path / "sockets"))
+    runtime.verification_runtime.cache_clear()
+    state = tmp_path / "project"
+    try:
+        frozen, identity = runtime.verification_runtime(state)
+        module.write_text("VALUE = 'next host'\n")
+        assert runtime.verification_runtime(state) == (frozen, identity)
+        assert (frozen / "src/chatcopilot/evals/rules.py").read_text() == "VALUE = 'first'\n"
+        runtime.verification_runtime.cache_clear()
+        next_root, next_identity = runtime.verification_runtime(state)
+        assert next_identity != identity and next_root != frozen
+        assert socket_path(state, identity) != socket_path(state, next_identity)
+        monkeypatch.setattr(runtime, "HarnessController", lambda *a, **k: SimpleNamespace(
+            get=lambda _: {"source": {"verification_runtime": identity}}))
+        assert runtime.task_verification_runtime(platform, state, "existing") == (frozen, identity)
+        (frozen / "src/chatcopilot/evals/rules.py").write_text("TAMPERED = True\n")
+        runtime.task_verification_runtime.cache_clear()
+        with pytest.raises(ValueError, match="验证快照已变化"):
+            runtime.task_verification_runtime(platform, state, "existing")
+    finally:
+        runtime.verification_runtime.cache_clear()
+        runtime.task_verification_runtime.cache_clear()

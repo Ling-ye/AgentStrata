@@ -15,10 +15,14 @@ _SCENARIOS = {
     "dialogue": {"live2d", "qq"},
     "avatar-action": {"live2d"},
     "avatar-pose": {"live2d"},
+    "avatar-interaction": {"live2d"},
     "session-isolation": {"live2d"},
     "admission": {"qq"},
     "delivery-unknown": {"qq"},
 }
+AVATAR_EXPRESSIONS = {"happy": 0}
+AVATAR_MOTIONS = {"greet": {"group": "TapBody", "index": 0}}
+AVATAR_TOOLS = frozenset({"avatar_list_actions", "avatar_set_expression", "avatar_play_motion", "avatar_apply_pose"})
 _LIVE2D_ROOT = "integrations/open_llm_vtuber/agentstrata_vtuber"
 _LIVE2D_FILES = ("__init__.py", "bridge.py", "avatar.py", "config.py", "control.py")
 
@@ -72,6 +76,8 @@ def validate(definition: EvalCaseDefinition) -> None:
         raise ValueError("invalid frozen application-bridge scenario")
     if definition.scenario_id == "dialogue" and not params.get("expected_text"):
         raise ValueError("dialogue requires a frozen expected text")
+    if definition.scenario_id == "avatar-interaction" and set(definition.policy.allowed_tools) - AVATAR_TOOLS:
+        raise ValueError("avatar replay tools must belong to the isolated avatar")
 
 
 def unavailable(message: str, *, code: str = "environment_error") -> PipelineFailure:

@@ -21,10 +21,13 @@ from chatcopilot.evals.conditions import evaluation_conditions
 from chatcopilot.evals.report import compare_reports
 from tests.application_fixture import write_application
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def test_managed_bridge_evaluation_binds_sources_and_keeps_candidate_out_of_scoring(tmp_path, monkeypatch):
+@pytest.mark.parametrize("separate_verifier", [False, True])
+def test_managed_bridge_evaluation_binds_sources_and_keeps_candidate_out_of_scoring(tmp_path, monkeypatch, separate_verifier):
     calls = []
 
     class Model(BaseHTTPRequestHandler):
@@ -78,7 +81,10 @@ def test_managed_bridge_evaluation_binds_sources_and_keeps_candidate_out_of_scor
     monkeypatch.setenv("BRIDGE_KEY", "synthetic-bridge-credential")
     monkeypatch.setenv("CHATCOPILOT_SOURCE_URL", "https://example.com/source")
     monkeypatch.setenv("NO_PROXY", "127.0.0.1,localhost")
-    application = EvaluationApplication(tmp_path / "evaluations", repository_root=repository, worker=LocalEvaluationWorker())
+    if separate_verifier:
+        (repository / "src/chatcopilot/evals/bridge_scoring.py").write_text("raise RuntimeError('application verification must not load')\n")
+    application = EvaluationApplication(tmp_path / "evaluations", repository_root=repository,
+        verification_root=ROOT if separate_verifier else None, worker=LocalEvaluationWorker())
     pending = []
     preview = application.preview(bot_id="bridge-eval", request={"kind": "suite", "suite_id": SUITE_ID,
         "preset": "custom", "case_ids": ["live2d-dialogue"], "repetitions": 1, "max_wall_seconds": 90})
