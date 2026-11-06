@@ -109,6 +109,9 @@ PUBLIC_URL_HOSTS = frozenset(
 )
 # Exact, user-selected product footage. Other bytes and locations remain scanned.
 REVIEWED_PRODUCT_MEDIA = {
+    "website/assets/agentstrata-v5.mp4":
+        "0320c26c83e08709bde04aa1b2d1736902a6b9944b57489a43e9b2cb47fd41ce",
+    # Preserve the previously reviewed V4 fingerprint for Git history scans.
     "website/assets/agentstrata-v4.mp4":
         "38be8ff015dfc0043307ac9d9b9a90475cb233293c68105bf11a1b5b30bf212b",
 }
