@@ -8,3 +8,5 @@
 @media(prefers-reduced-motion:reduce){html{scroll-behavior:auto}*,*::before,*::after{transition:none!important;animation:none!important}}
 .start-grid>*{min-width:0}
 .site-header:not(.enhanced) .menu-toggle{display:none}
+
+.setup-steps{padding-left:22px;margin:22px 0}.setup-steps li{padding-left:5px;margin:14px 0;font-size:13px}.setup-steps strong,.setup-steps span{display:block}.setup-steps span{color:var(--muted);margin-top:3px}.release-note{border-left:3px solid var(--accent);padding:14px 18px;background:var(--panel)}
