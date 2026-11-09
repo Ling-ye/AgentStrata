@@ -24,6 +24,8 @@ from chatcopilot.authorization.policy import AdmissionPolicy, IdentityPolicy
 from chatcopilot.botspec.runtime import BotRuntimeContext
 from chatcopilot.botspec.inspection import source_revision, declared_configuration
 from chatcopilot.channels.base import ChannelHealth
+from chatcopilot.channels.qq_official import QQOfficialChannelConfig
+from chatcopilot.channels.qq_official.config import QQOfficialError
 from chatcopilot.channels.qq_onebot import (
     OneBotChannelConfig,
     OneBotConfigError,
@@ -118,7 +120,7 @@ class GatewayRuntimeConfig:
     state_anchor: Path
     workspace_root: Path
     wiki_root: Path | None
-    channel: OneBotChannelConfig | WeixinChannelConfig | None
+    channel: OneBotChannelConfig | WeixinChannelConfig | QQOfficialChannelConfig | None
     policy_version: str
     credentials: tuple[GatewayCredentialBinding, ...] = field(default=(), repr=False)
     client_roles: Mapping[str, Role] = field(default_factory=dict)
@@ -480,8 +482,9 @@ def parse_gateway_runtime_config(
     gateway = runtime.gateway
     qq = runtime.channels.qq
     weixin = runtime.channels.weixin
-    if (gateway is None or (qq is not None and weixin is not None)
-            or (qq is None and weixin is None and not gateway.clients)):
+    official = runtime.channels.qq_official
+    if (gateway is None or sum(c is not None for c in (qq, weixin, official)) > 1
+            or (qq is None and weixin is None and official is None and not gateway.clients)):
         raise GatewayRuntimeConfigurationError(
             "gateway_qq_botspec_required",
             "Gateway runtime requires configured clients or one QQ/Weixin channel",
@@ -493,9 +496,10 @@ def parse_gateway_runtime_config(
                 f"Legacy QQ runtime environment variable is not accepted: {key}",
             )
 
-    channel_spec = qq if qq is not None else weixin
+    channel_spec = qq if qq is not None else weixin if weixin is not None else official
     gateway_token = _required_env(values, gateway.token_env) if channel_spec is not None else None
-    channel_token = _required_env(values, channel_spec.access_token_env) if channel_spec is not None else None
+    channel_token = (_required_env(values, official.app_secret_env) if official is not None
+                     else _required_env(values, channel_spec.access_token_env) if channel_spec is not None else None)
     if channel_token is not None and gateway_token == channel_token:
         raise GatewayRuntimeConfigurationError(
             "gateway_token_reused",
@@ -580,7 +584,7 @@ def parse_gateway_runtime_config(
             private=False,
         )
 
-    channel: OneBotChannelConfig | WeixinChannelConfig | None = None
+    channel: OneBotChannelConfig | WeixinChannelConfig | QQOfficialChannelConfig | None = None
     try:
         if weixin is not None:
             assert channel_token is not None
@@ -591,6 +595,9 @@ def parse_gateway_runtime_config(
                 action_timeout_seconds=weixin.action_timeout_seconds, max_frame_bytes=weixin.max_frame_bytes)
             if channel.user_id not in {value.strip() for value in str(values.get("CHATCOPILOT_ADD_OWNER_IDS", "")).split(",")}:
                 raise WeixinError("weixin_owner_not_configured")
+        elif official is not None:
+            channel = QQOfficialChannelConfig(channel_id=official.channel_id,
+                app_id=_required_env(values, official.app_id_env), app_secret=str(channel_token))
         elif qq is not None:
             channel = OneBotChannelConfig(
             channel_id=qq.channel_id,
@@ -600,7 +607,7 @@ def parse_gateway_runtime_config(
             action_timeout_seconds=qq.action_timeout_seconds,
             max_frame_bytes=qq.max_frame_bytes,
         )
-    except (OneBotConfigError, WeixinError) as exc:
+    except (OneBotConfigError, WeixinError, QQOfficialError) as exc:
         raise GatewayRuntimeConfigurationError(
             exc.code,
             "Channel configuration is invalid",
@@ -770,7 +777,7 @@ def build_gateway_runtime_host(
             actor_executor=actor_executor,
             identity_policy=IdentityPolicy.from_iterables(
                 owners=channel_assembly.owners if channel_assembly is not None else (),
-                admins=get_admins(),
+                admins=() if isinstance(config.channel, QQOfficialChannelConfig) else get_admins(),
             ),
             admission_policy=(channel_assembly.admission_policy if channel_assembly is not None else
                               AdmissionPolicy.from_raw(qq_users=None, policy_version=config.policy_version)),

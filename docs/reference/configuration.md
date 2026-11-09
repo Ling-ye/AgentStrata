@@ -383,3 +383,33 @@ Gateway QQ 使用 `channels.qq`；Feishu legacy 使用 adapter；`chat.file_uplo
 - [应用与 Agent 声明](../../src/chatcopilot/contracts/application.py)、[配置文件解析](../../src/chatcopilot/core/application_configuration.py)
 - [类型化装配模型](../../src/chatcopilot/botspec/model.py)、[字段解析与验证](../../src/chatcopilot/botspec/loader.py)
 - [显式配置迁移](../../src/chatcopilot/botspec/profile_migration.py)、[运行装配](../../src/chatcopilot/botspec/runtime.py)
+
+
+## channels.qq_official
+
+QQ 官方机器人使用独立的 `gateway + channels.qq_official` 配置，不是个人 QQ 的
+OneBot 接入，不可与 `channels.qq`、`channels.weixin` 或 legacy `platform` 混用。
+
+```yaml
+gateway:
+  host: 127.0.0.1
+  port_env: CHATCOPILOT_GATEWAY_PORT
+  token_env: CHATCOPILOT_GATEWAY_TOKEN
+  state_root_env: CHATCOPILOT_GATEWAY_STATE_ROOT
+channels:
+  qq_official:
+    channel_id: qq_official
+    app_id_env: AGENTSTRATA_QQ_APP_ID
+    app_secret_env: AGENTSTRATA_QQ_APP_SECRET
+```
+
+- `channel_id` 固定为 `qq_official`；账号身份为平台分配的 AppID。
+- `app_id_env` / `app_secret_env` 只保存环境变量引用，不在 BotSpec 中保存凭据。
+  AppSecret 由官方接口交换为短期 access token；二者不可混称。
+- Gateway token 与 AppSecret 必须不同。不要把私有 runtime.env、credentials.env 提交到仓库。
+- Studio 标准应用的需求源为私有 `applications/<project-id>/application.json`，
+  BotSpec、AgentProfile 和提示词由它生成；凭据单独保存在权限为 0600 的 credentials.env。
+  运行前须配置聊天模型；标准路径不启动 Codex 开发 worker。
+- 当前仅支持平台准入允许的 C2C 和群 @ 文本接收、对应消息的文本回复。不申请机器人、
+  不自动审核/发布、不绕过 QQ 平台权限，不赋予平台成员 Owner/Admin 权限。
+- 运行和健康状态含义见 [运行时 QQ 官方机器人](runtime.md#qq-官方机器人标准应用)。

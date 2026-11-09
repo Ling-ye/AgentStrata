@@ -8,6 +8,7 @@ from typing import Any
 
 from chatcopilot.authorization.policy import AdmissionPolicy
 from chatcopilot.channels.base import ChannelDriver, InboundEventHandler
+from chatcopilot.channels.qq_official import QQOfficialChannelConfig, QQOfficialWebSocketDriver
 from chatcopilot.channels.qq_onebot import OneBotChannelConfig, OneBotForwardWebSocketDriver
 from chatcopilot.channels.qq_onebot.driver import ConnectionFactory
 from chatcopilot.channels.qq_onebot.resources import QqCdnResourceFetcher
@@ -110,7 +111,7 @@ def assemble_weixin_channel(
 
 
 def assemble_channel(
-    config: OneBotChannelConfig | WeixinChannelConfig,
+    config: OneBotChannelConfig | WeixinChannelConfig | QQOfficialChannelConfig,
     *,
     state_root: Path,
     policy_version: str,
@@ -118,6 +119,16 @@ def assemble_channel(
     connection_factory: ConnectionFactory | None = None,
     weixin_client: Any = None,
 ) -> ChannelAssembly:
+    if isinstance(config, QQOfficialChannelConfig):
+        return ChannelAssembly(
+            account=ChannelAccountRef("qq_official", config.app_id),
+            create_driver=lambda inbound: QQOfficialWebSocketDriver(config, inbound),
+            resource_fetcher=_NoOfficialResources(), owners=(),
+            admission_policy=AdmissionPolicy(
+                qq_users=AdmissionPolicy.from_raw(qq_users=None, policy_version=policy_version).qq_users,
+                policy_version=policy_version, qq_official_account=config.app_id),
+            outbound=OutboundDeliveryPolicy(120),
+        )
     if isinstance(config, OneBotChannelConfig):
         return assemble_qq_channel(
             config, policy_version=policy_version, qq_users=qq_users,
@@ -127,3 +138,8 @@ def assemble_channel(
         config, state_root=state_root, policy_version=policy_version,
         qq_users=qq_users, client=weixin_client,
     )
+
+
+class _NoOfficialResources:
+    async def fetch(self, ticket, *, max_bytes):
+        raise ValueError("Official QQ MVP supports text only")

@@ -1,6 +1,6 @@
 # 文档导航
 
-AgentStrata 是面向外部应用的可定制 Agent 运行系统。自有四层架构、Agent 能力和 LangGraph 执行策略构成产品主体，Harness 与 Eval 支撑持续改进，Codex 作为可选业务执行器和当前开发 worker 接入。
+AgentStrata 是面向应用的 Agent 引擎和工作台，通过对话创建、运行和改进 Agent 应用。自有四层架构、Agent 能力和 LangGraph 执行策略构成产品主体，Harness 与 Eval 支撑持续改进，Codex 作为可选业务执行器和当前开发 worker 接入。
 初次了解项目先看[首页](../README.md)，理解模块关系看[框架示意图](../README.md#框架总览)，技术约束与源码入口见[架构总览](reference/architecture.md)。
 
 本页供使用者与开发者选择操作路径；AI 协作者从 [AGENTS](../AGENTS.md)按任务逐层读取。
@@ -40,7 +40,7 @@ M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求
 | 核对 Live2D 与 QQ 桥接的配置、权限和回执 | [外部桥接基线](reference/runtime.md#外部桥接基线) |
 | 建立桥接评测基线、对照代码候选 | [桥接测评](guides/evaluation.md#live2d-与-qq-桥接基线) / [版本对照](guides/evaluation.md#代码基线与候选对照) |
 | 运行机器人应用 | [首次部署](guides/deployment.md) / [实例运维](guides/instances.md) |
-| 在网页里开发独立桌面应用 | [本机开发工作台](guides/desktop-studio.md) |
+| 在网页里配置、运行应用或开发独立桌面应用 | [本机应用工作台](guides/desktop-studio.md) |
 | 使用已有 Live2D 客户端或生成器 | [Live2D 指南](guides/live2d.md) |
 
 ## Harness 与 Evaluation

@@ -225,3 +225,26 @@ Gateway 只允许绑定本人单聊，角色按私有 Owner ID 配置采信，�
 微信文件回传按每次真实请求分别记录出站和回执，全部确认后工具才返回完整成功。
 平台未返回消息 ID 时保持为空，不用客户端 ID 冒充；未知结果不自动重发，确认不代表已读。
 当前只处理个人单聊文本、图片和文件；真实扫码与媒体往返需独立验收。
+
+
+## QQ 官方机器人标准应用
+
+Studio 的标准 QQ 应用复用 BotSpec → Host → Gateway → Channel → Agent 应用链路，
+通过 `ApplicationManager.get/configure/check/start/stop` 管理，不需要生成独立运行引擎。
+配置字段见 [channels.qq_official](configuration.md#channelsqq_official)。
+
+- `configure` 支持需求的部分更新，空 AppSecret 保留已有凭据；运行中必须先停止再修改。
+- `check` 只验证本地配置和聊天模型绑定，不访问 QQ，不代表凭据有效或真实收发成功。
+- `start` / `stop` 使用每应用稳定的 Linux/WSL systemd 用户服务；重复启动不产生第二个实例。
+  Studio 或浏览器关闭不会停止应用。当前依赖可用的用户级 systemd。
+- `get` 区分 `process_state`、`channel.state/connected/error_code` 与
+  `end_to_end_verified`。进程 active 时通过本机 Gateway 的只读 `channels.list` 查询渠道；
+  Gateway token 只用于内部认证，不返回前端。状态不读原始日志，不回传 provider 原文。
+- 凭据错误/API 拒绝会显示渠道错误码和检查 AppID、AppSecret、平台权限及网络的提示，
+  不能只凭进程 active 判定可用。Gateway 不可达单独标为 `gateway_health_unavailable`。
+  渠道 connected 仅表示 WebSocket 已连接，真实的模型调用和消息投递仍需测试账号验证，
+  因此当前 `end_to_end_verified` 始终为 false。
+- QQ 官方账号与 OneBot 数字 QQ 身份隔离。平台允许的成员仅以普通用户进入应用，
+  不继承 OneBot 的白名单、Owner、Admin 或显示名权限。
+- MVP 仅处理 C2C 与群 @ 文本。驱动只允许回复本进程观察到、仍在回复时限内的消息，
+  无主动群发、附件发送或账号申请能力。

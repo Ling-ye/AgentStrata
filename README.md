@@ -2,7 +2,7 @@
 
 # AgentStrata
 
-### 面向外部应用的 Agent 定制、运行与交付系统
+### 面向应用的 Agent 引擎和工作台
 
 **自有四层架构 · 可优化的 LangGraph Agent · 外部能力接入 · Harness 与 Eval**
 
@@ -14,7 +14,7 @@
 
 </div>
 
-AgentStrata 是面向外部应用的 Agent 定制、运行与交付系统。它提供自有基础 Agent 和运行底座，通过 Harness 根据应用需求，对 Agent 能力及接入组件进行针对性开发与验证，最终交付能够在目标环境运行的特化 Agent，以及配套的插件、适配器或其他接入组件。不同应用共享基础能力，保留各自的特化配置与必要实现。
+AgentStrata 是面向应用的 Agent 引擎和工作台，让用户通过对话创建、运行和改进 Agent 应用。底层复用 Agent、渠道接口、工具和运行管理；已有能力通过配置装配，需要新增代码时再进入 Harness 开发与 Eval 验证。应用共享基础能力，保留各自的配置、数据和必要实现。工作台的使用方式与限制见[本机工作台指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md)。
 
 项目自行实现能力装配、上下文组织、工具使用，以及基于 LangGraph 的执行循环与协作策略；**这些自有实现都是 Harness 的主要优化对象**。独立应用可以复用 Console，并在本机将对话与执行记录交给 Harness 继续改进，经过原有验收和版本切换机制启用新版本。安装方式见[独立应用交付](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#独立应用交付与本机改进)。
 

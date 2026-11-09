@@ -17,7 +17,7 @@ from chatcopilot.core.private_sqlite import private_directory
 
 class Models(BaseModel):
     model: str
-    worker: str
+    worker: str = ""
     endpoint: str = ""
     key: str = ""
     chatgpt: bool = False
@@ -97,6 +97,10 @@ def routes(home, framework, guide):
         data = {"connections":{"chat":connection, "worker":worker},
                 "profiles":{"application":{"connection":"chat","model":body.model},
                             "worker":{"connection":"worker","model":body.worker}}, "bindings":bindings}
+        if not body.worker.strip():
+            data["connections"].pop("worker")
+            data["profiles"].pop("worker")
+            data["bindings"].pop("harness")
         def credential(_new, _old):
             if not body.chatgpt and body.key:
                 write_private(credentials, "AGENTSTRATA_STUDIO_API_KEY=" + json.dumps(body.key) + "\n")

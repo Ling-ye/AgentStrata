@@ -8,6 +8,7 @@ import sqlite3
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -18,6 +19,7 @@ from studio.workspace import Studio
 class Create(BaseModel):
     id: UUID
     live: bool = False
+    application_type: str = "desktop"
 
 
 class Message(BaseModel):
@@ -75,6 +77,11 @@ def application(home, framework, token, *, run_worker=True):
         response.headers["X-Content-Type-Options"] = "nosniff"
         return response
 
+    @app.exception_handler(RequestValidationError)
+    async def invalid_fields(_request, _exc):
+        # Validation errors must not echo raw credential fields into responses/logs.
+        return JSONResponse({"detail": "输入格式无效，请检查字段长度和类型"}, 422)
+
     @app.exception_handler(ValueError)
     async def invalid(_request, exc):
         return JSONResponse({"detail":str(exc)}, 400)
@@ -98,7 +105,7 @@ def application(home, framework, token, *, run_worker=True):
 
     @app.post("/api/projects")
     def create(body: Create):
-        return {"id":studio.create(body.id.hex, live=body.live)}
+        return {"id":studio.create(body.id.hex, live=body.live, application_type=body.application_type)}
 
     @app.get("/api/projects/{project}/messages")
     def messages(project: UUID):
@@ -158,6 +165,9 @@ def application(home, framework, token, *, run_worker=True):
             except sqlite3.IntegrityError as exc:
                 raise HTTPException(409, "当前已有其他改动正在处理") from exc
         return {"ok": True}
+
+    from studio.workbench_api import application_routes
+    app.include_router(application_routes(studio))
 
     from studio.setup import routes
     app.include_router(routes(home, framework, guide))

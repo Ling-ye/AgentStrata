@@ -89,7 +89,7 @@ class IdentityPolicy:
         evidence_digest: str,
     ) -> Principal:
         # QQ display names are descriptive and never participate in role matching.
-        allow_name_match = turn.conversation.platform.strip().lower() not in {"qq", "weixin"}
+        allow_name_match = turn.conversation.platform.strip().lower() not in {"qq", "weixin", "qq_official"}
         matched_name = turn.sender_user_name if allow_name_match else None
         role = Role.USER
         for identity in self.owners:
@@ -117,6 +117,7 @@ class AdmissionPolicy:
     policy_version: str
     weixin_account: str | None = None
     weixin_user: str | None = None
+    qq_official_account: str | None = None
 
     @classmethod
     def from_raw(
@@ -144,6 +145,12 @@ class AdmissionPolicy:
             )
         principal = request.principal
         conversation = principal.conversation
+        if conversation.platform.strip().lower() == "qq_official":
+            allowed = bool(self.qq_official_account and principal.account_id == self.qq_official_account
+                           and conversation.chat_kind in {"group", "p2p"}
+                           and principal.user_id and conversation.chat_id)
+            return _decision(request, allowed=allowed, code="qq-official-platform-member" if allowed else "qq-official-invalid",
+                             policy_version=self.policy_version)
         if conversation.platform.strip().lower() == "weixin":
             if principal.account_id != self.weixin_account or not self.weixin_account:
                 code = "weixin-account-invalid"

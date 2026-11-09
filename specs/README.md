@@ -24,6 +24,8 @@
 
 ## 待确认的设计条件
 
+- [本机 Agent 应用工作台](desktop-app-studio/spec.md)：标准应用的对话配置与运行复用现有引擎；QQ 官方真实收发、普通用户试用和桌面交付分别验收。
+
 - [独立应用交付与本机改进](standalone-agent-applications/spec.md)：复用现有能力，补齐独立安装、应用版本归属和本机反馈更新闭环。
 - [独立 Live2D 生成插件](live2d-generation/spec.md)：多模态输入、模型资产交付及独立于 AgentRuntime 的生成流程。
 - [外部软件插件与受管部署](external-software-plugins/spec.md)：固定版本自动安装、独立发行与部署验收。

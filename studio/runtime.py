@@ -138,7 +138,7 @@ async def discuss(home, session, request, text):
             decision = json.loads(raw)
         except ValueError:
             continue
-        if (isinstance(decision, dict) and decision.get("action") in {"discuss", "develop", "new_project"}
+        if (isinstance(decision, dict) and decision.get("action") in {"discuss", "develop", "new_project", "configure"}
                 and isinstance(decision.get("reply"), str)):
             if show_notice:
                 decision["reply"] += "\n\n" + suffix

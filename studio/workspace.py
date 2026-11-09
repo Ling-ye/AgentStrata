@@ -27,14 +27,20 @@ class Studio:
         self.framework = framework
         self.db = PrivateDatabase(home / "studio.sqlite", _SCHEMA)
 
-    def create(self, project_id, *, live=False):
+    def create(self, project_id, *, live=False, application_type="desktop"):
+        self.directory(project_id)
+        if application_type not in {"desktop", "qq_official"} or (live and application_type != "desktop"):
+            raise ValueError("不支持的应用类型")
         with self.db.connect() as db:
             existing = db.execute("SELECT * FROM projects WHERE id=?", (project_id,)).fetchone()
         if existing:
-            if (existing["bot"] == "live2d-desktop") != live:
+            if ((existing["bot"] == "live2d-desktop") != live
+                    or existing["bot"].startswith("qq-official-") != (application_type == "qq_official")):
                 raise ValueError("已存在的会话属于另一种应用")
             return project_id
         bot, title, version, assets = "app-" + project_id, "新应用", "", None
+        if application_type == "qq_official":
+            bot, title = "qq-official-" + project_id, "QQ 官方机器人"
         if live:
             root, payload = projects.select_live2d()
             projects.import_live2d(self.directory(project_id), root, payload)
@@ -51,18 +57,22 @@ class Studio:
 
     def projects(self):
         with self.db.connect() as db:
-            return [dict(row) for row in db.execute("SELECT id,name,bot FROM projects ORDER BY created DESC")]
+            return [{**dict(row), "application_type": "qq_official" if row["bot"].startswith("qq-official-") else "desktop"}
+                    for row in db.execute("SELECT id,name,bot FROM projects ORDER BY created DESC")]
 
     def conversation(self, project_id):
         with self.db.connect() as db:
             if not db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
                 raise KeyError("会话不存在")
             rows = [dict(row) for row in db.execute(
-                "SELECT id,text,state,reply,task,build,launched,version FROM messages WHERE project=? ORDER BY rowid", (project_id,))]
+                "SELECT id,text,state,reply,task,build,launched,version,goal FROM messages WHERE project=? ORDER BY rowid", (project_id,))]
         for row in rows:
             if row["state"] == "failed":
                 row["retryable"] = self.retryable(project_id, row)
             row.pop("version")
+            proposal = row.pop("goal")
+            if row["state"] == "configure" and proposal:
+                row["proposal"] = json.loads(proposal)
         return rows
 
     def retryable(self, project_id, row):
@@ -106,9 +116,35 @@ class Studio:
         state = row["state"]
         try:
             if state == "thinking":
-                context = json.dumps({"current_application": app["name"], "already_bound": bool(app["version"]),
+                standard = app["bot"].startswith("qq-official-")
+                definition = {}
+                if standard:
+                    from studio.applications import ApplicationManager
+                    saved = ApplicationManager(self.state_dir, self.framework).get(app["id"])
+                    definition = {key: saved.get(key, "") for key in ("name", "instructions")}
+                context = json.dumps({"saved_definition": definition, "application_type": "qq_official" if standard else "desktop", "current_application": app["name"], "already_bound": bool(app["version"]),
                                       "message": row["text"]}, ensure_ascii=False)
                 decision = asyncio.run(runtime.discuss(self.state_dir, app["id"], msg, context))
+                if decision["action"] == "configure" and not standard and not app["version"]:
+                    with self.db.connect(write=True) as db:
+                        db.execute("UPDATE projects SET bot=? WHERE id=?", ("qq-official-" + app["id"], app["id"]))
+                    standard = True
+                if standard:
+                    if decision["action"] == "configure":
+                        proposal = {"name": str(decision.get("name") or app["name"]).strip()[:100],
+                                    "instructions": str(decision.get("instructions") or "").strip()[:8000]}
+                        if not proposal["instructions"]:
+                            self.update(msg, "discuss", "请描述机器人的用途和回复要求。")
+                            return
+                        self.update(msg, "configure", decision["reply"], goal=json.dumps(proposal, ensure_ascii=False))
+                    elif decision["action"] == "develop":
+                        self.update(msg, "discuss", "此请求需要新增代码。当前 QQ 工作台先支持用途配置和运行；代码改进请使用高级开发入口，不能把尚未实现的能力当作配置启用。")
+                    else:
+                        self.update(msg, decision["action"], decision["reply"])
+                    return
+                if decision["action"] == "configure":
+                    self.update(msg, "discuss", "请先创建 QQ 官方机器人应用，再配置渠道。")
+                    return
                 if decision["action"] != "develop":
                     self.update(msg, decision["action"], decision["reply"])
                     return

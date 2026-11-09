@@ -96,11 +96,21 @@ class WeixinChannelSpec:
 
 
 @dataclass(frozen=True)
+class QQOfficialChannelSpec:
+    """Official QQ bot; only environment references belong in public configuration."""
+
+    channel_id: str = "qq_official"
+    app_id_env: str = "AGENTSTRATA_QQ_APP_ID"
+    app_secret_env: str = "AGENTSTRATA_QQ_APP_SECRET"
+
+
+@dataclass(frozen=True)
 class ChannelsSpec:
     """Transport Channels owned by the Bot's Gateway."""
 
     qq: QQChannelSpec | None = None
     weixin: WeixinChannelSpec | None = None
+    qq_official: QQOfficialChannelSpec | None = None
 
 
 @dataclass(frozen=True)

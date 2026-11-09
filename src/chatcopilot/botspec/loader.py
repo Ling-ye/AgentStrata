@@ -40,6 +40,7 @@ from chatcopilot.botspec.model import (
     PromptSpec,
     QQChannelSpec,
     WeixinChannelSpec,
+    QQOfficialChannelSpec,
     RagSpec,
     SkillsSpec,
     SubagentBudgetSpec,
@@ -63,7 +64,7 @@ _GATEWAY_FIELDS = frozenset(
     {"protocol_version", "host", "port_env", "token_env", "state_root_env",
      "max_concurrent_turns", "max_pending_ingress", "clients"}
 )
-_CHANNELS_FIELDS = frozenset({"qq", "weixin"})
+_CHANNELS_FIELDS = frozenset({"qq", "weixin", "qq_official"})
 _QQ_CHANNEL_FIELDS = frozenset(
     {
         "type",
@@ -145,6 +146,7 @@ def validate_botspec(spec: BotSpec, *, environment: dict[str, str] | None = None
 
         native_gateway = spec.gateway is not None and (
             (platform_type == "weixin" and spec.channels.weixin is not None)
+            or (platform_type == "qq_official" and spec.channels.qq_official is not None)
             or (platform_type == "gateway" and bool(spec.gateway.clients))
         )
         if not is_supported(platform_type) and not native_gateway:
@@ -326,6 +328,18 @@ def _validate_gateway_channels(
     raw_platform = raw.get("platform")
     raw_gateway = raw.get("gateway")
     raw_channels = raw.get("channels")
+    official = spec.channels.qq_official
+    if official is not None:
+        native = raw_channels.get("qq_official", {}) if isinstance(raw_channels, dict) else {}
+        if set(native) - set(QQOfficialChannelSpec.__dataclass_fields__):
+            issues.append(ValidationIssue("error", "channels.qq_official contains unknown fields", "channels.qq_official"))
+        if spec.channels.qq is not None or spec.channels.weixin is not None or spec.gateway is None or "platform" in raw:
+            issues.append(ValidationIssue("error", "Official QQ requires one gateway channel", "channels.qq_official"))
+        if official.channel_id != "qq_official":
+            issues.append(ValidationIssue("error", "Official QQ channel_id must be qq_official", "channels.qq_official"))
+        for field in ("app_id_env", "app_secret_env"):
+            if not _ENV_PREFIX_RE.fullmatch(getattr(official, field)):
+                issues.append(ValidationIssue("error", "Credentials must reference environment variables", "channels.qq_official." + field))
     weixin = spec.channels.weixin
     if weixin is not None:
         fields = set(WeixinChannelSpec.__dataclass_fields__)
@@ -437,7 +451,7 @@ def _validate_gateway_channels(
             seen_tokens.add(client.token_env)
             if client.role not in {"owner", "user"}:
                 issues.append(ValidationIssue("error", "客户端 role 仅支持 owner/user", field + ".role"))
-        if qq is None and weixin is None:
+        if qq is None and weixin is None and official is None:
             if not gateway.clients:
                 issues.append(ValidationIssue("error", "Gateway 必须声明渠道或客户端", "gateway.clients"))
             if "platform" in raw:
@@ -619,6 +633,9 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         weixin_channel = weixin_value
     else:
         raise ValueError("channels.weixin 必须是 mapping")
+    official_channel = channels.get("qq_official")
+    if "qq_official" in channels and not isinstance(official_channel, dict):
+        raise ValueError("channels.qq_official must be mapping")
     prompts = _mapping(data.get("prompts"), "prompts")
     tools = _mapping(data.get("tools", {}), "tools")
     llm = _mapping(data.get("llm", {}), "llm")
@@ -659,6 +676,7 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
         PlatformSpec(type="qq", adapter="gateway")
         if qq_channel is not None
         else PlatformSpec(type="weixin", adapter="gateway") if weixin_channel is not None
+        else PlatformSpec(type="qq_official", adapter="gateway") if official_channel is not None
         else PlatformSpec(type="gateway", adapter="gateway") if gateway_configured and gateway.get("clients")
         else PlatformSpec(
             type=str(platform.get("type", "")).strip(),
@@ -750,6 +768,10 @@ def _parse_botspec(data: dict[str, Any], source_path: Path) -> BotSpec:
                 if qq_channel is not None
                 else None
             ),
+            qq_official=(QQOfficialChannelSpec(**{
+                name: _strict_string(official_channel.get(name, getattr(QQOfficialChannelSpec(), name)), "channels.qq_official." + name)
+                for name in QQOfficialChannelSpec.__dataclass_fields__
+            }) if official_channel is not None else None),
             weixin=(WeixinChannelSpec(
                 **{name: _strict_string(weixin_channel.get(name, getattr(WeixinChannelSpec(), name)),
                                         "channels.weixin." + name)

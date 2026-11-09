@@ -12,8 +12,8 @@ async function choose(id) {
   selected = id; pending = null; sessionStorage.setItem('project', id);
   el('input').value = ''; el('messages').replaceChildren(); await refresh();
 }
-async function create(live=false) {
-  const result = await api('projects',{id:crypto.randomUUID(),live});
+async function create(live=false, application_type="desktop") {
+  const result = await api('projects',{id:crypto.randomUUID(),live,application_type});
   await choose(result.id); return result.id;
 }
 function button(text, fn) {const b=document.createElement('button'); b.textContent=text; b.onclick=()=>act(fn); return b;}
@@ -30,6 +30,7 @@ function turn(row,id) {
     if(row.retryable)actions.append(button('重试此请求',async()=>{await api('projects/'+id+'/messages/'+row.id+'/retry',{});await refresh();}));
     else {const note=document.createElement('p');note.textContent='旧任务及证据已保留，只读查看。请在下方提出新的开发请求。';actions.append(note);}
   }
+  if(row.state==='configure') actions.append(button('应用这份配置',async()=>{await api('projects/'+id+'/application/proposals/'+row.id+'/apply',{});window.workbench.reset();await refresh();}));
   if(row.state==='ready'){
     const url='projects/'+id+'/builds/'+row.id;
     actions.append(button('试用桌面版',async()=>{el('notice').textContent=(await api(url+'/try',{})).message;}));
@@ -45,6 +46,7 @@ async function refresh(){
   const messages=active?await api('projects/'+id+'/messages'):[];if(id!==selected)return;
   el('welcome').hidden=messages.length>0;el('messages').replaceChildren(...messages.map(row=>turn(row,id)));
   busy=messages.some(r=>['thinking','starting','developing','verifying','packaging'].includes(r.state));el('send').disabled=busy;
+  await window.workbench.render(active,api,act);
 }
 el('compose').onsubmit=event=>{event.preventDefault();void act(async()=>{
   const text=el('input').value.trim();if(!text||busy||submitting)return;
@@ -58,7 +60,7 @@ el('compose').onsubmit=event=>{event.preventDefault();void act(async()=>{
   } finally {submitting=false;el('send').disabled=busy;}
 });};
 el('input').onkeydown=event=>{if(event.key==='Enter'&&!event.shiftKey&&!event.isComposing){event.preventDefault();el('compose').requestSubmit();}};
-el('new').onclick=()=>act(()=>choose(''));el('live').onclick=()=>act(()=>create(true));
+el('new').onclick=()=>act(()=>choose(''));el('live').onclick=()=>act(()=>create(true));el('qq').onclick=()=>act(()=>create(false,'qq_official'));
 async function setup(){
   const value=await api('setup');el('model').value=value.models.application||'';el('worker').value=value.models.worker||'';
   const states={ready:'已登录',missing:'待登录',invalid:'需要重新登录'};
