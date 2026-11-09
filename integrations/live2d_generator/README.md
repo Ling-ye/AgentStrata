@@ -15,6 +15,8 @@
 - `types.py` / `config.py`：请求与 provider 端口、固定配置。
 - `repository.py` / `service.py`：私有任务、输入校验和生成流程。
 - `providers.py` / `rigging.py`：Images、See-through 与固定版本自动绑定器。
+- `head_binding.py`：收敛单视图素材的水平转头形变，按同一俯仰和歪头姿态插值。
+- `neck_binding.py`：在绑定器的结构化 MOC 输出中连接头颈，复用头部参数并固定颈部下端。
 - `runtime.py` / `web.py` / `cli.py`：单进程任务控制、本地工作台和 CLI。
 - `character_types.py` / `character_repository.py` / `preset_files.py`：角色契约、版本存储、文件完整性和成品格式。
 - `character_service.py` / `preset_service.py`：角色、备份、分发用例；GitHub 下载端口由 Runtime 注入。

@@ -507,3 +507,152 @@ def test_psd_eye_order_preserves_incomplete_and_already_ordered_eyes(missing):
     before = [part.draw_order for part in layers]
     order_eye_layers(SimpleNamespace(layers=layers))
     assert [part.draw_order for part in layers] == before
+
+
+def neck_binding_fixture(*, upside_down=False, compressed=False):
+    """Small structured emitter output: head turn plus independent neck/body motion."""
+    from types import SimpleNamespace
+    sign = -1 if upside_down else 1
+    positions, mesh_begins, warp_begins = [], [], []
+
+    def append(points, begins):
+        begins.append(len(positions) * 2)
+        positions.extend((x, sign * y) for x, y in points)
+        positions.extend([(0.0, 0.0)] * (-len(positions) % 8))
+
+    for dx in (0, 0.02):
+        dy = 0.04 if dx else 0
+        append([(0.4 + dx, 0.5 + dy), (0.6 + dx, 0.5 + dy),
+                (0.4 + dx, 0.7 + dy), (0.6 + dx, 0.7 + dy)], mesh_begins)
+    # Face is already in head-grid local space, which is orientation independent.
+    mesh_begins.append(len(positions) * 2)
+    positions.extend([(0.3, 0.2), (0.7, 0.2), (0.3, 0.6), (0.7, 0.6)] + [(0.0, 0.0)] * 4)
+    for dx in (-0.08, 0, 0.08):
+        dy = 0.3 if compressed and dx else 0
+        append([(c / 2 + dx, r / 2 + dy) for r in range(3) for c in range(3)], warp_begins)
+    sections = {
+        "parameters": {"defaultValues": [0, 0]},
+        "parameterBindings": {"keysSourcesBeginIndices": [0, 3], "keysSourcesCounts": [3, 2]},
+        "keys": {"values": [-30, 0, 30, 0, 1]},
+        "keyformBindings": {"parameterBindingIndexSourcesBeginIndices": [0, 1, 1],
+                            "parameterBindingIndexSourcesCounts": [1, 0, 1]},
+        "parameterBindingIndices": {"bindingSourcesIndices": [1, 0]},
+        "deformers": {"ids": ["D_HEAD"], "specificSourcesIndices": [0],
+                      "keyformBindingSourcesIndices": [2], "isVisible": [1], "isEnabled": [1],
+                      "parentPartIndices": [1], "parentDeformerIndices": [-1], "types": [0],
+                      "runtimeSpace0": b"\0" * 8},
+        "warpDeformers": {"keyformBindingSourcesIndices": [2], "rows": [2], "columns": [2],
+                          "keyformSourcesBeginIndices": [0], "keyformSourcesCounts": [3], "vertexCounts": [9]},
+        "warpDeformerKeyforms": {"keyformPositionSourcesBeginIndices": warp_begins, "opacities": [1.0] * 3},
+        "artMeshes": {"ids": ["neck", "face"], "keyformBindingSourcesIndices": [0, 1],
+                      "keyformSourcesBeginIndices": [0, 2], "keyformSourcesCounts": [2, 1],
+                      "vertexCounts": [4, 4], "parentPartIndices": [0, 1], "parentDeformerIndices": [-1, 0]},
+        "artMeshKeyforms": {"keyformPositionSourcesBeginIndices": mesh_begins},
+        "keyformPositions": {"xys": positions},
+    }
+    moc = SimpleNamespace(sections=sections, counts={}, canvas={"pixelsPerUnit": 500})
+    rig = SimpleNamespace(parts=[SimpleNamespace(id=name, semantic_role=SimpleNamespace(value=role))
+                                 for name, role in (("neck", "neck"), ("face", "face_base"))])
+    return moc, rig
+
+
+@pytest.mark.parametrize("upside_down", [False, True])
+@pytest.mark.parametrize("compressed", [False, True])
+def test_neck_follows_head_without_detaching_collar_or_folding(upside_down, compressed):
+    from copy import deepcopy
+    from integrations.live2d_generator.agentstrata_live2d.neck_binding import bind_neck_to_head
+    moc, rig = neck_binding_fixture(upside_down=upside_down, compressed=compressed)
+    before = deepcopy(moc.sections)
+    assert bind_neck_to_head(moc, rig) == 1
+    sections = moc.sections
+    assert sections["artMeshes"]["parentDeformerIndices"] == [1, 0]
+    assert sections["warpDeformers"]["keyformBindingSourcesIndices"] == [2, 2]
+    # Head keyforms and the face mesh are byte-for-byte unchanged.
+    assert sections["keyformPositions"]["xys"][16:72] == before["keyformPositions"]["xys"][16:72]
+    sign = -1 if upside_down else 1
+    begins = sections["warpDeformerKeyforms"]["keyformPositionSourcesBeginIndices"]
+    positions = sections["keyformPositions"]["xys"]
+    size = sections["warpDeformers"]["vertexCounts"][-1]
+    neutral = positions[begins[4] // 2:begins[4] // 2 + size]
+    top = next(i for i in range(0, size, 3) if abs(neutral[i][1] - sign * 0.5) < 1e-8)
+    bottom = next(i for i in range(0, size, 3) if abs(neutral[i][1] - sign * 0.7) < 1e-8)
+    for key, dx in enumerate((-0.08, 0, 0.08)):
+        start = begins[3 + key] // 2
+        grid = positions[start:start + size]
+        assert grid[top][0] == pytest.approx(0.4 + dx)
+        assert grid[bottom] == pytest.approx((0.4, sign * 0.7))
+        assert grid[top + 2][0] - grid[top][0] == pytest.approx(0.22)
+        assert sign * (grid[bottom][1] - grid[top][1]) > 0
+        assert begins[3 + key] % 16 == 0
+        if not compressed or dx == 0:
+            assert grid[top][1] == pytest.approx(sign * 0.5)
+    # The neutral new lattice reconstructs both original breathing/body keyforms.
+    for index in (0, 1):
+        begin = sections["artMeshKeyforms"]["keyformPositionSourcesBeginIndices"][index] // 2
+        for (u, v), expected in zip(positions[begin:begin + 4], before["keyformPositions"]["xys"][begin:begin + 4]):
+            assert (neutral[0][0] + u * (neutral[-1][0] - neutral[0][0]),
+                    neutral[0][1] + v * (neutral[-1][1] - neutral[0][1])) == pytest.approx(expected)
+    assert moc.counts["keyformPositions"] == len(positions) * 2
+
+
+@pytest.mark.parametrize("missing", ["neck", "face_base", "D_HEAD"])
+def test_neck_binding_leaves_rigs_without_supported_parts_unchanged(missing):
+    from copy import deepcopy
+    from integrations.live2d_generator.agentstrata_live2d.neck_binding import bind_neck_to_head
+    moc, rig = neck_binding_fixture()
+    if missing == "D_HEAD":
+        moc.sections["deformers"]["ids"] = []
+    else:
+        for part in rig.parts:
+            if part.semantic_role.value == missing:
+                part.semantic_role.value = "other"
+    before = deepcopy(moc.sections)
+    assert bind_neck_to_head(moc, rig) == 0
+    assert moc.sections == before
+
+
+
+@pytest.mark.parametrize("yaw_first", [True, False])
+def test_head_yaw_is_restrained_without_weakening_pitch_or_double_scaling_neck(yaw_first):
+    from copy import deepcopy
+    from itertools import product
+    from integrations.live2d_generator.agentstrata_live2d.head_binding import HEAD_YAW_SCALE, soften_head_yaw
+    from integrations.live2d_generator.agentstrata_live2d.neck_binding import bind_neck_to_head
+    moc, rig = neck_binding_fixture()
+    sections = moc.sections
+    sections["parameters"] = {"ids": ["ParamAngleX", "ParamAngleY", "ParamBreath"], "defaultValues": [0, 0, 0]}
+    sections["parameterBindings"] = {"keysSourcesBeginIndices": [0, 3, 6], "keysSourcesCounts": [3, 3, 2]}
+    sections["keys"]["values"] = [-30, 0, 30, -30, 0, 30, 0, 1]
+    axes = [0, 1] if yaw_first else [1, 0]
+    sections["parameterBindingIndices"]["bindingSourcesIndices"] = [2, *axes]
+    sections["keyformBindings"]["parameterBindingIndexSourcesCounts"] = [1, 0, 2]
+    positions = sections["keyformPositions"]["xys"][:24]
+    starts, poses = [], []
+    for slow, fast in product((-1, 0, 1), repeat=2):
+        yaw, pitch = (fast, slow) if yaw_first else (slow, fast)
+        poses.append((yaw, pitch))
+        starts.append(2 * len(positions))
+        positions.extend((c / 2 + yaw * 0.08, r / 2 + pitch * 0.02 + yaw * pitch * 0.01)
+                         for r in range(3) for c in range(3))
+        positions.extend([(0.0, 0.0)] * (-len(positions) % 8))
+    sections["keyformPositions"]["xys"] = positions
+    sections["warpDeformerKeyforms"] = {"keyformPositionSourcesBeginIndices": starts, "opacities": [1.0] * 9}
+    sections["warpDeformers"]["keyformSourcesCounts"] = [9]
+    before = deepcopy(sections)
+    assert soften_head_yaw(moc)
+    assert sections["parameters"] == before["parameters"]
+    assert positions[:24] == before["keyformPositions"]["xys"][:24]
+    for offset, (yaw, pitch) in zip(starts, poses):
+        first = positions[offset // 2]
+        assert first == pytest.approx((yaw * 0.08 * HEAD_YAW_SCALE,
+                                       pitch * 0.02 + yaw * pitch * 0.01 * HEAD_YAW_SCALE))
+        if yaw == 0:
+            assert positions[offset // 2:offset // 2 + 9] == before["keyformPositions"]["xys"][offset // 2:offset // 2 + 9]
+    assert bind_neck_to_head(moc, rig) == 1
+    # Neck top inherits the softened yaw once; its collar remains fixed.
+    count = sections["warpDeformers"]["vertexCounts"][-1]
+    head_right = poses.index((1, 0))
+    neck_start = sections["warpDeformerKeyforms"]["keyformPositionSourcesBeginIndices"][9 + head_right] // 2
+    neck = positions[neck_start:neck_start + count]
+    assert neck[0][0] == pytest.approx(0.4 + 0.08 * HEAD_YAW_SCALE)
+    assert any(abs(y - 0.7) < 1e-8 and abs(x - 0.4) < 1e-8 for x, y in neck)

@@ -6,6 +6,8 @@ from pathlib import Path
 import struct
 
 from .repository import extract_zip, image_info, private_directory, write_json
+from .neck_binding import bind_neck_to_head
+from .head_binding import HEAD_YAW_SCALE, soften_head_yaw
 from .types import GenerationError, MAX_EXPANDED, MAX_FILES, MAX_PIXELS
 
 REVISION = "714e7cc9191f1ef6c9a1732c80e8b566ec127d6b"
@@ -79,7 +81,10 @@ class AutomaticRigger:
         private_directory(destination / "textures")
         atlas, uv = build_atlas(rig, layers)
         atlas.save(destination / "textures/atlas.png")
-        (destination / "avatar.moc3").write_bytes(write_moc3(rig_to_moc3(rig, atlas_uv=uv)))
+        moc = rig_to_moc3(rig, atlas_uv=uv)
+        softened_yaw = soften_head_yaw(moc)
+        bound_necks = bind_neck_to_head(moc, rig)
+        (destination / "avatar.moc3").write_bytes(write_moc3(moc))
         physics = None
         if rig.physics:
             physics = "avatar.physics3.json"
@@ -123,5 +128,7 @@ class AutomaticRigger:
         report = asdict(evaluate(rig, "avatar"))
         write_json(destination / "rig-report.json", report)
         return {"engine": "image2live2d", "revision": REVISION,
+                "head_yaw": {"displacement_scale": HEAD_YAW_SCALE, "applied": softened_yaw},
+                "neck_binding": {"method": "jaw-follow-collar-pin", "meshes": bound_necks},
                 "layers": len(stack.layers), "parameters": len(rig.parameters), "qa": report,
                 "quality": "automatic-draft", "sdk_validation": "not-run"}
