@@ -14,7 +14,7 @@ import { ImprovementForm } from "../features/harness/ImprovementForm";
 const { Text } = Typography;
 const taskFromHash = () => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("task") ?? "";
 
-export default function HarnessPage() {
+export default function HarnessPage({ initialApplication = "" }: { initialApplication?: string }) {
   const client = useQueryClient();
   const [mode, setMode] = useState("improve");
   const [taskKind, setTaskKind] = useState("repair");
@@ -115,7 +115,7 @@ export default function HarnessPage() {
   return <PageSection title="AI Harness 改进工作台" description="接入外部能力、提出改进需求或修复运行问题；查看候选、独立验收与实例版本。">
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
       <Select aria-label="Harness 工作方式" value={mode} onChange={setMode} style={{ width: "min(100%, 360px)" }} options={[{ value: "improve", label: "接入与改进需求" }, { value: "repair", label: "修复已有失败" }]} />
-      {mode === "improve" && <ImprovementForm created={task => { openTask(task.task_id); void client.invalidateQueries({ queryKey: ["harness-history"] }); }} />}
+      {mode === "improve" && <ImprovementForm initialApplication={initialApplication} created={task => { openTask(task.task_id); void client.invalidateQueries({ queryKey: ["harness-history"] }); }} />}
       {mode === "repair" && <Card title="发起修复">
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           <Text type="secondary">测评中心负责运行测评，机器人任务流负责查看运行过程；修复过程和历史统一保存在此处。</Text>
@@ -173,7 +173,7 @@ export default function HarnessPage() {
           </>}
         </Space>
       </Card>}
-      <Card title="任务历史" extra={<Button onClick={() => void history.refetch()}>刷新历史</Button>}>
+      <Card title="任务历史（全局）" extra={<Button onClick={() => void history.refetch()}>刷新历史</Button>}>
         <Space wrap style={{ marginBottom: 16 }}><Input aria-label="搜索修复历史" placeholder="搜索修复、Case 实例、测评或任务 ID" value={search} allowClear
           onChange={value => { setSearch(value); setPage(1); }} />
           <Select aria-label="任务历史类型" value={taskKind} style={{ width: 180 }} onChange={value => { setTaskKind(value); setPage(1); }} options={[{ value: "repair", label: "全部需求与修复" }, { value: "application", label: "应用接入与改进" }]} />

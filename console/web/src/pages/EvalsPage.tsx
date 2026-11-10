@@ -45,6 +45,7 @@ const hasLlmPrimary = (record: EvaluationRecord) => asObject(asObject(record.ben
 
 interface Props {
   visible?: boolean;
+  initialApplication?: string;
 }
 
 const ACTIVE_STATUSES = new Set<EvaluationStatus>(["queued", "running"]);
@@ -70,11 +71,11 @@ function formatDuration(value: number | null | undefined): string {
   return `${Math.floor(value / 60)} 分 ${Math.round(value % 60)} 秒`;
 }
 
-export default function EvalsPage({ visible = true }: Props) {
+export default function EvalsPage({ visible = true, initialApplication = "" }: Props) {
   const queryClient = useQueryClient();
   const detailTop = useRef<HTMLDivElement>(null);
   const [tab, setTab] = useState("start");
-  const [botId, setBotId] = useState("");
+  const [botId, setBotId] = useState(initialApplication);
   const [selectedEvaluation, setSelectedEvaluation] = useState<EvaluationRecord | null>(null);
   const [recordTrack, setRecordTrack] = useState("all");
   const [recordStatus, setRecordStatus] = useState("all");

@@ -4,6 +4,7 @@ import Sidebar, { type PageKey } from "./components/Sidebar";
 import LegalInfo from "./components/LegalInfo";
 import { NavigationGuardContext, useGuardedHash } from "./shared/navigationGuard";
 
+const ApplicationsPage = lazy(() => import("./pages/ApplicationsPage"));
 const OverviewPage = lazy(() => import("./pages/OverviewPage"));
 const ServicesPage = lazy(() => import("./pages/ServicesPage"));
 const BotsPage = lazy(() => import("./pages/BotsPage"));
@@ -21,7 +22,8 @@ const { Title, Text } = Typography;
 export default function App() {
   const { hash, navigate, registerGuard } = useGuardedHash();
   const candidate = hash.slice(1).split("?")[0];
-  const page: PageKey = ["overview", "services", "bots", "tools", "evals", "harness", "code-health", "schedules", "models", "settings"].includes(candidate) ? candidate as PageKey : "overview";
+  const page: PageKey = ["applications", "create", "overview", "services", "bots", "tools", "evals", "harness", "code-health", "schedules", "models", "settings"].includes(candidate) ? candidate as PageKey : "applications";
+  const scopedApplication = new URLSearchParams(hash.split("?")[1]).get("application") ?? "";
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const checkBackend = useCallback(async () => {
@@ -42,19 +44,20 @@ export default function App() {
       <Sider className="console-sider" width="var(--cc-sidebar-width)">
         <div className="console-logo">
           <Title heading={5} className="console-logo-title">AgentStrata</Title>
-          <Text type="secondary" className="cc-text-small">运维控制台</Text>
+          <Text type="secondary" className="cc-text-small">Studio · 应用工作台</Text>
         </div>
         <Sidebar current={page} onChange={navigate} />
         <LegalInfo />
       </Sider>
       <Content className="console-content">
         <Suspense fallback={<Spin dot tip="正在加载页面…" />}>
+          {(page === "applications" || page === "create") && <ApplicationsPage hash={hash} create={page === "create"} />}
           {page === "overview" && <OverviewPage onNavigate={navigate} visible />}
           {page === "services" && <ServicesPage visible />}
           {page === "bots" && <BotsPage loadError={loadError} visible />}
           {page === "tools" && <ToolsPage visible />}
-          {page === "evals" && <EvalsPage visible />}
-          {page === "harness" && <HarnessPage />}
+          {page === "evals" && <EvalsPage key={scopedApplication} visible initialApplication={scopedApplication} />}
+          {page === "harness" && <HarnessPage key={scopedApplication} initialApplication={scopedApplication} />}
           {page === "code-health" && <CodeHealthPage />}
           {page === "schedules" && <SchedulesPage />}
           {page === "models" && <ModelsPage />}

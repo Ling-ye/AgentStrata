@@ -46,33 +46,49 @@ def task_verification_runtime(repo, state, task_id):
     return frozen, digest
 
 
-def controller(repo, state, *, start_eval=False, application_checks=(), task_id=None):
+def controller(repo, state, *, start_eval=False, application_checks=(), task_id=None, environment=None):
     from chatcopilot.harness.worker_runtime import SystemdWorkerControl
 
     verifier, verifier_digest = task_verification_runtime(repo, state, task_id) if task_id else verification_runtime(state)
     socket = socket_path(repo, verifier_digest)
     settings = configuration()
+    if environment is not None:
+        settings.update(environment)
     settings["CHATCOPILOT_EVALUATION_SOCKET"] = str(socket)
     if start_eval:
         from chatcopilot.evals.service import EvaluationServiceClient, EvaluationServiceUnavailable
         client = EvaluationServiceClient(socket)
+        def health():
+            value = client.health()
+            expected = {"repository_root": str(repo), "verification_root": str(verifier),
+                        "artifact_root": str(state / ("eval-" + socket.stem))}
+            if any(value.get(key) != path for key, path in expected.items()):
+                raise ValueError("应用验证服务的源码或证据目录不匹配；请停止旧服务后重试")
+            return value
         try:
-            client.health()
+            health()
         except (EvaluationServiceUnavailable, FileNotFoundError):
             unit = "agentstrata-studio-eval-" + socket.stem
             command = ["systemd-run", "--user", "--quiet", "--collect", "--unit", unit,
                        "--property=UMask=0077", "--working-directory=" + str(verifier),
                        "--setenv=PYTHONPATH=" + str(verifier / "src")]
-            command.extend("--setenv=" + key + "=" + settings[key] for key in
-                           ("AGENTSTRATA_LLM_CONFIG", "CHATCOPILOT_CODEX_BIN", "CHATCOPILOT_CODEX_BOT_HOME")
-                           if key in settings)
+            if environment is not None:
+                from chatcopilot.core.install_artifacts import write_private
+                env_file = state / ("eval-" + socket.stem + ".env")
+                write_private(env_file, "".join(key + "=" + json.dumps(value) + "\n"
+                                               for key, value in environment.items()))
+                command.append("--property=EnvironmentFile=" + str(env_file))
+            else:
+                command.extend("--setenv=" + key + "=" + settings[key] for key in
+                               ("AGENTSTRATA_LLM_CONFIG", "CHATCOPILOT_CODEX_BIN", "CHATCOPILOT_CODEX_BOT_HOME")
+                               if key in settings)
             command += [sys.executable, "-m", "chatcopilot.evals.service", "serve", "--repository-root", str(repo),
                         "--artifact-root", str(state / ("eval-" + socket.stem)), "--socket", str(socket),
                         "--verification-root", str(verifier)]
             launched = subprocess.run(command, capture_output=True, text=True, timeout=20)
             for _ in range(40):
                 try:
-                    client.health()
+                    health()
                     break
                 except (EvaluationServiceUnavailable, FileNotFoundError):
                     time.sleep(0.25)
@@ -80,9 +96,12 @@ def controller(repo, state, *, start_eval=False, application_checks=(), task_id=
                 raise RuntimeError("应用验证服务无法启动：" + launched.stderr[-300:])
     from chatcopilot.harness.evaluation_adapter import ServiceEvaluator
     workers = SystemdWorkerControl(repo, state / "harness", settings, runtime_repository=verifier)
-    return HarnessController(repo, root=state / "harness", evaluation_socket=socket, worker_control=workers,
+    host = HarnessController(repo, root=state / "harness", evaluation_socket=socket, worker_control=workers,
                              evaluator=ServiceEvaluator(socket_path=socket, application_checks=application_checks,
                                                         verification_runtime=verifier_digest))
+    if environment is not None:
+        host.settings.update(environment)
+    return host
 
 
 def stop_evaluation(repo, state, task_id):

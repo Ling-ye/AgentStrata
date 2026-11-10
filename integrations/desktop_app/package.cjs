@@ -54,5 +54,24 @@ async function build(tools, job, recipe) {
       include:nsisInclude, shortcutName:descriptor.kind==='studio' || descriptor.installId==='desktop-reader' ? descriptor.name :
         descriptor.name + (descriptor.kind==='live2d' ? ' 试用 ' : ' · ') + descriptor.installId.slice(-8)},
     publish:null}});
+  if (!studio) {
+    // Bind the installed launcher bytes, not merely the installer container.
+    const {createHash} = require('node:crypto');
+    const directory = path.join(job, 'release', 'win-unpacked');
+    const files = {};
+    function collect(relative = '') {
+      for (const entry of fs.readdirSync(path.join(directory, relative), {withFileTypes:true})) {
+        const name = relative ? relative + '/' + entry.name : entry.name;
+        if (entry.isDirectory()) collect(name);
+        else if (entry.isFile()) files[name] = createHash('sha256').update(fs.readFileSync(path.join(directory,name))).digest('hex');
+        else throw new Error('Unsafe desktop launch member');
+      }
+    }
+    collect();
+    fs.writeFileSync(path.join(job, 'desktop-launch.json'), JSON.stringify({
+      schema:'agentstrata-desktop-launch/v1', install_id:descriptor.installId,
+      executable:descriptor.installId + '.exe', files
+    }));
+  }
 }
 build(...process.argv.slice(2)).catch(err => {console.error(err); process.exitCode=1;});

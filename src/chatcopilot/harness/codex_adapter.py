@@ -54,14 +54,11 @@ class CodexCoder:
             raise HarnessError(
                 "codex_unconfigured", "请配置 CHATCOPILOT_CODEX_BIN 为原生 Codex 可执行文件"
             )
-        binary = Path(raw).resolve(strict=True)
-        if not binary.is_file() or not os.access(binary, os.X_OK):
-            raise HarnessError("codex_unavailable", "Codex 可执行文件不可用")
-        with binary.open("rb") as stream:
-            if stream.read(4) != b"\x7fELF":
-                raise HarnessError(
-                    "codex_unavailable", "独立 worker 需要 Linux 原生 Codex 二进制文件"
-                )
+        from chatcopilot.core.codex_executable import resolve_codex_executable
+        try:
+            binary = resolve_codex_executable(raw)
+        except (OSError, ValueError) as exc:
+            raise HarnessError("codex_unavailable", str(exc)) from exc
         auth = validate_auth_root_path(model_config.credential_root if model_config is not None else os.environ.get("CHATCOPILOT_CODEX_BOT_HOME", ""))
         return binary, auth
 

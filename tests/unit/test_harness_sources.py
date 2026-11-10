@@ -213,6 +213,11 @@ def test_history_pagination_search_and_bot_binding(tmp_path, repository):
     )
     assert controller.list(search="run-22")["total"] == 1
     controller.start_task("another", "run-22", RepairOptions("test-model"), launch=False)
+    scoped = controller.list(bot_id="sample", page=2, limit=20)
+    assert scoped["total"] == 23 and len(scoped["tasks"]) == 3
+    assert all(item["source"]["bot_id"] == "sample" for item in scoped["tasks"])
+    assert controller.list(bot_id="another")["total"] == 1
+    assert controller.list(bot_id="sam")["total"] == 0
     preview = controller.load_source("robot_task", "run-22", "sample")
     assert len(preview["history"]) == 1 and preview["history"][0]["source"]["bot_id"] == "sample"
 

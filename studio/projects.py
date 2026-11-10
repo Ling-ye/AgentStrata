@@ -90,9 +90,9 @@ def select_live2d():
                                  "-File", win], capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", timeout=300, check=True)
     except subprocess.TimeoutExpired as exc:
-        raise ValueError("等待选择桌宠超时。请再次点击「连接 Live2D 桌宠」并在 Windows 窗口选择程序。") from exc
+        raise ValueError("等待选择桌宠超时。请再次点击「连接 Companion · 桌面伙伴」并在 Windows 窗口选择程序。") from exc
     except subprocess.CalledProcessError as exc:
-        raise ValueError("无法连接桌宠。请先打开已安装的 AgentStrata Live2D Native 完成本机准备，再重试。") from exc
+        raise ValueError("无法连接桌宠。请先打开已安装的 AgentStrata Companion（安装器仍使用 AgentStrata Live2D Native 名称）完成本机准备，再重试。") from exc
     selection = json.loads(result.stdout.lstrip("\ufeff"))
     if not selection:
         raise ValueError("未选择桌宠")

@@ -10,6 +10,7 @@ from chatcopilot.gateway.result_text import result_preview
 from chatcopilot.contracts.gateway_protocol import EventFrame, RequestFrame
 from chatcopilot.contracts.authorization import Principal
 from chatcopilot.contracts.gateway_rpc import (
+    client_run_id,
     ChannelConnectionState,
     ChannelSnapshot,
     ChannelsListParams,
@@ -428,10 +429,7 @@ def _generated_session_id(*, client_id: str, idempotency_key: str) -> str:
 
 
 def _client_run_id(*, client_id: str, session_id: str, idempotency_key: str) -> str:
-    digest = hashlib.sha256(
-        (client_id + "\0" + session_id + "\0" + idempotency_key).encode("utf-8")
-    ).hexdigest()[:32]
-    return "run_" + digest
+    return client_run_id(client_id=client_id, session_id=session_id, idempotency_key=idempotency_key)
 
 
 def _chat_input_fingerprint(params: ChatSendParams, *, principal: Principal) -> str:

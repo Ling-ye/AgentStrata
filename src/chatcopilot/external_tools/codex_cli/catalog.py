@@ -1,13 +1,13 @@
 """Discovery adapters for the same connections used by runtime hosts."""
 from __future__ import annotations
 
-import os
 import tempfile
 from contextlib import ExitStack
 from pathlib import Path
 from typing import Mapping
 
 from chatcopilot.contracts.model_runtime import digest
+from chatcopilot.core.codex_executable import resolve_codex_executable
 from chatcopilot.core.model_credentials import CredentialError, credential_status, validate_auth_root_path, credential_lease
 from chatcopilot.core.model_settings import connection_environment
 from chatcopilot.external_tools.codex_cli.app_server import AppServerProcess
@@ -18,19 +18,23 @@ def connection_identity(connection: dict, environment: Mapping[str, str]) -> str
     env = connection_environment(connection, environment)
     auth = connection["auth"]
     if auth["mode"] == "api_key":
-        return digest({"key": env.get(auth["key_env"], "")})
-    root = env.get(connection.get("credential_root_env", "CHATCOPILOT_CODEX_BOT_HOME"), "")
-    try:
-        status = credential_status(Path(root), auth["profile"])
-        identity = {"root": root, "lane": auth["profile"], "generation": status.generation,
-                    "state": status.state}
-    except (ValueError, OSError, CredentialError):
-        identity = {"root": root, "lane": auth["profile"], "state": "unavailable"}
+        identity = {"key": env.get(auth["key_env"], "")}
+        if connection["kind"] != "codex":
+            return digest(identity)
+    else:
+        root = env.get(connection.get("credential_root_env", "CHATCOPILOT_CODEX_BOT_HOME"), "")
+        try:
+            status = credential_status(Path(root), auth["profile"])
+            identity = {"root": root, "lane": auth["profile"], "generation": status.generation,
+                        "state": status.state}
+        except (ValueError, OSError, CredentialError):
+            identity = {"root": root, "lane": auth["profile"], "state": "unavailable"}
     binary = env.get(connection.get("codex_bin_env", "CHATCOPILOT_CODEX_BIN"), "")
     try:
-        stat = Path(binary).stat()
-        identity["binary"] = [binary, stat.st_mtime_ns, stat.st_size]
-    except OSError:
+        resolved = resolve_codex_executable(binary)
+        stat = resolved.stat()
+        identity["binary"] = [str(resolved), stat.st_mtime_ns, stat.st_size]
+    except (OSError, ValueError):
         identity["binary"] = binary
     return digest(identity)
 
@@ -54,12 +58,7 @@ def discover_models(connection: dict, environment: Mapping[str, str], repository
 
 
 def codex_models(connection: dict, environment: Mapping[str, str], repository: Path) -> list[dict]:
-    binary = Path(environment.get(connection.get("codex_bin_env", "CHATCOPILOT_CODEX_BIN"), "")).resolve(strict=True)
-    if not binary.is_file() or not os.access(binary, os.X_OK):
-        raise ValueError("Codex 可执行文件不可用")
-    with binary.open("rb") as stream:
-        if stream.read(4) != b"\x7fELF":
-            raise ValueError("Codex 需要 Linux 原生可执行文件")
+    binary = resolve_codex_executable(environment.get(connection.get("codex_bin_env", "CHATCOPILOT_CODEX_BIN"), ""))
     with tempfile.TemporaryDirectory(prefix="as-model-") as temporary, ExitStack() as stack:
         home = Path(temporary) / "codex-home"
         auth = connection["auth"]

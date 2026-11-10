@@ -2,6 +2,10 @@
 
 修改进程监督、创建/取消/恢复、结果持久化或 Console BFF 时阅读。Evaluation 拥有独立生命周期，Console 不替它启动本地 manager 或改写终态。
 
+本机 health 回执同时返回 repository_root、verification_root 和 artifact_root。
+Studio 按应用启动的服务必须逐项匹配预期目录；旧服务缺少这些字段时不能当作当前应用的验证服务复用。
+这些仅是本机服务归属信息，不代表模型执行或评测通过。
+
 ## 源码入口
 
 - [src/chatcopilot/evals/service](../../src/chatcopilot/evals/service)

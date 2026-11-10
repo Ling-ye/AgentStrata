@@ -25,6 +25,12 @@ M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求
 沿 [A—D 路线](../specs/application-harness-framework/spec.md#自有-agent-能力优化路线)定位自有 Agent 基线、能力与上下文案例、真实 Harness 闭环，以及依据实际缺口开展的循环策略改进；具体完成状态只在主计划维护。
 参与开发时先选择阶段，再读取相关领域，不把设计目标当作已实现能力。
 
+## 产品入口
+
+- [AgentStrata Companion · 桌面伙伴](products/companion.md)：Live2D 桌面应用。
+- [AgentStrata Bot · QQ 助手](products/bot.md)：QQ 消息应用，区分官方机器人和 OneBot 技术路径。
+- [AgentStrata Studio · 应用工作台](guides/desktop-studio.md)：创建和管理应用。
+
 ## 选择使用路径
 
 | 目标 | 下一步 |

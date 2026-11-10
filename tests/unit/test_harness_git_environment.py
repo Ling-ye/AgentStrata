@@ -54,11 +54,8 @@ def native_binary():
     path = os.environ.get("CHATCOPILOT_CODEX_BIN") or shutil.which("codex")
     if not path or not shutil.which("bwrap"):
         pytest.skip("local native Codex CLI and bubblewrap required; no model is called")
-    binary = Path(path).resolve()
-    with binary.open("rb") as stream:
-        if stream.read(4) != b"\x7fELF":
-            pytest.skip("native Linux Codex executable required")
-    return binary
+    from chatcopilot.core.codex_executable import resolve_codex_executable
+    return resolve_codex_executable(path)
 
 
 def metadata_bytes(root):

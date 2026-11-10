@@ -65,6 +65,9 @@ class EvaluationServiceRuntime:
                 "service": "agentstrata-evaluation",
                 "schema_version": 1,
                 "ready": True,
+                "repository_root": str(self.application.repository_root),
+                "verification_root": str(self.application.verification_root),
+                "artifact_root": str(self.application.root),
                 "maintenance": maintenance is not None,
                 **readiness,
             }

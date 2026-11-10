@@ -2039,7 +2039,7 @@ def test_group_codex_command_has_read_only_namespace_and_strict_config(
     codex_home.mkdir(mode=0o700)
     codex_home.chmod(0o700)
     fake_codex = tmp_path / "codex"
-    fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_codex.write_bytes(Path("/bin/true").resolve().read_bytes())
     fake_codex.chmod(0o755)
     routing = SimpleNamespace(
         code_command="codex exec --model {model} --cd {workdir}",
@@ -2183,7 +2183,7 @@ def test_group_codex_mounts_absolute_venv_python_runtime(tmp_path: Path) -> None
     gateway_config.write_text("{}", encoding="utf-8")
     gateway_config.chmod(0o600)
     fake_codex = tmp_path / "codex"
-    fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_codex.write_bytes(Path("/bin/true").resolve().read_bytes())
     fake_codex.chmod(0o755)
     state = SimpleNamespace(
         execution_scope=None,
@@ -2261,7 +2261,8 @@ def test_group_codex_rejects_unsafe_project_config_mountpoint(
     gateway_config = state_root / "gateway.json"
     gateway_config.write_text("{}", encoding="utf-8")
     fake_codex = tmp_path / "codex"
-    fake_codex.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+    fake_codex.write_bytes(Path("/bin/true").resolve().read_bytes())
+    fake_codex.chmod(0o755)
     state = SimpleNamespace(
         execution_scope=None,
         extension_env={},

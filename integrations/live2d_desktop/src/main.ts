@@ -18,6 +18,6 @@ async function main() {
   await startDesktop({connection: config, selectionFile});
 }
 void main().catch(error => {
-  dialog.showErrorBox('AgentStrata Live2D', error instanceof Error ? error.message : '启动失败');
+  dialog.showErrorBox('AgentStrata Companion', error instanceof Error ? error.message : '启动失败');
   app.quit();
 });

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass, field
 from typing import Literal, TypeAlias, Union
 
@@ -414,3 +415,11 @@ __all__ = [
     "StatusResult",
     "TextRpcSegment",
 ]
+
+
+def client_run_id(*, client_id: str, session_id: str, idempotency_key: str) -> str:
+    """Stable v1 run identity used to reconcile a client mutation after transport loss."""
+    digest = hashlib.sha256(
+        (client_id + "\0" + session_id + "\0" + idempotency_key).encode("utf-8")
+    ).hexdigest()[:32]
+    return "run_" + digest

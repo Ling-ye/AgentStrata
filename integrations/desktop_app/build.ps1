@@ -72,6 +72,7 @@ try {
     $Process = Start-Process -FilePath $Node -ArgumentList $Arguments -WorkingDirectory $Job -NoNewWindow -Wait -PassThru -RedirectStandardOutput $Out -RedirectStandardError $Err
     if ($Process.ExitCode -ne 0) {throw ('Windows packaging failed: ' + (Get-Content -LiteralPath $Err -Raw))}
     Copy-Item -LiteralPath (Join-Path $Job 'release\application.exe') -Destination $Stage
+    if (!$Studio) {Copy-Item -LiteralPath (Join-Path $Job 'desktop-launch.json') -Destination $Stage}
   } finally {Pop-Location}
 } finally {
   # Job is a fresh GUID directory owned by this build; the reusable tooling stays.

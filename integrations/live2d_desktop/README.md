@@ -1,4 +1,7 @@
-# AgentStrata Live2D Windows 原生桌宠
+# AgentStrata Companion · Windows 桌面伙伴
+
+这是基于 AgentStrata 构建的 Live2D 桌面应用。产品入口见[Companion](../../docs/products/companion.md)。
+为保持现有安装和数据兼容，本轮仅统一界面展示名；安装器仍使用 AgentStrata Live2D Native，包名、应用标识和数据目录不变。
 
 版本 `0.3.0`，固定 Electron `45.0.0`。运行端使用 Windows 原生 Python、Gateway、
 LangGraph、VTuber 与 Windows-MCP，开发侧 Harness/Eval 保持 Linux。设计见

@@ -40,11 +40,11 @@ class Studio:
             return project_id
         bot, title, version, assets = "app-" + project_id, "新应用", "", None
         if application_type == "qq_official":
-            bot, title = "qq-official-" + project_id, "QQ 官方机器人"
+            bot, title = "qq-official-" + project_id, "AgentStrata Bot"
         if live:
             root, payload = projects.select_live2d()
             projects.import_live2d(self.directory(project_id), root, payload)
-            bot, title, version, assets = "live2d-desktop", "Live2D 桌宠", "initial", str(payload)
+            bot, title, version, assets = "live2d-desktop", "AgentStrata Companion", "initial", str(payload)
         with self.db.connect(write=True) as db:
             db.execute("INSERT INTO projects VALUES (?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING",
                        (project_id, title, bot, version, assets, time.time()))

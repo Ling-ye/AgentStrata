@@ -9,10 +9,10 @@ import type { RepairTask } from "./api";
 const { Text } = Typography;
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 16 };
 
-export function ImprovementForm({ created }: { created: (task: RepairTask) => void }) {
+export function ImprovementForm({ created, initialApplication = "" }: { created: (task: RepairTask) => void; initialApplication?: string }) {
   const [type, setType] = useState<"integrate" | "improve">("improve");
   const [runtime, setRuntime] = useState("");
-  const [bot, setBot] = useState("");
+  const [bot, setBot] = useState(initialApplication);
   const [goal, setGoal] = useState("");
   const [paths, setPaths] = useState("");
   const [suite, setSuite] = useState("agentstrata-application-bridges-v1");

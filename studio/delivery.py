@@ -109,6 +109,7 @@ def pack(project, stage, *, bot_relative, release=None, assets=None, name, insta
     exe = stage / "application.exe"
     if not exe.is_file() or exe.stat().st_size == 0:
         raise ValueError("Windows 打包程序未生成安装包")
-    receipt.update(installer_sha256=digest(exe), install_id=install_id)
+    receipt.update(installer_sha256=digest(exe), install_id=install_id,
+                   launcher_manifest_sha256=digest(stage / "desktop-launch.json"))
     (stage / "build-receipt.json").write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
     return receipt

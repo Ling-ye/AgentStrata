@@ -74,32 +74,22 @@
 
     <div class="intro-strip container">
       <p>一个运行底座，多种交互方式。</p>
-      <div><span>QQ 官方机器人 MVP</span><span>Live2D 桌面角色</span><span>你的应用 & API</span></div>
+      <div><span>AgentStrata Bot · QQ 助手</span><span>AgentStrata Companion · 桌面伙伴</span><span>你的应用 & API</span></div>
     </div>
 
-    <section class="section container possibilities" id="possibilities" aria-labelledby="possibilities-title">
-      <div class="section-heading">
-        <p class="eyebrow">01 / CONNECT</p>
-        <h2 id="possibilities-title">先把一个应用，<br>配好、跑起来。</h2>
-        <p>在同一个工作台说明用途、确认配置、连接平台，再检查和启动应用。标准配置直接复用现有能力；需要新增代码时，进入开发与验收流程。</p>
-      </div>
-      <div class="application-list">
-        <article>
-          <span class="item-number">01</span>
-          <div><h3>让角色成为交互界面</h3><p>通过 Live2D 客户端进行文字、语音与角色交互。Agent 负责上下文和工具，客户端负责呈现与播放。</p><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md">了解 Live2D 接入 <span aria-hidden="true">↗</span></a></div>
-          <svg viewBox="0 0 72 72" aria-hidden="true"><rect x="7" y="10" width="58" height="42" rx="7"/><path d="M25 63h22M36 52v11M26 28h.1M46 28h.1M28 39q8 6 16 0"/></svg>
+    <section class="section container product-section" id="possibilities" aria-labelledby="possibilities-title">
+      <div class="product-heading"><p class="eyebrow">01 / BUILT WITH AGENTSTRATA</p><h2 id="possibilities-title">同一个引擎，<br>两种触手可及的应用。</h2><p>先选一个你想使用的产品。桌面伙伴和 QQ 助手各有自己的交互方式，共用 AgentStrata 的 Agent、工具与运行管理能力。</p></div>
+      <div class="product-grid">
+        <article class="product-card">
+          <a class="product-visual" href="products/companion.html" aria-label="了解 AgentStrata Companion 桌面伙伴"><img src="assets/demo-poster-v7.webp" width="1280" height="720" alt="桌面伙伴的真实 Live2D 演示画面，角色为异世界情绪" loading="lazy"></a>
+          <div class="product-card-body"><span class="edition">Windows 11 x64 · 开发者预览</span><h3>AgentStrata Companion</h3><p class="product-subtitle">桌面伙伴</p><p>让能对话、能使用工具的角色待在桌面上。用文字或语音交流，在角色界面中获得 Agent 的回应。</p><a class="text-link" href="products/companion.html">认识桌面伙伴 <span aria-hidden="true">→</span></a></div>
         </article>
-        <article>
-          <span class="item-number">02</span>
-          <div><h3>在工作台创建 QQ 官方机器人</h3><p>描述用途，确认 Agent 提出的配置，再填写官方机器人的 AppID 和 AppSecret。同页完成检查与启停。首版支持群内 @ 和单聊的被动文本回复，真实收发需在你的账号权限范围内验证。</p><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md#创建-qq-官方机器人">查看 QQ 官方接入步骤 <span aria-hidden="true">↗</span></a></div>
-          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="M13 12h46a5 5 0 0 1 5 5v31a5 5 0 0 1-5 5H32L17 64V53h-4a5 5 0 0 1-5-5V17a5 5 0 0 1 5-5Z"/><path d="M22 27h28M22 38h17"/></svg>
-        </article>
-        <article>
-          <span class="item-number">03</span>
-          <div><h3>为你的项目增加 Agent 能力</h3><p>沿 Channel、Gateway、工具接口或 MCP 接入项目。复用 Agent 层、生命周期与权限边界，使用集成 skill 和开发工具补充必要能力，减少重复开发。</p><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md">探索架构与接口 <span aria-hidden="true">↗</span></a></div>
-          <svg viewBox="0 0 72 72" aria-hidden="true"><path d="m24 20-17 16 17 16M48 20l17 16-17 16M42 12 30 60"/></svg>
+        <article class="product-card">
+          <a class="product-visual bot-visual" href="products/bot.html" aria-label="了解 AgentStrata Bot QQ 助手"><div class="bot-preview"><span class="preview-label">使用流程示意 · 非真实 QQ 对话</span><p class="preview-user">我想做一个 QQ 项目答疑助手。</p><p class="preview-agent">说明用途，确认配置，连接你的官方机器人。</p><div class="preview-flow"><span>配置</span><span>检查</span><span>试聊</span><span>运行</span></div></div></a>
+          <div class="product-card-body"><span class="edition">QQ 官方机器人 · 源码 MVP</span><h3>AgentStrata Bot</h3><p class="product-subtitle">QQ 助手</p><p>把你的 Agent 带到 QQ 群和私聊。在 Studio 中描述用途，配置官方机器人，并检查、启动和管理应用。</p><a class="text-link" href="products/bot.html">认识 QQ 助手 <span aria-hidden="true">→</span></a></div>
         </article>
       </div>
+      <div class="engine-note"><div><h3>想创建自己的应用？从 Studio 开始。</h3><p>它是创建和管理应用的工作台。产品提供具体体验，AgentStrata 提供共同引擎；渠道、插件和工具是它们内部的组件。</p></div><a class="text-link" href="#start">查看工作台入口 <span aria-hidden="true">→</span></a></div>
     </section>
 
     <section class="improve-section" aria-labelledby="improve-title">
@@ -123,11 +113,11 @@
       <div class="start-grid">
         <article class="start-primary">
           <div class="start-card-top"><span class="tag">源码 MVP</span><span>Windows 11 + WSL2</span></div>
-          <h3>用工作台创建 QQ 官方机器人</h3>
+          <h3>用 Studio 创建 AgentStrata Bot</h3>
           <p>工作台面向 Windows 11 x64，使用 WSL2。安装入口会引导准备环境；当前需要从源码构建安装包。</p>
           <ol class="setup-steps">
             <li><strong>连接模型</strong><span>填写模型 API，或选择已支持的 Codex 连接。标准应用配置和运行不要求开发账号。</span></li>
-            <li><strong>说明用途</strong><span>点击「创建 QQ 官方机器人」，对话生成提案，核对后应用配置。</span></li>
+            <li><strong>说明用途</strong><span>选择「创建 QQ 助手」，对话生成提案，核对后应用配置。</span></li>
             <li><strong>连接并试聊</strong><span>填写官方机器人凭据，检查并启动，在 QQ 中确认收到回复。</span></li>
           </ol>
           <p>QQ 平台账号、机器人资格、测试范围和公开上线仍需按平台要求准备。请勿将 Secret 填入聊天。</p>
@@ -135,7 +125,7 @@
           <a class="source-download" href="https://github.com/Ling-ye/AgentStrata/archive/refs/heads/main.zip">下载最新源码 ZIP <span aria-hidden="true">↓</span></a>
         </article>
         <div class="start-secondary">
-          <article><p class="eyebrow">WINDOWS 11 x64</p><h3>体验 Live2D 桌面角色</h3><p>原生桌面客户端代码已提供；当前尚无公开 Release 安装包。开发者可按构建说明准备安装包，再按指南配置模型与启动角色。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/integrations/live2d_desktop/README.md">构建说明 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md#windows-桌面客户端">使用指南 <span aria-hidden="true">↗</span></a></div></article>
+          <article><p class="eyebrow">WINDOWS 11 x64</p><h3>体验 AgentStrata Companion</h3><p>原生桌面客户端代码已提供；当前尚无公开 Release 安装包。开发者可按构建说明准备安装包，再按指南配置模型与启动角色。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/integrations/live2d_desktop/README.md">构建说明 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md#windows-桌面客户端">使用指南 <span aria-hidden="true">↗</span></a></div></article>
           <article><p class="eyebrow">DEVELOPERS</p><h3>接入应用，或参与改进</h3><p>阅读架构与开发文档，从明确的接入目标、复现场景或一个小改进开始。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md">文档中心 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md">贡献指南 <span aria-hidden="true">↗</span></a></div></article>
         </div>
       </div>

@@ -104,12 +104,13 @@ def test_isolated_codex_can_execute_its_readonly_code_mode_helper(tmp_path):
     for path in (work, binaries, home):
         path.mkdir(mode=0o700)
     binary = binaries / "codex"
-    binary.write_text('#!/bin/sh\nset -eu\n'
+    script = ('set -eu\n'
                       'helper="$(dirname "$0")/codex-code-mode-host"\n'
                       'test "$("$helper")" = code-mode-ready\n'
                       'test ! -w "$helper"\n'
                       'test ! -e "$(dirname "$0")/unrelated"\n'
                       'test ! -e "$1"\n')
+    binary.write_bytes(Path("/bin/sh").resolve().read_bytes())
     binary.chmod(0o700)
     helper = binaries / "codex-code-mode-host"
     helper.write_text("#!/bin/sh\nprintf code-mode-ready\n")
@@ -119,7 +120,7 @@ def test_isolated_codex_can_execute_its_readonly_code_mode_helper(tmp_path):
     state = SimpleNamespace(workdir=work, codex_home=home,
         execution_scope=execution_scope(Role.USER, work), extensions="", extension_env={})
     CodexRuntimeAdapter._prepare_app_server_home(state)
-    command = CodexRuntimeAdapter._wrap_isolated_command(state, [str(binary), str(private)])
+    command = CodexRuntimeAdapter._wrap_isolated_command(state, [str(binary), "-c", script, "/opt/chatcopilot-codex/codex", str(private)])
     result = subprocess.run(command, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr
 
@@ -156,7 +157,7 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
         from chatcopilot.agent.runtimes.codex import CodexRuntimeAdapter
 
         executable = tmp_path / "probe"
-        executable.write_text("#!/bin/sh\n" + script)
+        executable.write_bytes(Path("/bin/sh").resolve().read_bytes())
         executable.chmod(0o700)
         codex_home = tmp_path / "codex-home"
         codex_home.mkdir(mode=0o700)
@@ -169,7 +170,7 @@ def test_owner_project_hardlinks_allow_confined_processes(tmp_path, backend, lin
         )
         CodexRuntimeAdapter._prepare_app_server_home(state)
         command = CodexRuntimeAdapter._wrap_isolated_command(
-            state, [str(executable), str(cache / "original")]
+            state, [str(executable), "-c", script, "probe", str(cache / "original")]
         )
     result = subprocess.run(command, capture_output=True, text=True, timeout=10)
     assert result.returncode == 0, result.stderr

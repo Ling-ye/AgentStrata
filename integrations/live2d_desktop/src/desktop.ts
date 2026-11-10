@@ -134,7 +134,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     const pet = role === 'client' && prefs.mode === 'pet';
     const win = new BrowserWindow({width: role === 'settings' ? 640 : 1100, height: 780,
       minWidth: 560, minHeight: 480, show: false, autoHideMenuBar: true,
-      title: 'AgentStrata Live2D', icon: join(__dirname, '../ui/icon.ico'),
+      title: 'AgentStrata Companion', icon: join(__dirname, '../ui/icon.ico'),
       ...(pet ? area : {}), transparent: role === 'client', frame: role !== 'client',
       alwaysOnTop: pet || role === 'client' && prefs.topmost, skipTaskbar: pet,
       backgroundColor: pet ? '#00000000' : '#18202b',
@@ -373,7 +373,7 @@ export async function startDesktop(options: DesktopOptions = {}): Promise<void> 
     item.setSaveDialogOptions({title: '保存角色资料', defaultPath: basename(item.getFilename())});
   });
   tray = new Tray(nativeImage.createFromPath(join(__dirname, '../ui/icon.ico')));
-  tray.setToolTip('AgentStrata Live2D'); tray.on('double-click', recover); rebuildTray();
+  tray.setToolTip('AgentStrata Companion'); tray.on('double-click', recover); rebuildTray();
   screen.on('display-metrics-changed', () => { if (client) setMode(prefs.mode); });
   screen.on('display-removed', () => { if (client) setMode(prefs.mode); });
   await connect().catch(showError);

@@ -567,7 +567,7 @@ class HarnessStore:
             ).fetchall()
         return [self._load(row[0]) for row in rows]
 
-    def page(self, *, page: int, limit: int, search: str, status: str, kind: str = "") -> dict[str, Any]:
+    def page(self, *, page: int, limit: int, search: str, status: str, kind: str = "", bot_id: str = "") -> dict[str, Any]:
         if page < 1 or not 1 <= limit <= 100 or len(search) > 256:
             raise ValueError("无效的历史查询参数")
         if kind not in {"", "repair", "code_health", "application"}:
@@ -582,6 +582,9 @@ class HarnessStore:
         )
 
         args = (status, status, search, search)
+        if bot_id:
+            clause += " AND json_extract(payload, '$.source.bot_id')=?"
+            args += (bot_id,)
         if kind:
             clause += " AND COALESCE(json_extract(payload, '$.source.kind'),'evaluation') " + ("!=?" if kind == "repair" else "=?")
             args += ("code_health" if kind == "repair" else kind,)

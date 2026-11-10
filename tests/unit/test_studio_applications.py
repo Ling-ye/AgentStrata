@@ -16,6 +16,22 @@ class Runner:
         self.calls.append(args)
         if args[0] == 'systemd-run':
             self.active = 'active'
+            self.launch = args
+            self.description = next(a.split('=', 1)[1] for a in args if a.startswith('--description='))
+            command = args[-6:]
+            self.properties = {
+                "ExecStart": "{ path=" + command[0] + " ; argv[]=" + " ".join(command)
+                             + " ; ignore_errors=no ; start_time=[Tue 2026-11-10 10:00:00 UTC]"
+                             + " ; stop_time=[n/a] ; pid=12345 ; code=(null) ; status=0/0 }",
+                "WorkingDirectory": next(a.split("=", 1)[1] for a in args if a.startswith("--working-directory=")),
+                "EnvironmentFiles": next(a.split("=", 2)[2] for a in args if a.startswith("--property=EnvironmentFile="))
+                                    + " (ignore_errors=no)",
+            }
+        if '--property=Description' in args:
+            return subprocess.CompletedProcess(args, 0, getattr(self, 'description', ''), '')
+        for field in ("ExecStart", "WorkingDirectory", "EnvironmentFiles"):
+            if "--property=" + field in args:
+                return subprocess.CompletedProcess(args, 0, self.properties[field] + "\n", "")
         if args[:3] == ['systemctl', '--user', 'stop']:
             self.active = 'inactive'
         return subprocess.CompletedProcess(args, 0, self.active, '')
@@ -68,6 +84,11 @@ def test_start_stop_idempotent_no_worker_and_no_secret_arguments(app):
     manager.start(project)
     assert sum(c[0] == 'systemd-run' for c in runner.calls) == 1
     assert 'synthetic-secret' not in str(runner.calls)
+    env = dict(line.split('=', 1) for line in (manager._root(project) / 'runtime.env').read_text().splitlines())
+    preview_token = json.loads(env['AGENTSTRATA_PREVIEW_TOKEN'])
+    assert preview_token != json.loads(env['CHATCOPILOT_GATEWAY_TOKEN'])
+    assert preview_token not in str(runner.calls)
+    assert preview_token not in json.dumps(manager.get(project))
     with pytest.raises(ValueError, match='停止'):
         manager.configure(project, {'name':'别的名字'})
     # A new Studio process sees the same real unit and saved application.
@@ -143,7 +164,7 @@ def test_generated_runtime_resolves_official_channel_without_worker(app):
     context = load_runtime_context(root / 'bot.yaml')
     config = parse_gateway_runtime_config(context, {
         'AGENTSTRATA_QQ_APP_ID':'1234', 'AGENTSTRATA_QQ_APP_SECRET':'synthetic-secret',
-        'CHATCOPILOT_GATEWAY_TOKEN':'g' * 48, 'CHATCOPILOT_GATEWAY_PORT':'18765',
+        'CHATCOPILOT_GATEWAY_TOKEN':'g' * 48, 'AGENTSTRATA_PREVIEW_TOKEN':'p' * 48, 'CHATCOPILOT_GATEWAY_PORT':'18765',
         'CHATCOPILOT_GATEWAY_STATE_ROOT':str(private_directory(root / 'gateway')),
         'CHATCOPILOT_WORKSPACE_ROOT':str(private_directory(root / 'workspace'))})
     assert config.channel.app_id == '1234'
@@ -185,3 +206,66 @@ def test_official_secret_field_is_explicit(app):
     assert QQOfficialChannelSpec().app_secret_env == "AGENTSTRATA_QQ_APP_SECRET"
     assert "access_token_env" not in QQOfficialChannelSpec.__dataclass_fields__
     assert context.platform_type == "qq_official"
+
+
+def test_product_default_does_not_rename_existing_instance(app):
+    manager, project, _ = app
+    assert manager.get(project)['name'] == 'AgentStrata Bot'
+    manager.configure(project, {'name': 'My custom assistant', 'app_id': '1234'})
+    manager.configure(project, {'instructions': 'Keep replies brief'})
+    assert manager.get(project)['name'] == 'My custom assistant'
+    root = manager.state_dir / 'applications' / project
+    assert 'qq_official' in (root / 'bot.yaml').read_text()
+
+
+def test_unknown_or_stopping_runtime_preserves_launch_identity(app):
+    manager, project, runner = app
+    model(manager)
+    manager.configure(project, {"app_id": "1234", "app_secret": "synthetic-secret"})
+    manager.start(project)
+    root = manager._root(project)
+    before = (root / "runtime.env").read_bytes()
+    binding = (root / "runtime-binding.json").read_bytes()
+    for state in ("unavailable", "deactivating"):
+        runner.active = state
+        with pytest.raises(ValueError, match="停止"):
+            manager.start(project)
+        assert (root / "runtime.env").read_bytes() == before
+        assert (root / "runtime-binding.json").read_bytes() == binding
+    assert sum(c[0] == "systemd-run" for c in runner.calls) == 1
+
+
+def test_foreign_unit_cannot_be_reused_or_stopped(app):
+    manager, project, runner = app
+    model(manager)
+    manager.configure(project, {"app_id": "1234", "app_secret": "synthetic-secret"})
+    manager.start(project)
+    runner.description = "another owner"
+    for operation in (manager.start, manager.stop):
+        with pytest.raises(ValueError, match="归属"):
+            operation(project)
+    assert not any(c[:3] == ["systemctl", "--user", "stop"] for c in runner.calls)
+
+
+@pytest.mark.parametrize("field,mutate", [
+    ("WorkingDirectory", lambda value: value + "-another"),
+    ("WorkingDirectory", lambda value: "/prefix" + value),
+    ("EnvironmentFiles", lambda value: value.replace("runtime.env ", "runtime.env.other ")),
+    ("EnvironmentFiles", lambda value: value + " /tmp/extra.env (ignore_errors=no)"),
+    ("ExecStart", lambda value: value.replace(" ; ignore_errors=no", " --extra ; ignore_errors=no")),
+    ("ExecStart", lambda value: value.replace(" ; argv[]=", "-other ; argv[]=")),
+    ("ExecStart", lambda value: value + " { path=/bin/other ; argv[]=/bin/other ; ignore_errors=no }"),
+])
+def test_service_properties_require_exact_command_and_paths(app, field, mutate):
+    manager, project, runner = app
+    model(manager)
+    manager.configure(project, {"app_id": "1234", "app_secret": "synthetic-secret"})
+    manager.start(project)
+    before = (manager._root(project) / "runtime.env").read_bytes()
+    runner.properties[field] = mutate(runner.properties[field])
+    for operation in (manager.start, manager.stop):
+        with pytest.raises(ValueError, match="启动配置不匹配"):
+            operation(project)
+    assert (manager._root(project) / "runtime.env").read_bytes() == before
+    assert sum(c[0] == "systemd-run" for c in runner.calls) == 1
+    assert not any(c[:3] == ["systemctl", "--user", "stop"] for c in runner.calls)

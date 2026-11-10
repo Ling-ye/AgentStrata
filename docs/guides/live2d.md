@@ -1,4 +1,6 @@
-# Live2D 交互客户端
+# AgentStrata Companion：Live2D 使用与组件管理
+
+[AgentStrata Companion](../products/companion.md) 是基于 AgentStrata 构建的桌面伙伴产品，Live2D 是它的角色交互技术。Windows 用户从下方[原生桌面客户端](#windows-桌面客户端)开始；下面的插件命令面向 Linux/WSL 组件安装与维护，不是产品名称。
 
 安装 `open-llm-vtuber` 插件后，AgentStrata 会准备固定版本的 Open-LLM-VTuber、浏览器页面、
 Mao 模型、SenseVoice INT8 CPU 识别和 Edge TTS 晓晓语音，并启动独立 Gateway。

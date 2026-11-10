@@ -1,4 +1,5 @@
 """Own the developer's local model settings and unprivileged guide Gateway process."""
+from pathlib import Path
 import hashlib
 import json
 import os
@@ -33,8 +34,10 @@ def studio_environment(home):
 
 
 class Guide:
-    def __init__(self, home, framework):
+    def __init__(self, home, framework, *, model_path=None):
         self.state_dir, self.framework = home, framework
+        self.model_path = Path(model_path) if model_path else home / "models.json"
+        self.model_environment = ({"AGENTSTRATA_LLM_CONFIG": str(self.model_path)} if model_path else studio_environment(home))
         self.process = None
         self.lock = threading.Lock()
 
@@ -42,13 +45,13 @@ class Guide:
         with self.lock:
             if self.process is not None and self.process.poll() is None:
                 return
-            if not (self.state_dir / "models.json").is_file():
+            if not self.model_path.is_file():
                 return
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
             token = secrets.token_urlsafe(48)
-            env = {**os.environ, **studio_environment(self.state_dir), "PYTHONPATH": str(self.framework / "src"),
+            env = {**os.environ, **self.model_environment, "PYTHONPATH": str(self.framework / "src"),
                    "CHATCOPILOT_SOURCE_ROOT": str(self.framework),
                    "CHATCOPILOT_GATEWAY_STATE_ROOT": str(private_directory(self.state_dir / "gateway")),
                    "CHATCOPILOT_WORKSPACE_ROOT": str(private_directory(self.state_dir / "guide-workspace")),

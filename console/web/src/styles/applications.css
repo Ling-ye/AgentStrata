@@ -1,0 +1,16 @@
+.applications-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr)); gap: 16px; }
+.application-form { max-width: 850px; }
+.application-form label { display: block; width: 100%; }
+.application-form label > .arco-input-wrapper, .application-form label > .arco-textarea-wrapper { margin-top: 6px; }
+.application-conversation { max-height: 520px; overflow-y: auto; }
+.application-message { padding: 16px 0; border-bottom: var(--cc-border); }
+.application-prose { white-space: pre-wrap; overflow-wrap: anywhere; }
+.applications-grid .arco-card-header { height: auto; min-height: 48px; flex-wrap: wrap; gap: 8px; padding-block: 12px; }
+.applications-grid .arco-card-header-title { white-space: normal; overflow-wrap: anywhere; }
+.application-records .arco-space-item { min-width: 0; max-width: 100%; overflow-wrap: anywhere; }
+.application-records .arco-card-header { height: auto; min-height: 48px; flex-wrap: wrap; gap: 8px; padding-block: 12px; }
+.application-records .arco-card-header-title { white-space: normal; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  .application-records .arco-card-body, .application-records .arco-card-header { padding: 12px; }
+  .application-records .arco-space-vertical { width: 100%; }
+}

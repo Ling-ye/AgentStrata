@@ -87,7 +87,8 @@ def execution_identity(bot: Path, environment: dict[str, str]) -> dict:
     runtime = environment_identity()
     if profile.get("agents", {}).get("runtime", "langgraph") == "codex":
         located = config.codex_bin or shutil.which("codex", path=environment.get("PATH")) or environment.get("CHATCOPILOT_CODEX_BIN") or environment.get("CODEX_BIN") or ""
-        binary = Path(located)
+        from chatcopilot.core.codex_executable import resolve_codex_executable
+        binary = resolve_codex_executable(located)
         if not binary.is_file():
             raise ValueError("Activation requires an explicit native Codex executable binding")
         with binary.open("rb") as stream:

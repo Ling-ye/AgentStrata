@@ -8,7 +8,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 class Connection(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    name: str = Field(default="QQ 官方机器人", min_length=1, max_length=100)
+    name: str = Field(default="AgentStrata Bot", min_length=1, max_length=100)
     instructions: str = Field(default="", max_length=8000)
     app_id: str = Field(default="", max_length=64)
     app_secret: str = Field(default="", max_length=512)

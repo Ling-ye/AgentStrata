@@ -5,7 +5,7 @@
 
 ## 项目定位
 
-AgentStrata 是面向外部应用的 Agent 定制、运行与交付系统，提供自有基础 Agent 与运行底座，
+AgentStrata 是面向应用的 Agent 引擎；AgentStrata Studio 是统一工作台，AgentStrata Apps 是基于引擎构建的应用，插件、渠道、Skill 和工具是内部组件。产品概念见[架构正文](docs/reference/architecture.md#产品概念)。系统提供自有基础 Agent 与运行底座，
 通过 Harness 按应用需求开发和验证 Agent 及接入组件，交付可在目标环境运行的特化 Agent 应用。
 不同应用共享基础能力，保留各自的特化配置与必要实现。Channel → Gateway → Application → Agent
 四层定义运行职责；Harness、Eval 与 Console 是可复用的开发、验证与管理能力。

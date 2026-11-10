@@ -42,6 +42,14 @@ AgentStrata 是面向应用的 Agent 引擎和工作台，让用户通过对话�
 | **候选与运行版本对应** | 接受回执绑定精确候选；启用后核对实际加载的代码和配置，失败撤回，执行中断先对账。 |
 | **过程可以检查和接管** | Console 与 CLI 提供统一控制入口，保留任务轨迹、角色产物、模型与工具记录、评测结果和版本状态。 |
 
+## AgentStrata Apps · 应用
+
+- **[AgentStrata Companion · 桌面伙伴](https://github.com/Ling-ye/AgentStrata/blob/main/docs/products/companion.md)**：以 Live2D 角色进行文字、语音与工具交互。
+- **[AgentStrata Bot · QQ 助手](https://github.com/Ling-ye/AgentStrata/blob/main/docs/products/bot.md)**：在 QQ 中使用自己的 Agent 应用，官方平台与 OneBot 使用独立接入路径。
+- **[AgentStrata Studio · 应用工作台](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md)**：通过对话创建、运行和改进应用。
+
+用 AgentStrata 创建的 Agent 应用。从桌面伙伴到 QQ 助手，在一个工作台中使用、管理和持续改进。两款应用以源码预览提供，具体安装、平台要求与验证边界见各自入口。引擎、Studio 工作台、应用和组件的含义见[产品概念](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md#产品概念)，不因展示命名变化重命名已有数据或协议。
+
 ## 应用场景
 
 **让 Live2D 成为 Agent 的交互界面。** 通过独立客户端完成文字、语音和角色呈现，Agent 负责理解任务、组织上下文与调用工具；表情和动作通过工具接口执行，并记录浏览器回执。角色生成器、角色库与 Windows 桌面壳作为可选组件配合使用。

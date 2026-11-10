@@ -16,7 +16,7 @@ window.workbench = (() => {
     if(current!==id){
       current=id;
       panel.replaceChildren();
-      const heading=document.createElement('b');heading.textContent='QQ 官方机器人 · 本机运行';panel.append(heading);
+      const heading=document.createElement('b');heading.textContent='AgentStrata Bot · QQ 官方机器人 · 本机运行';panel.append(heading);
       const status=document.createElement('p');status.id='application-status';status.setAttribute('role','status');panel.append(status);
       const checks=document.createElement('p');checks.id='application-checks';checks.setAttribute('role','status');panel.append(checks);
       const form=document.createElement('form');form.id='connection-form';

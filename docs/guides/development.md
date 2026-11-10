@@ -113,8 +113,9 @@ CI 为 Python 和 Console 设置 `--report-dir`，通过 `scripts/ci_summary.py`
 不修改操作者的全局或生产仓库配置，也不以忽略锁文件或自动重跑取代修复。
 
 依赖外部原生 Codex CLI、Windows 语义或选配 VTuber 上游源码的测试会明确报告跳过。
-本地复核原生 Codex 权限时，将已安装的原生可执行文件目录放在 `PATH` 首位；
-npm 启动脚本不是可单文件挂载的原生二进制。此类权限测试不调用模型。
+本地复核原生 Codex 权限时，可使用原生执行文件或官方 npm 入口；宿主按已安装包元数据
+解析当前 Linux 架构的原生载荷后单文件挂载，未知包装脚本或缺失依赖会明确失败。
+此类权限测试不调用模型。
 
 Python job 安装并实际探测 Bubblewrap 与 ripgrep。Ubuntu 的用户命名空间限制由仅针对
 `/usr/bin/bwrap` 的 AppArmor profile 处理，系统级限制保持开启。准备脚本只允许一次性

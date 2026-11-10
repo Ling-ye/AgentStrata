@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from contextlib import asynccontextmanager
 import logging
+import asyncio
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,6 +15,9 @@ ensure_src_path()
 
 from console.backend.routes import (  # noqa: E402
     architecture,
+    applications,
+    application_records,
+    application_development,
     bots,
     catalog,
     console_self,
@@ -42,7 +46,17 @@ async def lifespan(application: FastAPI):
         except Exception:
             # Optional Harness failure must not disable unrelated Console pages.
             logging.getLogger(__name__).error("Harness control initialization failed")
-    yield
+    from console.backend.routes.applications import service
+    from types import SimpleNamespace
+    workbench = service(SimpleNamespace(app=application))
+    recovery = asyncio.create_task(workbench.resume())
+    try:
+        yield
+    finally:
+        recovery.cancel()
+        await asyncio.gather(recovery, return_exceptions=True)
+    if getattr(application.state, "applications", None) is not None:
+        await application.state.applications.close()
     if hasattr(application.state, "weixin"):
         await application.state.weixin.close()
 
@@ -70,6 +84,9 @@ from console.control.llm import ModelControl  # noqa: E402
 from console.control.discovery import repo_root  # noqa: E402
 app.state.llm = ModelControl(repo_root())
 
+app.include_router(applications.router)
+app.include_router(application_records.router)
+app.include_router(application_development.router)
 app.include_router(overview.router)
 app.include_router(legal.router)
 app.include_router(architecture.router)

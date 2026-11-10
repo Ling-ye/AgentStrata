@@ -1136,7 +1136,8 @@ class CodexRuntimeAdapter:
     @staticmethod
     def _wrap_isolated_command(state: _CodexSession, command: list[str]) -> list[str]:
         from chatcopilot.core.scoped_process import sandbox_command
-        executable = Path(command[0]).resolve(strict=True)
+        from chatcopilot.core.codex_executable import resolve_codex_executable
+        executable = resolve_codex_executable(command[0])
         scope = state.execution_scope or ExecutionScope(readable_roots=(state.workdir,))
         if not scope.native_write:
             scope = replace(scope, writable_roots=())

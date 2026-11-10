@@ -9,6 +9,15 @@ Harness 根据需求开发适配、能力模块和运行策略，Eval 与独立�
 [Agent 运行系统与自有能力优化主计划](../../specs/application-harness-framework/spec.md)维护目标设计与阶段，
 四层基线与各领域规格继续维护现行契约。
 
+## 产品概念
+
+- **AgentStrata** 是共同的 Agent 引擎，提供模型、Agent、工具、渠道、记忆、测评与 Harness 基础能力。
+- **AgentStrata Studio** 是创建、使用、管理和改进应用的统一工作台；Console 是其管理与观测实现，不是第二套运行引擎。
+- **AgentStrata Apps（AgentStrata 应用）** 是基于引擎构建的具体应用。产品或模板描述用途，用户创建的应用实例拥有独立名称、配置、运行身份和历史；独立产品不要求每个实例单独生成安装包。
+- **组件** 包括插件、渠道适配器、Skill、MCP 工具等，由应用按需组合。内部组件 ID、协议和数据目录不因对外命名而迁移。
+
+上述产品概念不替代消息运行的 Channel → Gateway → Application → Agent 四层职责。工作台的应用视图与控制边界由 [Console 正文](console.md)维护，渐进整合方案见[工作台规格](../../specs/desktop-app-studio/spec.md#统一应用工作台与渐进整合)。
+
 ## 产品主体与执行边界
 
 | 概念 | 当前含义 |

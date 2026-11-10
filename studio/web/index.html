@@ -1,6 +1,6 @@
 <!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
 <meta http-equiv="Content-Security-Policy" content="default-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'"><title>AgentStrata · 应用工作台</title>
-<link rel="stylesheet" href="/style.css"><div class="layout"><aside><strong>AgentStrata</strong><button id="new">＋ 新聊天</button><button id="qq">创建 QQ 官方机器人</button><button id="live">连接 Live2D 桌宠</button><h2>我的应用</h2><nav id="history"></nav><button id="settings">模型与账号</button></aside>
+<link rel="stylesheet" href="/style.css"><div class="layout"><aside><strong>AgentStrata</strong><button id="new">＋ 新聊天</button><button id="qq">创建 Bot · QQ 助手</button><button id="live">连接 Companion · 桌面伙伴</button><h2>我的应用</h2><nav id="history"></nav><button id="settings">模型与账号</button></aside>
 <main><header><b id="title">应用工作台</b></header><section id="messages" aria-live="polite"></section><section id="welcome"><span>本机工作台</span><h1>你想做一个什么应用？</h1><p>用对话创建、运行和改进 Agent 应用。先连接模型，再说说你想让它做什么。</p></section>
 <section id="application" hidden></section><form id="compose"><textarea id="input" placeholder="例如，创建一个在 QQ 群回答项目问题的机器人" aria-label="你的需求" required></textarea><button id="send">发送</button></form><p id="notice" role="status"></p></main></div>
 <dialog id="config"><form id="model-form"><h2>模型与账号</h2><label>日常聊天<select id="kind"><option value="api">兼容 API</option><option value="chatgpt">ChatGPT 授权</option></select></label>

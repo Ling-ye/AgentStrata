@@ -616,9 +616,9 @@ class HarnessController:
         return archive.step(ref, span_id, **kwargs) if span_id else archive.summary(ref, after=after, **kwargs)
 
     def list(
-        self, *, page: int = 1, limit: int = 20, search: str = "", status: str = "", kind: str = ""
+        self, *, page: int = 1, limit: int = 20, search: str = "", status: str = "", kind: str = "", bot_id: str = ""
     ) -> dict[str, Any]:
-        result = self.store.page(page=page, limit=limit, search=search, status=status, kind=kind)
+        result = self.store.page(page=page, limit=limit, search=search, status=status, kind=kind, bot_id=bot_id)
         result["tasks"] = [self._public(task) for task in result["tasks"]]
         return result
 
