@@ -7,6 +7,8 @@ from typing import Any, Literal, Mapping, TypeAlias, Union
 
 
 GatewayScope: TypeAlias = Literal[
+    "application.read",
+    "application.settings",
     "gateway.read",
     "chat.write",
     "chat.abort",

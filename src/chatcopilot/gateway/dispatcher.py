@@ -48,6 +48,8 @@ from chatcopilot.contracts.gateway_rpc import (
     TextRpcSegment,
 )
 
+from chatcopilot.contracts.application_management import ApplicationReadParams, ApplicationWriteParams, ApplicationManagementPort
+
 from .application import (
     GatewayApplicationError,
     GatewaySessionService,
@@ -93,6 +95,7 @@ class GatewayApplicationDispatcher:
         event_visibility: GatewaySessionEventVisibility,
         generation: int,
         ready: Callable[[], bool] | None = None,
+        management: ApplicationManagementPort | None = None,
     ) -> None:
         if generation != sessions.generation:
             raise ValueError("dispatcher generation does not match session service")
@@ -104,6 +107,7 @@ class GatewayApplicationDispatcher:
         self._event_visibility = event_visibility
         self._generation = generation
         self._ready = ready or self._default_ready
+        self._management = management
 
     async def dispatch(
         self,
@@ -196,6 +200,20 @@ class GatewayApplicationDispatcher:
         params: object,
         client: GatewayClientContext,
     ) -> GatewayMethodResult:
+        if isinstance(params, (ApplicationReadParams, ApplicationWriteParams)):
+            import asyncio
+            from chatcopilot.core.application_settings import SettingsConflict
+            scope = "application.read" if isinstance(params, ApplicationReadParams) else "application.settings"
+            if scope not in client.scopes or self._management is None:
+                raise GatewayDispatchError("permission_denied", "Application management is unavailable")
+            try:
+                if isinstance(params, ApplicationReadParams):
+                    return await asyncio.to_thread(self._management.read, params)
+                return await asyncio.to_thread(self._management.write, params)
+            except SettingsConflict as exc:
+                raise GatewayDispatchError("settings_conflict", "Configuration changed; reload before saving") from exc
+            except (ValueError, OSError, GatewayStateError) as exc:
+                raise GatewayDispatchError("application_unavailable", "Application settings or observation are unavailable") from exc
         if isinstance(params, HealthParams):
             cursor = self._event_cursor()
             return HealthResult(

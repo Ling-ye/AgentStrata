@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 from dataclasses import dataclass, field
+from chatcopilot.contracts.application_management import (ApplicationReadParams, ApplicationWriteParams, ApplicationReadResult, ApplicationWriteResult)
 from typing import Literal, TypeAlias, Union
 
 from chatcopilot.contracts.gateway import (
@@ -39,6 +40,7 @@ OutboundDeliveryState: TypeAlias = Literal[
     "delivery_unknown",
     "failed",
 ]
+
 
 
 @dataclass(frozen=True)
@@ -159,6 +161,7 @@ class DeliveriesGetParams:
 
 
 GatewayRequestParams = Union[
+    ApplicationReadParams, ApplicationWriteParams,
     HealthParams,
     StatusParams,
     ChannelsListParams,
@@ -348,6 +351,7 @@ class EventsReplayResult:
 
 
 GatewayMethodResult = Union[
+    ApplicationReadResult, ApplicationWriteResult,
     HealthResult,
     StatusResult,
     ChannelsListResult,

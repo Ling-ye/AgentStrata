@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 import json
+import math
 import re
 from typing import Any, TypeVar, cast
 
+from chatcopilot.contracts.application_management import (ApplicationReadParams, ApplicationWriteParams, ApplicationReadResult, ApplicationWriteResult)
 from chatcopilot.contracts.gateway import (
     ChannelAccountRef,
     ConversationRef,
@@ -1170,7 +1172,7 @@ def _validate_json_limits(value: Any) -> None:
             if len(current) > MAX_RPC_TEXT_CHARS:
                 raise GatewayProtocolError("rpc_too_large", "Gateway RPC string is too large")
             observed_bytes += _utf8_size(current)
-        elif current is None or type(current) in {bool, int}:
+        elif current is None or type(current) in {bool, int} or type(current) is float and math.isfinite(current):
             observed_bytes += len(str(current))
             continue
         else:
@@ -1356,7 +1358,84 @@ def _reject_mutation_identity_claims(value: Mapping[str, Any]) -> None:
                 stack.extend(child for child in item if isinstance(child, Mapping))
 
 
+def _parse_application_read(params):
+    _exact_keys(params, required={"operation"}, optional={"arguments", "offset", "snapshot"}, label="application read")
+    operation = _required_enum(params["operation"], "operation", {"identity", "settings", "history", "run", "events", "body", "inspection", "trace", "metrics"})
+    arguments = dict(_object(params.get("arguments", {}), "arguments"))
+    fields = {
+        "identity": set(), "settings": set(),
+        "history": {"since", "until", "state", "config_id", "runtime_id", "model", "component", "error_code", "search", "min_ms", "page", "limit"},
+        "metrics": {"since", "until", "state", "config_id", "runtime_id", "model", "component", "error_code", "search", "min_ms", "page", "limit"},
+        "run": {"run_id"}, "events": {"run_id", "after", "limit"}, "body": {"run_id", "body_id"},
+        "inspection": {"run_id", "event_seq"}, "trace": {"run_id", "span_id", "after"},
+    }
+    if set(arguments) - fields[operation]:
+        raise GatewayProtocolError("invalid_rpc", "Unknown application query fields")
+    for key, value in arguments.items():
+        if key in {"after", "page", "limit", "event_seq"}:
+            _required_int(value, key, 0 if key == "after" else 1, 500 if key == "limit" else 2**63 - 1)
+        elif key in {"since", "until", "min_ms"}:
+            if type(value) not in {int, float} or not 0 <= value < float("inf"):
+                raise GatewayProtocolError("invalid_rpc", "Invalid query time")
+        else:
+            _required_text(value, key, max_chars=512)
+    if operation in {"run", "events", "body", "trace"} and not arguments.get("run_id"):
+        raise GatewayProtocolError("invalid_rpc", "Task identity required")
+    if operation == "body" and not arguments.get("body_id"):
+        raise GatewayProtocolError("invalid_rpc", "Body identity required")
+    snapshot = params.get("snapshot", "")
+    if not isinstance(snapshot, str) or snapshot and not re.fullmatch(r"[a-f0-9]{64}", snapshot):
+        raise GatewayProtocolError("invalid_rpc", "Invalid observation transfer")
+    return ApplicationReadParams(operation, arguments, _optional_int(params, "offset", default=0, minimum=0, maximum=16*1024*1024), snapshot)
+
+
+def _parse_application_write(params):
+    _exact_keys(params, required={"section", "revision", "values"}, optional=set(), label="application settings")
+    section = _required_enum(params["section"], "section", {"model", "prompts"})
+    values = dict(_object(params["values"], "settings values"))
+    fields = {"profile"} if section == "model" else {"identity", "response_style"}
+    _exact_keys(values, required=fields, optional=set(), label="application settings values")
+    for key, value in values.items():
+        _required_text(value, key, max_chars=128 if section == "model" else 16000)
+    return ApplicationWriteParams(section, _required_text(params["revision"], "revision", max_chars=64), values)
+
+
+def _parse_application_result(result):
+    _exact_keys(result, required={"content", "digest", "total"}, optional=set(), label="application result")
+    content = result["content"]
+    if not isinstance(content, str) or len(content) > 16000:
+        raise GatewayProtocolError("invalid_rpc", "Invalid application result chunk")
+    return ApplicationReadResult(content, _required_text(result["digest"], "digest", max_chars=64),
+                                 _required_int(result["total"], "total", 0, 16*1024*1024))
+
+
+def _parse_application_write_result(result):
+    _exact_keys(result, required={"revision"}, optional=set(), label="application settings result")
+    return ApplicationWriteResult(_required_text(result["revision"], "revision", max_chars=64))
+
+
+def _serialize_application_read(params: GatewayRequestParams) -> dict[str, Any]:
+    value = _expect_type(params, ApplicationReadParams, "application read params")
+    return {"operation": value.operation, "arguments": dict(value.arguments), "offset": value.offset, "snapshot": value.snapshot}
+
+
+def _serialize_application_write(params: GatewayRequestParams) -> dict[str, Any]:
+    value = _expect_type(params, ApplicationWriteParams, "application settings params")
+    return {"section": value.section, "revision": value.revision, "values": dict(value.values)}
+
+
+def _serialize_application_result(result: GatewayMethodResult) -> dict[str, Any]:
+    value = _expect_type(result, ApplicationReadResult, "application read result")
+    return {"content": value.content, "digest": value.digest, "total": value.total}
+
+
+def _serialize_application_write_result(result: GatewayMethodResult) -> dict[str, Any]:
+    value = _expect_type(result, ApplicationWriteResult, "application settings result")
+    return {"revision": value.revision}
+
+
 _REQUEST_PARSERS: dict[str, _RequestParser] = {
+    "application.read": _parse_application_read, "application.settings": _parse_application_write,
     "health": _parse_health,
     "status": _parse_status,
     "channels.list": _parse_channels_list,
@@ -1373,6 +1452,8 @@ _REQUEST_PARSERS: dict[str, _RequestParser] = {
 }
 
 _REQUEST_SERIALIZERS: dict[str, Callable[[GatewayRequestParams], dict[str, Any]]] = {
+    "application.read": _serialize_application_read,
+    "application.settings": _serialize_application_write,
     "health": _serialize_health,
     "status": _serialize_status,
     "channels.list": _serialize_channels_list,
@@ -1389,6 +1470,7 @@ _REQUEST_SERIALIZERS: dict[str, Callable[[GatewayRequestParams], dict[str, Any]]
 }
 
 _RESULT_PARSERS: dict[str, _ResultParser] = {
+    "application.read": _parse_application_result, "application.settings": _parse_application_write_result,
     "health": _parse_health_result,
     "status": _parse_status_result,
     "channels.list": _parse_channels_result,
@@ -1405,6 +1487,8 @@ _RESULT_PARSERS: dict[str, _ResultParser] = {
 }
 
 _RESULT_SERIALIZERS: dict[str, Callable[[GatewayMethodResult], dict[str, Any]]] = {
+    "application.read": _serialize_application_result,
+    "application.settings": _serialize_application_write_result,
     "health": _serialize_health_result,
     "status": _serialize_status_result,
     "channels.list": _serialize_channels_result,

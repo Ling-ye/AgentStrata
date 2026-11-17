@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 import logging
 import os
 import re
@@ -673,7 +673,13 @@ def build_gateway_runtime_host(
             trusted_anchor=config.state_anchor,
         )
         instance_lease = _acquire_gateway_instance_lease(state_store)
+        from chatcopilot.host.application_management import ApplicationManagement
+        import hashlib
+        management_id = hashlib.sha256((str(config.state_root).casefold() + "\0" + runtime.instance_id).encode()).hexdigest()[:32]
+        management = ApplicationManagement(runtime, config.state_root, values, installation_id=management_id)
+        runtime = management.store.apply_prompts(runtime)
         chat_config = load_config(env_prefix=runtime.spec.llm.env_prefix, environment=values)
+        management.store.apply_model(chat_config, values)
         agent_runtime = assemble_agent_runtime(runtime, chat_config=chat_config, environment=values)
         generation = state_store.acquire_writer_generation()
         session_manager = SessionManager(writer_generation=generation)
@@ -810,11 +816,16 @@ def build_gateway_runtime_host(
             event_visibility=visibility,
             generation=generation,
             ready=readiness,
+            management=management,
         )
         dispatcher = _ReadinessGuardedDispatcher(
             application_dispatcher,
             ready=readiness,
         )
+        if os.name == "nt":
+            from chatcopilot.host.native_management import register_connection
+            binding = register_connection(config.state_root, management_id, config.port)
+            config = replace(config, credentials=(*config.credentials, binding))
         credential_authority = StaticGatewayCredentialAuthority(config.credentials)
         server = GatewayWebSocketServer(
             config=GatewayServerConfig(
@@ -830,12 +841,19 @@ def build_gateway_runtime_host(
         )
         readiness.bind_server(server)
         try:
+            from chatcopilot.core.application_settings import revision as settings_revision
+            from chatcopilot.core.model_settings import digest as models_digest
+            loaded_settings = {
+                "prompts": settings_revision([{"identity": runtime.prompt_profile.identity, "response_style": runtime.prompt_profile.response_style}, ""]),
+                "model": settings_revision([{"profile": chat_config.llm.profile_id}, models_digest(chat_config.model_settings)]),
+            }
             loaded_revision = source_revision(runtime.spec)
             declared = declared_configuration(runtime.source_path, values)
             effective_revision = fingerprint({"source": loaded_revision, "environment": declared["environment_revision"],
                                               "parameters": plain(agent_runtime.runtime_config)})
             def observation_snapshot():
                 snapshot = runtime_configuration(runtime, agent_runtime, values)
+                snapshot["application_settings"] = loaded_settings
                 snapshot["source_revision"] = loaded_revision
                 snapshot["environment_revision"] = declared["environment_revision"]
                 snapshot["reference_revision"] = declared["reference_revision"]

@@ -6,6 +6,7 @@ import { DELIVERY_STAGES, layerName, runState } from "./model";
 import { bodyState, buildRunView, dateTime, duration, runDuration, stepDuration, stepState, RUNTIME_LAYERS, RUNTIME_OPERATIONS, type DisplayStep, type FlowItem, type ObservationBody } from "./workbenchModel";
 import { ConfigFields, DetailScope, Disclosure, ObservationPayload, TaskDetailState, TextPreview } from "./ObservationContent";
 import ExecutionConfiguration from "./ExecutionConfiguration";
+import { observationBase } from "../../api";
 import TracePanel from "../traces/TracePanel";
 import { agentProcess, rawRecordOwners } from "./agentProcessModel";
 import { JsonData } from "./StructuredData";
@@ -213,7 +214,7 @@ export default function RunInspector({ instanceId, detail, events, visible, onMo
         <StepCard key={item.step.key} item={item} index={view.steps.findIndex((step) => step.key === item.step.key)} terminal={terminal}
           scope={scope} hasMore={hasMore} />} />
     {hasMore && <Button long loading={fetchingMore} onClick={onMore}>加载后续记录</Button>}
-    <TracePanel key={run.run_id} endpoint={`/api/bots/${encodeURIComponent(instanceId)}/gateway-observation/runs/${encodeURIComponent(run.run_id)}/trace`} active={!terminal && visible} title="原始执行记录" />
+    <TracePanel key={run.run_id} endpoint={`${observationBase(instanceId)}/gateway-observation/runs/${encodeURIComponent(run.run_id)}/trace`} active={!terminal && visible} title="原始执行记录" />
     <section className="obs-run-result">
       <ObservationPayload {...scope} reference={run.result_ref} title="任务结果" />
       {!run.result_ref && !run.details_expired && run.final_text && <TextPreview text={run.final_text} />}

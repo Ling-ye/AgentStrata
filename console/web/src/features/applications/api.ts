@@ -2,9 +2,9 @@ import type { EvaluationRecord } from "../evals/model";
 import type { RepairTask } from "../harness/api";
 export interface ApplicationView {
   id: string; name: string; type: string; source: string; instance_id?: string | null; project_id?: string | null;
-  capabilities: { configure: boolean; control: boolean; chat: boolean; improve: boolean; records: boolean };
+  capabilities: { configure: boolean; control: boolean; chat: boolean; improve: boolean; records: boolean; settings?: boolean; observation?: boolean };
   links: { configuration?: string; records?: string; eval?: string; harness?: string };
-  state: { process: string; channel: string; end_to_end: string }; message?: string;
+  state: { process: string; channel: string; end_to_end: string }; message?: string; last_activity?: number;
 }
 export interface Configuration { name: string; instructions: string; app_id: string; app_secret?: string; secret_configured?: boolean; credentials_configured?: boolean }
 export interface ManagementMessage { blocks_development?: boolean; read_only?: boolean; recovery_message?: string; retryable?: boolean; launched?: number | null; build?: string; id: string; text: string; state: string; reply: string; task?: string; proposal?: { name?: string; instructions?: string } }

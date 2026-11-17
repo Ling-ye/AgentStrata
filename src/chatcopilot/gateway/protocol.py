@@ -34,12 +34,14 @@ MAX_STRING_CHARS = 256 * 1024
 MAX_PENDING_CHALLENGES = 1024
 
 GATEWAY_SCOPES: tuple[GatewayScope, ...] = (
+    "application.read", "application.settings",
     "gateway.read",
     "chat.write",
     "chat.abort",
     "gateway.admin",
 )
 GATEWAY_METHODS = (
+    "application.read", "application.settings",
     "health",
     "status",
     "channels.list",
@@ -66,6 +68,7 @@ CONNECT_METHOD = "connect"
 CONNECT_CHALLENGE_EVENT = "connect.challenge"
 
 METHOD_SCOPE: Mapping[str, GatewayScope] = {
+    "application.read": "application.read", "application.settings": "application.settings",
     "health": "gateway.read",
     "status": "gateway.read",
     "channels.list": "gateway.read",
@@ -90,6 +93,7 @@ EVENT_SCOPE: Mapping[str, GatewayScope] = {
 }
 MUTATION_METHODS = frozenset(
     {
+        "application.settings",
         "sessions.create",
         "sessions.patch",
         "chat.send",

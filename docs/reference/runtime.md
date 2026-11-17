@@ -248,3 +248,12 @@ Studio 的标准 QQ 应用复用 BotSpec → Host → Gateway → Channel → Ag
   不继承 OneBot 的白名单、Owner、Admin 或显示名权限。
 - MVP 仅处理 C2C 与群 @ 文本。驱动只允许回复本进程观察到、仍在回复时限内的消息，
   无主动群发、附件发送或账号申请能力。
+
+## 原生应用的 Studio 管理连接
+
+Windows 原生宿主在既有 Gateway 上绑定 `studio-manager` 管理客户端，只有
+`application.read` 与 `application.settings` scope。对应方法查询当前应用的观测和设置、
+保存允许的模型方案或用户提示词；没有业务聊天、工具执行、进程控制或全局管理员权限。
+宿主注入查询及设置服务，Gateway 只负责 typed RPC、身份、准入及原请求去重。
+私有连接文件随后台启动更新，Studio 经 Windows 本机转接访问回环地址；离线不增加进程。
+观测正文沿原索引按需获取，大正文使用短期传输快照分段，过期后重新读取，不形成新历史库。

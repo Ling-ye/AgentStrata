@@ -52,18 +52,21 @@ async function fireAndForgetReq<T>(url: string, init?: RequestInit, fallback?: T
   }
 }
 
+export function observationBase(id: string) {
+  return id.startsWith("app:") ? `/api/applications/${encodeURIComponent(id.slice(4))}/observations` : `/api/bots/${encodeURIComponent(id)}`;
+}
 export const api = {
   weixinStatus: (id: string, signal?: AbortSignal) => req<WeixinStatus>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/status`, { signal }),
   weixinLogin: (id: string) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login`, { method: "POST" }),
   weixinLoginStatus: (id: string, login: string, signal?: AbortSignal) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login/${encodeURIComponent(login)}`, { signal }),
   weixinVerify: (id: string, login: string, code: string) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login/${encodeURIComponent(login)}/verify`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ code }) }),
   weixinCancel: (id: string, login: string) => req<WeixinLogin>(`/api/bots/${encodeURIComponent(id)}/channels/weixin/login/${encodeURIComponent(login)}`, { method: "DELETE" }),
-  inspection: (id: string, runId?: string, eventSeq?: number, signal?: AbortSignal) => req<Inspection>(`/api/bots/${encodeURIComponent(id)}/inspection${runId ? `?run_id=${encodeURIComponent(runId)}${eventSeq != null ? `&event_seq=${eventSeq}` : ""}` : ""}`, { signal }),
-  observationMetrics: (id: string, filters: ObservationFilters) => req<ObservationMetrics>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/metrics${observationQuery(filters)}`),
-  observationEvents: (id: string, runId: string, after = 0, signal?: AbortSignal) => req<EventPage>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/events?after=${after}`, { signal }),
-  observationBody: (id: string, runId: string, bodyId: string, signal?: AbortSignal) => req<ObservationBody>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/details/${encodeURIComponent(bodyId)}`, { signal }),
-  gatewayObservation: (id: string, filters?: ObservationFilters, signal?: AbortSignal) => req<GatewayOverview>(`/api/bots/${encodeURIComponent(id)}/gateway-observation${observationQuery(filters)}`, { signal }),
-  gatewayRun: (id: string, runId: string, signal?: AbortSignal) => req<GatewayRunDetail>(`/api/bots/${encodeURIComponent(id)}/gateway-observation/runs/${encodeURIComponent(runId)}`, { signal }),
+  inspection: (id: string, runId?: string, eventSeq?: number, signal?: AbortSignal) => req<Inspection>(`${observationBase(id)}/inspection${runId ? `?run_id=${encodeURIComponent(runId)}${eventSeq != null ? `&event_seq=${eventSeq}` : ""}` : ""}`, { signal }),
+  observationMetrics: (id: string, filters: ObservationFilters) => req<ObservationMetrics>(`${observationBase(id)}/gateway-observation/metrics${observationQuery(filters)}`),
+  observationEvents: (id: string, runId: string, after = 0, signal?: AbortSignal) => req<EventPage>(`${observationBase(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/events?after=${after}`, { signal }),
+  observationBody: (id: string, runId: string, bodyId: string, signal?: AbortSignal) => req<ObservationBody>(`${observationBase(id)}/gateway-observation/runs/${encodeURIComponent(runId)}/details/${encodeURIComponent(bodyId)}`, { signal }),
+  gatewayObservation: (id: string, filters?: ObservationFilters, signal?: AbortSignal) => req<GatewayOverview>(`${observationBase(id)}/gateway-observation${observationQuery(filters)}`, { signal }),
+  gatewayRun: (id: string, runId: string, signal?: AbortSignal) => req<GatewayRunDetail>(`${observationBase(id)}/gateway-observation/runs/${encodeURIComponent(runId)}`, { signal }),
   overview: () => req<Overview>("/api/overview"),
   listBots: () => req<BotInstance[]>("/api/bots"),
   status: (id: string) => req<BotStatus>(`/api/bots/${id}/status`),

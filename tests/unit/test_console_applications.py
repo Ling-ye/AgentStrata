@@ -257,3 +257,18 @@ def test_receipt_retry_repairs_failed_materialization(applications, monkeypatch)
     result = manager.configure(row["project_id"], {"name": "stale"}, expected_version=baseline, proposal_id="receipt")
     assert result["name"] == "new"
     assert "new identity" in (manager._root(row["project_id"]) / "identity.md").read_text()
+
+
+@pytest.mark.parametrize("stop_generation,stop_offset,expected", [(6, 1, "online"), (7, -1, "online"), (7, 1, "stopped")])
+def test_catalog_stop_marker_belongs_to_current_loaded_generation(applications, tmp_path, monkeypatch, stop_generation, stop_offset, expected):
+    import time
+    from chatcopilot.gateway.observation_store import ObservationStore
+    from console.control import gateway_observability
+    (tmp_path / "gateway").mkdir(mode=0o700)
+    store = ObservationStore(tmp_path / "gateway", writable=True)
+    now = time.time()
+    store.set_meta("loaded_configuration", {"generation": 7, "observed_at": now})
+    store.set_meta("runtime_status", {"state": "stopped", "generation": stop_generation, "observed_at": now + stop_offset})
+    applications._discover = lambda: [BotInstance("test-app", str(tmp_path / "bot.yaml"), runtime_kind="gateway")]
+    monkeypatch.setattr(gateway_observability, "reader", lambda _: store)
+    assert applications.catalog()[0]["state"]["process"] == expected

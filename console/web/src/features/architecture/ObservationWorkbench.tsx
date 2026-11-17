@@ -11,8 +11,8 @@ import { readSessionValue, saveSessionValue, taskWorkspaceState } from "./taskWo
 import { useTaskReadingPosition } from "./useTaskReadingPosition";
 import { mergeObservationEvents, useObservationStream } from "./useObservationStream";
 
-export default function ObservationWorkbench({ bot, visible }: {
-  bot: BotInstance; visible: boolean;
+export default function ObservationWorkbench({ bot, visible, applicationId }: {
+  bot: BotInstance; visible: boolean; applicationId?: string;
 }) {
   const initial = useMemo(() => taskWorkspaceState(bot.instance_id,
     new URLSearchParams(window.location.hash.split("?")[1] ?? ""), readSessionValue(`obs:${bot.instance_id}`)), [bot.instance_id]);
@@ -43,12 +43,12 @@ export default function ObservationWorkbench({ bot, visible }: {
     const navigate = () => {
       const [page, query] = window.location.hash.slice(1).split("?");
       const params = new URLSearchParams(query);
-      if (page !== "bots" || params.get("instance") && params.get("instance") !== bot.instance_id) return;
+      if (applicationId ? page !== "applications" || params.get("application") !== applicationId : page !== "bots" || params.get("instance") && params.get("instance") !== bot.instance_id) return;
       if (params.get("run")) { setSelected(params.get("run")!); setListOpen(false); }
     };
     window.addEventListener("hashchange", navigate);
     return () => window.removeEventListener("hashchange", navigate);
-  }, [bot.instance_id]);
+  }, [bot.instance_id, applicationId]);
   useEffect(() => {
     if (!querying || range === "custom") return;
     const timer = window.setInterval(() => setFilters((value) => ({ ...value, since: Date.now() / 1000 - Number(range) * 86400, until: undefined })), 60_000);
@@ -74,7 +74,7 @@ export default function ObservationWorkbench({ bot, visible }: {
   }, [bot.instance_id, selected, querying, eventPages.data, eventPages.isFetching, eventPages.error, eventPages.hasNextPage, eventPages.fetchNextPage]);
   const pages = eventPages.data?.pages;
   const lastPage = pages?.[pages.length - 1];
-  const stream = useObservationStream(bot.instance_id, selected, flowVisible && isGateway && !!lastPage && !lastPage.has_more,
+  const stream = useObservationStream(bot.instance_id, selected, flowVisible && isGateway && !applicationId && !!lastPage && !lastPage.has_more,
     lastPage?.next_cursor ?? 0);
   const events = useMemo(() => mergeObservationEvents(eventPages.data?.pages.flatMap((page) => page.observations) ?? selectedDetail?.observations ?? [], stream.events), [eventPages.data, selectedDetail, stream.events]);
   useEffect(() => { if (querying && !selected && overview.data?.runs.length) setSelected(overview.data.runs[0].run_id); }, [querying, selected, overview.data]);
@@ -83,9 +83,10 @@ export default function ObservationWorkbench({ bot, visible }: {
   useEffect(() => {
     if (!querying || !selected) return;
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
-    params.set("instance", bot.instance_id); params.set("run", selected); params.set("tab", "tasks"); params.delete("entity");
-    window.history.replaceState(null, "", "#bots?" + params);
-  }, [querying, bot.instance_id, selected]);
+    params.set(applicationId ? "application" : "instance", applicationId || bot.instance_id);
+    params.set("run", selected); params.set("tab", applicationId ? "records" : "tasks"); params.delete("entity");
+    window.history.replaceState(null, "", (applicationId ? "#applications?" : "#bots?") + params);
+  }, [querying, bot.instance_id, selected, applicationId]);
   const reading = useTaskReadingPosition({ instanceId: bot.instance_id, runId: selected, active: flowVisible && isGateway,
     ready: !!selectedDetail && (selectedDetail.source !== "observation_index" || !!eventPages.data || !!eventPages.error),
     container: taskPane, pages: eventPages.data?.pages.length ?? 1, hasMore: !!eventPages.hasNextPage,

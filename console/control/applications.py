@@ -46,7 +46,7 @@ class Applications:
         return {"id": ident, "name": name, "type": kind, "source": source,
                 "instance_id": instance, "project_id": project,
                 "capabilities": {"configure": False, "control": False, "chat": False,
-                                 "improve": False, "records": False, **capabilities},
+                                 "improve": False, "records": False, "settings": False, "observation": False, **capabilities},
                 "links": {}, "state": {"process": "unknown", "channel": "unknown", "end_to_end": "unverified"}}
 
     def catalog(self):
@@ -63,16 +63,33 @@ class Applications:
             paths.add(path)
             source = "plugin" if inst.read_only else "repository"
             ident = ("plugin:" if inst.read_only else "repo:") + inst.instance_id
-            kind = "companion" if inst.origin.get("plugin_id") == "open-llm-vtuber" else "agent"
+            kind = "companion" if inst.origin.get("plugin_id") == "open-llm-vtuber" else "qq_personal" if inst.platform in {"qq", "qq_personal"} else "agent"
             row = self._view(ident, inst.display_name or inst.instance_id, kind, source,
                              instance=inst.instance_id, control=not inst.read_only,
-                             records=True)
+                             records=True, observation=True, settings=not inst.read_only and inst.runtime_kind == "gateway")
             q = quote(inst.instance_id, safe="")
             row["links"] = {"configuration": "#bots?instance=" + q + "&tab=configuration",
                             "records": "#bots?instance=" + q + "&tab=tasks"}
             if not inst.read_only:
                 row["links"].update(eval="#evals?application=" + q, harness="#harness?application=" + q)
             row["message"] = "组件来源应用保持只读；请在桌面客户端打开。" if inst.read_only else "运行与配置由原实例管理器负责。"
+            if inst.runtime_kind == "gateway":
+                try:
+                    from console.control.gateway_observability import reader
+                    observed = reader(inst)
+                    if observed.database.exists():
+                        meta = observed.meta("loaded_configuration") or {}
+                        status = observed.meta("runtime_status") or {}
+                        stopped = (status.get("state") == "stopped" and meta.get("generation") is not None
+                                   and status.get("generation") == meta["generation"]
+                                   and status.get("observed_at", 0) >= meta.get("observed_at", 0))
+                        row["state"]["process"] = "stopped" if stopped else "online" if 0 <= time.time() - meta.get("observed_at", 0) < 15 else "unobserved"
+                        from chatcopilot.gateway.observation_queries import history, RunFilter
+                        latest = history(observed, RunFilter(limit=1))["runs"]
+                        if latest:
+                            row["last_activity"] = latest[0].get("updated_at") or latest[0].get("created_at")
+                except (ValueError, OSError, RuntimeError):
+                    row["state"]["process"] = "unavailable"
             rows.append(row)
         for p in projects:
             standard = p["application_type"] == "qq_official"
@@ -84,6 +101,11 @@ class Applications:
             if standard:
                 row["state"]["process"] = "unobserved"
                 row["state"]["channel"] = "not_checked"
+            rows.append(row)
+        from console.control.native_applications import NativeApplications
+        for record in NativeApplications(self.state_dir).records():
+            row = self._view(record["id"], record["name"], record["type"], "native", records=True, settings=True, observation=True)
+            row["message"] = "从 Windows 桌宠客户端使用；后台在线时可查看记录和调整配置。"
             rows.append(row)
         return rows
 
@@ -110,6 +132,13 @@ class Applications:
             config, reason = Preview(self).settings(row)
             row["capabilities"]["chat"] = config is not None
             row["preview_message"] = reason
+        if row["source"] == "native":
+            from console.control.native_applications import NativeApplications
+            try:
+                NativeApplications(self.state_dir).read(ident, "identity")
+                row["state"]["process"] = "online"
+            except (OSError, ValueError, RuntimeError):
+                row["state"]["process"] = "offline"
         return row
 
     def create(self, ident, kind):
