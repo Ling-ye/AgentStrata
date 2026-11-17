@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from chatcopilot.core.file_integrity import FileMetadataError
 from chatcopilot.evals.private_files import (
     validate_private_file_metadata as _validate_private_file_metadata,
     validate_private_directory_metadata as _validate_private_directory_metadata,
@@ -156,31 +157,51 @@ def _reject_symlink_components(path: Path) -> None:
 
 
 def _read_json(path: Path, *, max_bytes: int | None = None) -> dict[str, Any]:
+    """Read a private snapshot, reopening at most twice after atomic replacement."""
+
     flags = os.O_RDONLY
     flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-    try:
-        descriptor = os.open(path, flags)
-    except FileNotFoundError:
-        return {}
-    except OSError as exc:
-        raise ValueError(f"evaluation artifact cannot be opened safely: {path.name}") from exc
-    try:
-        _validate_private_file_metadata(os.fstat(descriptor), path)
-        with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
-            descriptor = -1
-            if max_bytes is not None:
-                raw = handle.read(max_bytes + 1)
-                if len(raw.encode("utf-8")) > max_bytes:
-                    raise ValueError("Evaluation observation exceeds read limit")
-                value = json.loads(raw)
-            else:
-                value = json.load(handle)
-    except json.JSONDecodeError:
-        return {}
-    finally:
-        if descriptor >= 0:
-            os.close(descriptor)
-    return value if isinstance(value, dict) else {}
+    remaining_reopens = 2
+    while True:
+        try:
+            descriptor = os.open(path, flags)
+        except FileNotFoundError:
+            return {}
+        except OSError as exc:
+            raise ValueError(f"evaluation artifact cannot be opened safely: {path.name}") from exc
+        try:
+            metadata = os.fstat(descriptor)
+            try:
+                _validate_private_file_metadata(metadata, path)
+            except ValueError as exc:
+                cause = exc.__cause__
+                if (
+                    os.name != "nt"
+                    and metadata.st_nlink == 0
+                    and isinstance(cause, FileMetadataError)
+                    and cause.reason == "links"
+                    and remaining_reopens > 0
+                ):
+                    # The writer may replace the path after open but before fstat.
+                    # Close the unlinked inode; never read or relax its validation.
+                    remaining_reopens -= 1
+                    continue
+                raise
+            with os.fdopen(descriptor, "r", encoding="utf-8") as handle:
+                descriptor = -1
+                if max_bytes is not None:
+                    raw = handle.read(max_bytes + 1)
+                    if len(raw.encode("utf-8")) > max_bytes:
+                        raise ValueError("Evaluation observation exceeds read limit")
+                    value = json.loads(raw)
+                else:
+                    value = json.load(handle)
+        except json.JSONDecodeError:
+            return {}
+        finally:
+            if descriptor >= 0:
+                os.close(descriptor)
+        return value if isinstance(value, dict) else {}
 
 
 @contextmanager

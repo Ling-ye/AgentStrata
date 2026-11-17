@@ -1,6 +1,9 @@
-import { useEffect, useRef, useState } from "react";
+import { useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Input, InputNumber, Message, Select, Space, Spin, Typography } from "@arco-design/web-react";
+import DevelopmentSetup from "../features/llm/DevelopmentSetup";
+import { leavesModelsPage, modelDraftAfterSave } from "../features/llm/modelDraft";
+import { NavigationGuardContext } from "../shared/navigationGuard";
 import PageSection from "../shared/ui/PageSection";
 import { llmApi, profileOptions, type ModelCatalog, type ModelConfiguration, type ModelConnection } from "../features/llm/api";
 
@@ -9,7 +12,7 @@ const { Text } = Typography;
 
 export default function ModelsPage() {
   const client = useQueryClient();
-  const query = useQuery({ queryKey: ["llm-config"], queryFn: ({ signal }) => llmApi.config(signal), retry: false });
+  const query = useQuery({ queryKey: ["llm-config"], queryFn: ({ signal }) => llmApi.config(signal), retry: false, refetchOnMount: "always" });
   const [draft, setDraft] = useState<ModelConfiguration>();
   const [connectionId, setConnectionId] = useState("");
   const [newConnection, setNewConnection] = useState("");
@@ -21,12 +24,25 @@ export default function ModelsPage() {
   const [error, setError] = useState("");
   const [dirty, setDirty] = useState(false);
   const generation = useRef(0);
+  const editVersion = useRef(0);
+  const saveGate = useRef(false);
+  const alive = useRef(true);
+  const register = useContext(NavigationGuardContext);
+  useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
+  useEffect(() => register({ shouldBlock: next => (dirty || saving) && leavesModelsPage(next),
+    confirm: async () => window.confirm("模型配置尚未保存或正在保存，确定离开并丢弃未提交的更改吗？已提交的保存会继续处理。") }), [register, dirty, saving]);
   useEffect(() => {
-    if (!draft && query.data) {
+    const before = (event: BeforeUnloadEvent) => { if (dirty || saving) { event.preventDefault(); event.returnValue = ""; } };
+    window.addEventListener("beforeunload", before);
+    return () => window.removeEventListener("beforeunload", before);
+  }, [dirty, saving]);
+  useEffect(() => {
+    if (query.data && !dirty && !saving) {
       setDraft(structuredClone(query.data));
-      setConnectionId(Object.keys(query.data.connections)[0] ?? "");
+      const connections = query.data.connections;
+      setConnectionId(current => current in connections ? current : Object.keys(connections)[0] ?? "");
     }
-  }, [query.data, draft]);
+  }, [query.data, dirty, saving]);
   async function refresh(id: string, connection?: ModelConnection) {
     const version = ++generation.current;
     if (!id || !connection) { setCatalog(undefined); setLoading(false); return; }
@@ -43,21 +59,34 @@ export default function ModelsPage() {
   }, [connectionId]);
   function change(action: (value: ModelConfiguration) => void) {
     if (!draft) return;
-    const next = structuredClone(draft); action(next); setDraft(next); setDirty(true);
+    editVersion.current++;
+    setDraft(current => { if (!current) return current; const next = structuredClone(current); action(next); return next; });
+    setDirty(true);
   }
   function editConnection(patch: Partial<ModelConnection>) {
     change(next => { next.connections[connectionId] = { ...next.connections[connectionId], ...patch }; });
     generation.current++; setCatalog(undefined); setLoading(false);
   }
   async function save() {
-    if (!draft) return;
+    if (!draft || saveGate.current) return;
+    saveGate.current = true;
+    const submittedVersion = editVersion.current;
     setSaving(true); setError("");
     try {
       const saved = await llmApi.save(draft);
-      setDraft(saved); setDirty(false); client.setQueryData(["llm-config"], saved);
-      Message.success("已保存。新任务使用最新方案；常驻机器人请应用配置或重启。");
-    } catch (value) { setError(String(value)); }
-    finally { setSaving(false); }
+      void client.invalidateQueries({ queryKey: ["development-setup"] });
+      if (alive.current) {
+        client.setQueryData(["llm-config"], saved);
+        const edited = editVersion.current !== submittedVersion;
+        setDraft(current => modelDraftAfterSave(current ?? draft, saved, edited));
+        setDirty(edited);
+        Message.success(edited ? "本次提交已保存。期间的新修改已保留，仍需再次保存。" : "已保存。新任务使用最新方案；常驻机器人请应用配置或重启。");
+      } else {
+        // A remounted editor may have saved a newer revision in the meantime.
+        void client.invalidateQueries({ queryKey: ["llm-config"] });
+      }
+    } catch (value) { if (alive.current) setError(String(value)); }
+    finally { saveGate.current = false; if (alive.current) setSaving(false); }
   }
   if (!draft) return <PageSection title="模型配置">{query.isError ? <Alert type="error" content={String(query.error)} /> : <Spin />}</PageSection>;
   const connection = draft.connections[connectionId];
@@ -65,6 +94,7 @@ export default function ModelsPage() {
   const validId = (id: string) => /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(id);
   return <PageSection title="模型配置" description="集中维护连接、模型方案与用途引用。模型能力只采用当前连接接口明确返回的值。">
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
+      <DevelopmentSetup configurationDirty={dirty} />
       <Space wrap><Button type="primary" loading={saving} disabled={!dirty && draft.source !== "defaults"} onClick={() => void save()}>保存配置</Button>
         <Text type="secondary">{dirty ? "有未保存更改" : draft.source === "defaults" ? "使用默认配置；保存后以保存值为准" : draft.source === "empty" ? "尚未配置" : "已保存"}；机器人通过现有应用／重启入口加载配置。</Text></Space>
       {error && <Alert type="error" content={error} />}

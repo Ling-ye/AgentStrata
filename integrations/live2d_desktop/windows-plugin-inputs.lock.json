@@ -1,0 +1,42 @@
+{
+  "schema": "agentstrata-windows-plugin-inputs/v3",
+  "plugin": "open-llm-vtuber",
+  "recipe": "windows-vtuber-original-inputs/v3",
+  "python_lane": "vtuber_python",
+  "wheel_archive_policy": "redundant-local-zip64/v1",
+  "requirements_input": "integrations/open_llm_vtuber/agentstrata_vtuber/resources/requirements-windows.in",
+  "requirements_lock": "integrations/open_llm_vtuber/agentstrata_vtuber/resources/requirements-windows.lock",
+  "upstream": "integrations/open_llm_vtuber/agentstrata_vtuber/resources/upstream.json",
+  "artifacts": "integrations/open_llm_vtuber/agentstrata_vtuber/resources/artifacts.json",
+  "direct_wheels": {
+    "torch": {
+      "url": "https://download-r2.pytorch.org/whl/cpu/torch-2.14.1%2Bcpu-cp312-cp312-win_amd64.whl#sha256=c52adc3bd526ff7fc5bdcc58fc4a76e6214d09951b646ffe5256ebd7ba60cef1",
+      "sha256": "c52adc3bd526ff7fc5bdcc58fc4a76e6214d09951b646ffe5256ebd7ba60cef1"
+    }
+  },
+  "source_builds": {
+    "langdetect": {
+      "version": "1.0.9",
+      "state": "paired-source-wheel-copy",
+      "recipe": "langdetect-paired-source-wheel-copy/v1",
+      "source_sha256": "cbc1fef89f8d062739774bd51eda3da3274006b3661d199c2655f6b3f6d605a0",
+      "original_wheel_sha256": "7cbc0746252f19e76f77c0b1690aadf01963be835ef0cd4b56dddf2a8f1dfc2a",
+      "setup_sha256": "5e1274061a647851c36200d102286c2262b5ce0258fa345010579a65fe7c3ca8"
+    }
+  },
+  "projects": {
+    "backend": {
+      "recipe": "fixed-git-project-exact-patch/v1",
+      "allowed_cjk_paths": [
+        ".github/ISSUE_TEMPLATE/bug---question---get-help---bug---提问---求助.md",
+        ".github/ISSUE_TEMPLATE/feature-request---功能建议.md",
+        "characters/zh_米粒.yaml",
+        "characters/zh_翻译腔.yaml"
+      ]
+    },
+    "frontend": {
+      "recipe": "fixed-git-project-exact-patch/v1",
+      "allowed_cjk_paths": []
+    }
+  }
+}

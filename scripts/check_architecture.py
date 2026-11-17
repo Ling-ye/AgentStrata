@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import ast
 import json
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, Mapping, Sequence
@@ -643,6 +644,14 @@ def _compatibility_import_checks() -> dict[str, dict[str, list[str]]]:
     }
 
 
+def _retired_runtime_token_present(source: str, token: str) -> bool:
+    if token == "build_backend":
+        # Retire the Agent factory symbol, while keeping distinct PEP 517 audit
+        # identifiers such as upstream_build_backend_executed meaningful.
+        return re.search(r"(?<![A-Za-z0-9_])build_backend(?![A-Za-z0-9_])", source) is not None
+    return token in source
+
+
 def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
     violations: dict[str, dict[str, list[str]]] = {}
 
@@ -667,7 +676,7 @@ def _semantic_invariants() -> dict[str, dict[str, list[str]]]:
     vocabulary_violations: dict[str, list[str]] = {}
     for path in SRC.rglob("*.py"):
         source = path.read_text(encoding="utf-8-sig")
-        found = [token for token in retired_runtime_vocabulary if token in source]
+        found = [token for token in retired_runtime_vocabulary if _retired_runtime_token_present(source, token)]
         if found:
             vocabulary_violations[path.relative_to(ROOT).as_posix()] = found
     if vocabulary_violations:

@@ -81,18 +81,21 @@ def _record_error(error: BaseException, database: str, phase: str) -> None:
     logger.error("Private storage failure %s\n%s", json_text(details), frames)
 
 
-def private_directory(path: Path) -> Path:
+def private_directory(path: Path, *, create: bool = True) -> Path:
     if os.name == "nt":
         from chatcopilot.core.windows_storage import reject_reparse
         path = path.absolute()
         reject_reparse(path)
-        try:
-            path.mkdir(parents=True, mode=0o700)
-        except FileExistsError:
-            pass
-        else:
-            fs.tighten(path)
-        fs.lstat(path)
+        if create:
+            try:
+                path.mkdir(parents=True, mode=0o700)
+            except FileExistsError:
+                pass
+            else:
+                fs.tighten(path)
+        info = fs.lstat(path)
+        if not create and not stat.S_ISDIR(info.st_mode):
+            raise ValueError("private storage directory has an unsafe type")
         return path
     path = path.absolute()
     current = Path(path.anchor)
@@ -100,7 +103,8 @@ def private_directory(path: Path) -> Path:
         current /= part
         if current.is_symlink():
             raise ValueError("private storage path contains a symlink")
-    path.mkdir(parents=True, mode=0o700, exist_ok=True)
+    if create:
+        path.mkdir(parents=True, mode=0o700, exist_ok=True)
     info = fs.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != fs.getuid() or info.st_mode & 0o077:
         raise ValueError("private storage directory must be owned by this user with mode 0700")

@@ -70,8 +70,19 @@ try {
     $Out = Join-Path $Job 'pack.out.log'
     $Err = Join-Path $Job 'pack.err.log'
     $Process = Start-Process -FilePath $Node -ArgumentList $Arguments -WorkingDirectory $Job -NoNewWindow -Wait -PassThru -RedirectStandardOutput $Out -RedirectStandardError $Err
-    if ($Process.ExitCode -ne 0) {throw ('Windows packaging failed: ' + (Get-Content -LiteralPath $Err -Raw))}
-    Copy-Item -LiteralPath (Join-Path $Job 'release\application.exe') -Destination $Stage
+    $Installer = Join-Path $Job 'release\application.exe'
+    if ($Process.ExitCode -ne 0 -or !(Test-Path -LiteralPath $Installer -PathType Leaf)) {
+      $Details = @()
+      foreach ($Log in @($Out,$Err)) {
+        if (Test-Path -LiteralPath $Log -PathType Leaf) {
+          $Text = Get-Content -LiteralPath $Log -Raw -Encoding UTF8
+          if ($Text.Length -gt 8000) {$Text=$Text.Substring($Text.Length-8000)}
+          $Details += (Split-Path $Log -Leaf) + ': ' + $Text
+        }
+      }
+      throw ('Windows packaging failed or produced no installer (exit ' + $Process.ExitCode + '). ' + ($Details -join "`n"))
+    }
+    Copy-Item -LiteralPath $Installer -Destination $Stage
     if (!$Studio) {Copy-Item -LiteralPath (Join-Path $Job 'desktop-launch.json') -Destination $Stage}
   } finally {Pop-Location}
 } finally {

@@ -65,6 +65,8 @@ uv run agentstrata botspec validate bots/lingye-copilot-qq/bot.yaml
 `fast` 按 tests/fast.txt 的完整文件清单，用 4 个 pytest worker 按文件并行执行；
 `python` 执行所有静态检查、依赖与许可一致性、发行资源和完整 Python 回归，同样按文件使用 4 个 worker；
 `console` 执行前端测试和生产构建；`full` 顺序组合 `python` 与 `console`。
+每次测试使用独立的临时目录。WSL/Linux 上会等测试及其子进程退出后清理目录。
+本地检查为每次运行保留独立报告和日志。用 `--report-dir` 可以指定报告位置。
 只要新增变化、失败或具体风险没有出现，已通过的检查不重复执行。
 
 `docs/fast/full` 默认收集本 checkout 的已暂存、未暂存和未忽略的新文件，输出关联文档。
@@ -145,6 +147,22 @@ bash scripts/check_secrets.sh history --keep-report
 ## 依赖与验证环境
 
 依赖只在 pyproject.toml 的既有分组修改，再运行 `scripts/sync_requirements.py` 和 `--check` 验证派生清单。构建工具必须有声明，不能依赖本机偶然安装的包。
+Windows host 锁也由这两个命令生成或核对：使用已准备的宿主 uv 0.12.5，对冻结 uv.lock 执行无网络导出，固定包含 core 与 agent；工具缺失或锁过期时检查失败，不自动安装工具、更新锁或同步环境。修改依赖后先显式维护 uv.lock。导出的范围与生产接入状态见[交付依赖声明](../reference/delivery.md#原生交付的应用-host-依赖声明)。
+构建宿主可通过绝对路径 `AGENTSTRATA_NATIVE_HOST_WHEELHOUSE` 提供完整固定 wheel 缓存；原生资源准备使用 `--host-wheelhouse`。构建器只审计和复制原字节，不下载或修复缺项；未提供完整缓存时只生成 selected 输入，不能称为离线依赖就绪。完整缓存还生成 source 绑定的安装映射和 v3 环境输入，配套清单缺失或篡改会被载荷读取拒绝。显式 v3 可供私有隔离暂存使用，生产 bootstrap 尚未调用它；范围、入口转换及前缀/ABI 缺口见[固定 host 输入](../reference/delivery.md#固定-windows-host-wheel-输入与离线缓存)与[安装映射](../reference/delivery.md#windows-wheel-安装映射与隔离入口)。
+
+原生构建还输出 runtime requirements，明确保留插件/MCP 及加载缺项；接受读取器和更新日志的测试使用独立固定的合成证据及新私有数据库，不运行目标软件。实际接入和边界见[接受与更新日志](../reference/delivery.md#独立运行接受与更新日志)及[隔离镜像安装恢复](../reference/delivery.md#隔离-host-镜像安装与恢复)。隔离编排已连接原始输入、接受、原子选择和日志；Windows 测试真实文件/SQLite 与自有故障子进程，所有目标归档内容均保持数据状态，生产安装和启动未启用。
+
+Python 输入锁 v2 的生产载荷须携带原始供应方元数据，默认从宿主 `~/.cache/agentstrata/python-inputs/<表 SHA256>.json` 读取；Python 构建 API 的 `python_metadata` 和资源准备的 `--python-metadata` 可显式提供原始字节。缓存仍须匹配来源锁的 SHA256/Git blob，不能充当来源权威，不自动下载或修复。整张表保留为构建输入，不纳入公开源码或编码绕过来源规则。匹配的旧资源可复用原字节；缺失或不符时拒绝，无已装环境回退。读取器重新认证并派生 host/plugin/MCP 三用途输入，构建回执绑定元数据和校验记录；旧 v1 载荷仍可读取。MCP 3.14 的基础归档和专用 wheel 元数据审计不开放 venv/加载配方。运行 `tests/unit/test_windows_python_inputs.py`、`test_python_plan.py` 和 `test_python_environment.py`，区分合成归档故障测试、真实元数据解析与目标软件运行，见[生产输入边界](../reference/delivery.md#独立运行接受与更新日志)。
+
+Windows-MCP v2 策略另要求原始 Git/Python 归档，显式参数为 `--mcp-source-archive`、`--mcp-python-archive`，完整 wheel 输入使用 `--mcp-wheelhouse`；默认固定缓存、审计 schema 及边界见[MCP 输入](../reference/delivery.md#windows-mcp-原始归档与依赖闭包)。源码 graph、完整 wheel METADATA 闭包及实际运行分别取证，不从安装目录生成信任根。新版 bootstrap 的 `-InspectInputsOnly` 是不写目录的输入检查，正常 MCP 准备继续拒绝未完成的独立运行接受。运行 `tests/unit/test_git_source_tar.py`、`test_windows_mcp_inputs.py`、`test_tar_inventory.py`、`test_dependency_closure.py`、`test_wheel_plan.py`；Windows 专列只读 PowerShell 和原始数据落地测试，不执行归档中的软件。
+
+MCP v3 要求完整原始 wheel 集合，并固定自有源码复制配方。运行 `test_mcp_project.py` 与
+`test_windows_mcp_layout.py`，核对项目/依赖目的树、受限入口、旧格式专用范围、回执和缺项拒绝。
+`core.mcp_materialize` 的目标只能是全新私有实验目录；它复制并回读布局数据，不创建可执行
+前缀或执行项目。插件来源由 `windows-plugin-inputs.lock.json` 单独固定，运行
+`test_windows_plugin_inputs.py` 验证完整需求、原哈希集合、固定 CPU URL、缓存和派生报告攻击；
+`--plugin-wheelhouse` 仅提供原始字节，不能通过本地构建回执登记新 pin。新来源的供应方构建
+仍在源码转换、项目与资产闭包未准入时拒绝，来源/数据候选与真实运行验收分别记录。
 
 使用仓库外短临时目录，避免 Unix socket 路径过长和历史测试目录污染。Windows 原生语义只在对应平台验证。新增未暂存资源的打包检查使用项目既有候选索引机制，不暂存用户文件。
 

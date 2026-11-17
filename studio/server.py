@@ -9,11 +9,13 @@ from uuid import UUID
 
 from fastapi import FastAPI, HTTPException
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from studio.workspace import Studio
+from studio.downloads import VerifiedBuildResponse
+from studio.launcher import READINESS_PATH, register_readiness
 
 
 class Create(BaseModel):
@@ -35,28 +37,16 @@ def application(home, framework, token, *, run_worker=True):
 
     @asynccontextmanager
     async def lifespan(app):
-        if run_worker:
-            await asyncio.to_thread(guide.start)
-        tasks = {}
-        async def poll():
-            while True:
-                for key in studio.pending():
-                    if key not in tasks or tasks[key].done():
-                        tasks[key] = asyncio.create_task(asyncio.to_thread(studio.step, key))
-                tasks_copy = list(tasks.items())
-                for key, task in tasks_copy:
-                    if task.done():
-                        task.result()
-                        tasks.pop(key, None)
-                await asyncio.sleep(1)
-        worker = asyncio.create_task(poll()) if run_worker else None
+        from studio.worker import StudioWorker
+        consumer = StudioWorker(studio)
+        consumer.guide = guide
+        worker = asyncio.create_task(consumer.run()) if run_worker else None
         try:
             yield
         finally:
             if worker:
                 worker.cancel()
                 await asyncio.gather(worker, return_exceptions=True)
-            await asyncio.gather(*tasks.values(), return_exceptions=True)
             await asyncio.to_thread(guide.stop)
 
     app = FastAPI(lifespan=lifespan, docs_url=None, redoc_url=None, openapi_url=None)
@@ -69,7 +59,7 @@ def application(home, framework, token, *, run_worker=True):
         origin = request.headers.get("origin")
         if origin and origin != str(request.base_url).rstrip("/"):
             return JSONResponse({"detail":"仅允许同源请求"}, 403)
-        if request.url.path.startswith("/api/") and request.url.path != "/api/login":
+        if request.url.path.startswith("/api/") and request.url.path not in {"/api/login", READINESS_PATH}:
             if not hmac.compare_digest(request.cookies.get("studio", ""), cookie):
                 return JSONResponse({"detail":"请使用本机启动入口打开工作台"}, 401)
         response = await call_next(request)
@@ -89,6 +79,8 @@ def application(home, framework, token, *, run_worker=True):
     @app.exception_handler(KeyError)
     async def missing(_request, _exc):
         return JSONResponse({"detail":"项目或安装包不存在"}, 404)
+
+    register_readiness(app, token)
 
     @app.post("/api/login")
     def login(body: dict):
@@ -121,8 +113,8 @@ def application(home, framework, token, *, run_worker=True):
 
     @app.get("/api/projects/{project}/builds/{message}")
     def download(project: UUID, message: UUID):
-        return FileResponse(studio.artifact(project.hex, message.hex), media_type="application/octet-stream",
-                            filename="AgentStrata-" + project.hex[:8] + ".exe")
+        path, digest = studio.artifact_reference(project.hex, message.hex)
+        return VerifiedBuildResponse(path, digest, filename="AgentStrata-" + project.hex[:8] + ".exe")
 
     @app.post("/api/projects/{project}/builds/{message}/try")
     def trial(project: UUID, message: UUID):
@@ -152,18 +144,10 @@ def application(home, framework, token, *, run_worker=True):
 
     @app.post("/api/projects/{project}/messages/{message}/retry")
     def retry(project: UUID, message: UUID):
-        with studio.db.connect(write=True) as db:
-            row = db.execute("SELECT m.*,p.version AS current FROM messages m JOIN projects p ON p.id=m.project "
-                             "WHERE m.id=? AND p.id=?", (message.hex, project.hex)).fetchone()
-            if not row or row["state"] != "failed" or row["version"] != row["current"]:
-                raise HTTPException(409, "原任务无法在当前版本重试，请提出新的改进")
-            if not studio.retryable(project.hex, row):
-                raise HTTPException(409, "旧任务及证据保持只读，请在当前聊天发送新的开发请求。")
-            try:
-                db.execute("UPDATE messages SET state=?,reply='' WHERE id=?", (
-                    "starting" if row["task"] or row["goal"] else "thinking", message.hex))
-            except sqlite3.IntegrityError as exc:
-                raise HTTPException(409, "当前已有其他改动正在处理") from exc
+        try:
+            studio.retry(project.hex, message.hex)
+        except (ValueError, sqlite3.IntegrityError) as exc:
+            raise HTTPException(409, str(exc) if isinstance(exc, ValueError) else "当前已有其他改动正在处理") from exc
         return {"ok": True}
 
     from studio.workbench_api import application_routes

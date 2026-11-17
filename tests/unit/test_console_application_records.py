@@ -1,4 +1,5 @@
 """The application history BFF resolves scope, never accepts caller-selected bot IDs."""
+import hashlib
 from types import SimpleNamespace
 from unittest.mock import Mock
 
@@ -54,8 +55,8 @@ def test_desktop_download_uses_exact_project_and_verified_artifact(client, tmp_p
     client.applications.require.return_value = {"source": "studio", "type": "desktop", "project_id": "b" * 32}
     artifact = tmp_path / "application.exe"
     artifact.write_bytes(b"verified fixture")
-    resolve = client.applications.studio.return_value.artifact
-    resolve.return_value = artifact
+    resolve = client.applications.studio.return_value.artifact_reference
+    resolve.return_value = artifact, hashlib.sha256(b"verified fixture").hexdigest()
     response = client.http.get("/api/applications/studio:" + "b" * 32 + "/builds/" + message)
     assert response.status_code == 200 and response.content == b"verified fixture"
     resolve.assert_called_once_with("b" * 32, message)

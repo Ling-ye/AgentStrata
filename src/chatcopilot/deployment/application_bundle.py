@@ -15,6 +15,12 @@ from chatcopilot.core.install_artifacts import write_private
 from chatcopilot.core.source_manifest import is_deployable_source_path
 from chatcopilot.core.source_snapshot import copy_sources, manifest_digest, verify_copy
 from chatcopilot.contracts.deployment import ReleaseSource
+from chatcopilot.deployment.windows_wheels import MEMBER as HOST_WHEELS, verify_host_wheels, reserved_member
+from chatcopilot.deployment.windows_dependencies import MEMBER as DEPENDENCIES, verify_dependency_declarations
+from chatcopilot.deployment.runtime_requirements import MEMBER as RUNTIME_REQUIREMENTS, verify_runtime_requirements
+from chatcopilot.deployment.windows_python_inputs import verify_native_python_inputs
+from chatcopilot.deployment.windows_mcp_inputs import verify_native_mcp_inputs
+from chatcopilot.deployment.windows_plugin_inputs import verify_native_plugin_inputs
 
 
 SCHEMA = "agentstrata-application-bundle/v1"
@@ -67,13 +73,13 @@ def read_bundle(root: Path, *, native_volume: bool = False) -> dict:
                 or not isinstance(catalog.get("files"), dict)):
             raise ValueError("Native artifacts do not identify their source")
         for name, expected in catalog["files"].items():
-            relative = PurePosixPath(name)
-            if (not isinstance(name, str) or relative.is_absolute() or ".." in relative.parts
-                    or "\\" in name or ":" in name or not relative.parts or relative.parts[0] == "source"
-                    or relative.as_posix() != name or name in {MANIFEST, "artifacts.json"}
+            artifact_relative = PurePosixPath(name)
+            if (not isinstance(name, str) or artifact_relative.is_absolute() or ".." in artifact_relative.parts
+                    or "\\" in name or ":" in name or not artifact_relative.parts or artifact_relative.parts[0] == "source"
+                    or artifact_relative.as_posix() != name or name in {MANIFEST, "artifacts.json"}
                     or not isinstance(expected, str) or not re.fullmatch(r"[a-f0-9]{64}", expected)):
                 raise ValueError("Invalid native artifact member")
-            member = root.joinpath(*relative.parts)
+            member = root.joinpath(*artifact_relative.parts)
             if trusted_source_sha256(member, root=root, max_bytes=max(1, member.stat().st_size)) != expected:
                 raise ValueError("Native artifact content changed")
         artifact_members = set()
@@ -83,7 +89,7 @@ def read_bundle(root: Path, *, native_volume: bool = False) -> dict:
                 directories[:] = [name for name in directories if name != "source"]
             for name in (*directories, *files):
                 member = base / name
-                if member.is_symlink() or getattr(member.lstat(), "st_reparse_tag", 0):
+                if member.is_symlink() or getattr(member.lstat(), "st_reparse_tag", False):
                     raise ValueError("Native artifacts cannot contain links")
                 if name in files and not (base == root and name in {MANIFEST, "artifacts.json"}):
                     artifact_members.add(member.relative_to(root).as_posix())
@@ -97,16 +103,33 @@ def read_bundle(root: Path, *, native_volume: bool = False) -> dict:
         raise ValueError("Application bundle source is unavailable")
     members = set()
     for path in source.rglob("*"):
-        if path.is_symlink() or getattr(path.lstat(), "st_reparse_tag", 0):
+        if path.is_symlink() or getattr(path.lstat(), "st_reparse_tag", False):
             raise ValueError("Application bundle cannot contain symbolic links")
         if path.is_file():
             members.add(path.relative_to(source).as_posix())
     if members != set(manifest):
         raise ValueError("Application bundle contains missing or unrecorded files")
     verify_copy(source, manifest, native_volume=native_volume and value["schema"] == NATIVE_SCHEMA)
+    if value["schema"] == NATIVE_SCHEMA:
+        python_inputs = verify_native_python_inputs(root, manifest, catalog["files"])
+        if python_inputs is not None and RUNTIME_REQUIREMENTS not in catalog["files"]:
+            raise ValueError("Native Python input payload requires source-derived runtime requirements")
+    if value["schema"] == NATIVE_SCHEMA and DEPENDENCIES in catalog["files"]:
+        with (root / DEPENDENCIES).open("rb") as stream:
+            declarations = stream.read(256 * 1024 + 1)
+        verify_dependency_declarations(source, manifest, declarations)
+    if value["schema"] == NATIVE_SCHEMA and any(reserved_member(name) for name in catalog["files"]):
+        if HOST_WHEELS not in catalog["files"]:
+            raise ValueError("Native host wheel artifacts lack their frozen input selection")
+        verify_host_wheels(root, manifest)
     relative = value.get("bot_relative")
     if not isinstance(relative, str) or relative not in manifest or not relative.startswith("bots/"):
         raise ValueError("Application bundle does not identify its application")
+    if value["schema"] == NATIVE_SCHEMA:
+        verify_native_mcp_inputs(root, manifest, relative, catalog["files"])
+        verify_native_plugin_inputs(root, manifest, relative, catalog["files"])
+    if value["schema"] == NATIVE_SCHEMA and RUNTIME_REQUIREMENTS in catalog["files"]:
+        verify_runtime_requirements(root, manifest, relative, value["bot_id"])
     app = load_application_spec(source / relative)
     if (app.raw.get("deploy", {}).get("instance_id") or app.raw.get("id")) != value.get("bot_id"):
         raise ValueError("Application bundle identity differs from its configuration")

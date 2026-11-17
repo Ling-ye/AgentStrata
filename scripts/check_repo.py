@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import argparse
+import ctypes
 import hashlib
 import json
 import os
 import re
 import shutil
+import signal
 import subprocess
 import sys
+import tempfile
 import time
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass, replace
@@ -18,6 +21,10 @@ from pathlib import Path, PurePosixPath
 
 ROOT = Path(__file__).resolve().parents[1]
 _FAILED_NODE_RE = re.compile(r"^(?:FAILED|SUBFAILED\(.*?\))\s+(\S+)", re.MULTILINE)
+_PYTEST_CHECKS = {"core tests", "full Python tests"}
+_TEST_CHECKS = _PYTEST_CHECKS | {"console tests"}
+_TEST_SIGNALS = (signal.SIGINT, signal.SIGTERM)
+_PR_SET_CHILD_SUBREAPER = 36
 
 
 @dataclass(frozen=True)
@@ -50,11 +57,6 @@ def _executable(name: str) -> str:
     return shutil.which(name) or name
 
 
-def _pytest_basetemp(profile: str) -> str:
-    root = Path(os.environ.get("TMPDIR") or "/tmp").expanduser().resolve()
-    return f"--basetemp={root / f'chatcopilot-pytest-{profile}'}"
-
-
 def _check_env(*, uses_repository_index: bool = False) -> dict[str, str]:
     env = os.environ.copy()
     temp_root = str(Path(env.get("TMPDIR") or "/tmp").expanduser().resolve())
@@ -67,6 +69,109 @@ def _check_env(*, uses_repository_index: bool = False) -> dict[str, str]:
         env.pop("GIT_OBJECT_DIRECTORY", None)
         env.pop("GIT_ALTERNATE_OBJECT_DIRECTORIES", None)
     return env
+
+
+def _supervise_tests(argv: list[str]) -> int:
+    # A dedicated Linux subreaper adopts orphaned descendants, including tests
+    # that start a service in its own session.
+    libc = ctypes.CDLL(None, use_errno=True)
+    if libc.prctl(_PR_SET_CHILD_SUBREAPER, 1, 0, 0, 0) != 0:
+        error = ctypes.get_errno()
+        raise OSError(error, os.strerror(error))
+    cancelled = None
+
+    def cancel(signum, _frame):
+        nonlocal cancelled
+        cancelled = cancelled or signum
+
+    for signum in _TEST_SIGNALS:
+        signal.signal(signum, cancel)
+    children = Path(f"/proc/self/task/{os.getpid()}/children")
+    with subprocess.Popen(argv, start_new_session=True) as process:
+        while process.poll() is None and cancelled is None:
+            # Reap already adopted children while the controller is still
+            # running, without consuming the controller's own exit status.
+            for child in map(int, children.read_text().split()):
+                if child != process.pid:
+                    try:
+                        os.waitpid(child, os.WNOHANG)
+                    except ChildProcessError:
+                        pass
+            time.sleep(0.05)
+        if cancelled:
+            try:
+                os.killpg(process.pid, cancelled)
+            except ProcessLookupError:
+                pass
+            try:
+                process.wait(timeout=3)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait()
+    # waitpid tells us when the complete subtree is gone. Repeating the
+    # signal also reaches grandchildren that get adopted during shutdown.
+    deadline = time.monotonic() + 1
+    while True:
+        try:
+            pid, _ = os.waitpid(-1, os.WNOHANG)
+        except ChildProcessError:
+            break
+        if pid == 0:
+            for child in children.read_text().split():
+                try:
+                    os.kill(int(child), signal.SIGTERM if time.monotonic() < deadline else signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+            time.sleep(0.05)
+    return 128 + cancelled if cancelled else process.returncode
+
+
+def _run_test(check: Check, argv: tuple[str, ...], *, capture: bool) -> subprocess.CompletedProcess:
+    env = _check_env(uses_repository_index=check.uses_repository_index)
+    root = Path(env["TMPDIR"])
+    root.mkdir(parents=True, exist_ok=True)
+    with tempfile.TemporaryDirectory(prefix="as-", dir=root) as scratch:
+        env.update({key: scratch for key in ("TMPDIR", "TEMP", "TMP")})
+        if check.name in _PYTEST_CHECKS:
+            argv = (*argv, f"--basetemp={Path(scratch) / 'p'}")
+        if sys.platform != "linux":
+            return subprocess.run(argv, cwd=check.cwd, env=env, capture_output=capture,
+                                  encoding="utf-8", errors="replace", check=False)
+        process = None
+        cancelled = None
+
+        def forward(signum, _frame):
+            nonlocal cancelled
+            cancelled = cancelled or signum
+            if process is not None:
+                process.send_signal(signum)
+
+        handlers = {signum: signal.signal(signum, forward) for signum in _TEST_SIGNALS}
+        try:
+            pipe = subprocess.PIPE if capture else None
+            command = _python("-B", str(Path(__file__).resolve()), "--supervise-tests", *argv)
+            with subprocess.Popen(command, cwd=check.cwd, env=env, start_new_session=True,
+                                  stdout=pipe, stderr=pipe, encoding="utf-8", errors="replace") as process:
+                if cancelled:
+                    process.send_signal(cancelled)
+                stdout, stderr = process.communicate()
+            code = 128 + cancelled if cancelled else process.returncode
+            return subprocess.CompletedProcess(argv, code, stdout, stderr)
+        finally:
+            for signum, handler in handlers.items():
+                signal.signal(signum, handler)
+
+
+def _run_check(check: Check, argv: tuple[str, ...], *, capture: bool) -> subprocess.CompletedProcess:
+    if check.name in _TEST_CHECKS:
+        return _run_test(check, argv, capture=capture)
+    return subprocess.run(
+        argv, cwd=check.cwd, check=False, env=_check_env(uses_repository_index=check.uses_repository_index),
+        capture_output=capture, encoding="utf-8", errors="replace",
+    )
 
 
 def _fast_test_paths() -> tuple[str, ...]:
@@ -188,7 +293,6 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
                 *_fast_test_paths(),
                 "-q",
                 "-n", "4", "--dist=loadfile",
-                _pytest_basetemp("fast"),
             ),
             cwd=test_root,
         ),
@@ -210,7 +314,6 @@ def _profiles(candidate_root: Path | None = None) -> dict[str, tuple[Check, ...]
                 *test_imports,
                 "-q",
                 "-n", "4", "--dist=loadfile",
-                _pytest_basetemp("full"),
             ),
             cwd=test_root,
         ),
@@ -310,7 +413,7 @@ def main() -> int:
     parser.add_argument(
         "--report-dir",
         type=Path,
-        help="write a private JSON manifest and complete per-check logs",
+        help="write a private manifest and logs here (test profiles default to a new directory under .cache/check-repo)",
     )
     args = parser.parse_args()
     try:
@@ -319,6 +422,11 @@ def main() -> int:
     except ValueError as exc:
         parser.error(str(exc))
     report_dir = args.report_dir.expanduser().resolve() if args.report_dir else None
+    if report_dir is None and args.profile != "docs":
+        parent = ROOT / ".cache" / "check-repo"
+        parent.mkdir(parents=True, exist_ok=True)
+        report_dir = Path(tempfile.mkdtemp(prefix=args.profile + "-", dir=parent))
+        print(f"Report directory: {report_dir}", flush=True)
     manifest: dict[str, object] = {
         "schema_version": 1,
         "profile": args.profile,
@@ -381,33 +489,17 @@ def main() -> int:
                 record["log_path"] = str(log_path)
                 _write_manifest(report_dir, manifest)
             return 2
+        junit = None
         if report_dir is None:
-            completed = subprocess.run(
-                check.argv,
-                cwd=check.cwd,
-                check=False,
-                env=_check_env(
-                    uses_repository_index=check.uses_repository_index
-                ),
-            )
+            completed = _run_check(check, check.argv, capture=False)
             combined_output = ""
         else:
-            junit = report_dir / f"{index:02d}-pytest.xml" if check.name in {"core tests", "full Python tests"} else None
+            junit = report_dir / f"{index:02d}-pytest.xml" if check.name in _PYTEST_CHECKS else None
             if junit is not None:
                 # A retry in the same report directory must not reuse an older test inventory.
                 junit.unlink(missing_ok=True)
-            completed = subprocess.run(
-                (*check.argv, *(("--junitxml=" + str(junit),) if junit else ())),
-                cwd=check.cwd,
-                check=False,
-                env=_check_env(
-                    uses_repository_index=check.uses_repository_index
-                ),
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-            )
+            argv = (*check.argv, *(("--junitxml=" + str(junit),) if junit else ()))
+            completed = _run_check(check, argv, capture=True)
             stdout = completed.stdout or ""
             stderr = completed.stderr or ""
             if stdout:
@@ -429,7 +521,7 @@ def main() -> int:
             log_path = report_dir / f"{index:02d}-{_slug(check.name)}.log"
             _write_private(log_path, combined_output)
             record["log_path"] = str(log_path)
-        if report_dir is not None and check.name in {"core tests", "full Python tests"}:
+        if junit is not None:
             try:
                 record["test_inventory"] = _test_inventory(junit)
             except (OSError, ValueError, ET.ParseError) as exc:
@@ -459,7 +551,7 @@ def main() -> int:
         if completed.returncode:
             print(f"FAILED: {check.name} (exit {completed.returncode})", file=sys.stderr)
             failure_exit = failure_exit or completed.returncode
-            if args.keep_going:
+            if args.keep_going and completed.returncode not in {128 + n for n in _TEST_SIGNALS}:
                 continue
             manifest.update({"finished_at": finished_at, "ok": False})
             if report_dir is not None:
@@ -474,4 +566,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
+    if sys.argv[1:2] == ["--supervise-tests"]:
+        raise SystemExit(_supervise_tests(sys.argv[2:]))
     raise SystemExit(main())

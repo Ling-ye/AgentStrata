@@ -3,6 +3,7 @@ from dataclasses import replace
 import base64
 import hashlib
 import json
+from pathlib import Path
 
 import pytest
 
@@ -136,7 +137,8 @@ def test_codex_unexpected_interactions_are_declined_without_waiting(tmp_path, mo
     monkeypatch.setattr(gateway_replay, "load_evaluation_runtime", lambda _: selected)
     monkeypatch.setattr("chatcopilot.agent.runtimes.codex.access_credential", lambda *a, **k: AccessCredential("fixture", "fixture-account", 1))
     executable = tmp_path / "codex"
-    executable.write_text("#!/bin/sh\nexit 0\n")
+    # The transport is controlled below; retain the native executable boundary.
+    executable.write_bytes(Path("/bin/true").resolve().read_bytes())
     executable.chmod(0o755)
     monkeypatch.setenv("CHATCOPILOT_CODEX_BIN", str(executable))
 

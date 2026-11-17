@@ -37,16 +37,37 @@ class Guide:
     def __init__(self, home, framework, *, model_path=None):
         self.state_dir, self.framework = home, framework
         self.model_path = Path(model_path) if model_path else home / "models.json"
-        self.model_environment = ({"AGENTSTRATA_LLM_CONFIG": str(self.model_path)} if model_path else studio_environment(home))
+        self.defaults_path = self.model_path.with_suffix(".defaults.json") if model_path else None
+        if model_path:
+            from chatcopilot.harness.config import configuration
+            self.model_environment = configuration()
+            # Explicit installed entry exports its identity; ordinary Console
+            # retains its configured authority rather than creating another one.
+            for key in ("CHATCOPILOT_CODEX_BOT_HOME", "CHATCOPILOT_CODEX_BIN"):
+                if key in os.environ:
+                    self.model_environment[key] = os.environ[key]
+            self.model_environment["AGENTSTRATA_LLM_CONFIG"] = str(self.model_path)
+        else:
+            self.model_environment = studio_environment(home)
         self.process = None
+        self._model_revision = None
         self.lock = threading.Lock()
 
     def start(self):
         with self.lock:
+            source = self.model_path
+            if not os.path.lexists(source) and self.defaults_path is not None:
+                source = self.defaults_path
+            revision = hashlib.sha256(source.read_bytes()).hexdigest() if source.is_file() else None
             if self.process is not None and self.process.poll() is None:
+                if revision == self._model_revision:
+                    return
+                self.process.terminate()
+                self.process.wait(timeout=30)
+                self.process = None
+            if revision is None:
                 return
-            if not self.model_path.is_file():
-                return
+            self._model_revision = revision
             with socket.socket() as listener:
                 listener.bind(("127.0.0.1", 0))
                 port = listener.getsockname()[1]
@@ -108,8 +129,9 @@ def routes(home, framework, guide):
             if not body.chatgpt and body.key:
                 write_private(credentials, "AGENTSTRATA_STUDIO_API_KEY=" + json.dumps(body.key) + "\n")
         store.save(data, revision=current["revision"], validate=credential)
-        guide.stop()
-        guide.start()
+        if not getattr(guide, "worker_managed", False):
+            guide.stop()
+            guide.start()
         return {"ok":True}
 
     @router.post("/api/setup/login/{lane}")

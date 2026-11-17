@@ -2,7 +2,8 @@ param(
   [Parameter(Mandatory=$true)][string]$BundleRoot,
   [string]$InstallRoot = (Join-Path $env:USERPROFILE '.agentstrata\applications\live2d-desktop-native'),
   [string]$TrialProvisioner,
-  [switch]$AuthOnly
+  [switch]$AuthOnly,
+  [switch]$InspectInputsOnly
 )
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
@@ -25,6 +26,65 @@ foreach ($Member in $ArtifactCatalog.files.PSObject.Properties) {
 }
 $Lock = Get-Content -LiteralPath (Join-Path $Desktop 'windows-runtime.lock.json') -Raw | ConvertFrom-Json
 $McpLock = Get-Content -LiteralPath (Join-Path $Desktop 'windows-mcp.lock.json') -Raw | ConvertFrom-Json
+$ComponentsSource = Join-Path (Split-Path (Join-Path $Source $Bundle.bot_relative)) 'components.yaml'
+$NeedsMcp = Test-Path -LiteralPath $ComponentsSource -PathType Leaf
+if ($InspectInputsOnly) {
+  if ($AuthOnly) { throw 'Input inspection and authentication preparation are separate actions.' }
+  $McpInputsPath = Join-Path $BundleRoot 'windows-mcp-inputs.json'
+  $McpState = 'not-declared'
+  if (Test-Path -LiteralPath $McpInputsPath -PathType Leaf) {
+    $McpInputs = Get-Content -LiteralPath $McpInputsPath -Raw -Encoding utf8 | ConvertFrom-Json
+    $McpState = $McpInputs.state
+  }
+  [ordered]@{ mode='inspection-only'; source_digest=$Bundle.source_digest; mcp_required=[bool]$NeedsMcp;
+    mcp_input_state=$McpState; runtime_acceptance_verified=$false; runtime_execution_allowed=$false } | ConvertTo-Json -Compress
+  exit 0
+}
+if (!$AuthOnly -and $NeedsMcp -and ($McpLock.PSObject.Properties.Name -contains 'schema')) {
+  throw 'MCP original inputs remain data. Production preparation requires independently admitted project installation, wheel metadata, prefix/loading and installation identity; use -InspectInputsOnly for read-only inspection.'
+}
+# A source-derived complete host cache enables offline pip input consumption only.
+# This is not a runtime/ABI or installation acceptance decision.
+$HostWheelDirectory = Join-Path $BundleRoot 'host-wheels'
+$HostWheelsReady = $ArtifactCatalog.files.PSObject.Properties.Name -ccontains 'windows-host-wheel-verification.json'
+if ($HostWheelsReady) {
+  foreach ($RequiredMember in @('windows-host-wheel-inputs.json','host-requirements.lock')) {
+    if ($ArtifactCatalog.files.PSObject.Properties.Name -cnotcontains $RequiredMember) { throw 'Incomplete frozen host wheel artifacts.' }
+  }
+  $HostInputs = Get-Content -LiteralPath (Join-Path $BundleRoot 'windows-host-wheel-verification.json') -Raw -Encoding utf8 | ConvertFrom-Json
+  $HostSelectionPath = Join-Path $BundleRoot 'windows-host-wheel-inputs.json'
+  $HostSelection = Get-Content -LiteralPath $HostSelectionPath -Raw -Encoding utf8 | ConvertFrom-Json
+  if ($HostInputs.schema -cne 'agentstrata-windows-host-wheel-verification/v1' -or $HostInputs.state -cne 'verified-inputs' -or
+      $HostInputs.native_abi_verified -isnot [bool] -or $HostInputs.native_abi_verified -or
+      $HostInputs.installation_accepted -isnot [bool] -or $HostInputs.installation_accepted -or
+      $HostInputs.input_manifest_sha256 -cne (Get-FileHash -LiteralPath $HostSelectionPath -Algorithm SHA256).Hash.ToLower() -or
+      $HostSelection.schema -cne 'agentstrata-windows-host-wheel-inputs/v1' -or
+      $HostSelection.source_digest -cne $Bundle.source_digest -or $HostSelection.target.platform -cne 'windows-x86_64' -or
+      $HostSelection.target.python_version -cne $Lock.host_python) { throw 'Frozen host wheel input binding mismatch.' }
+  $HostSourceInputs = @('pyproject.toml','uv.lock','integrations/live2d_desktop/windows-host-requirements.lock','integrations/live2d_desktop/windows-runtime.lock.json')
+  if (@($HostSelection.inputs.PSObject.Properties).Count -ne $HostSourceInputs.Count) { throw 'Unexpected frozen host source inputs.' }
+  foreach ($InputName in $HostSourceInputs) {
+    $InputPin = $HostSelection.inputs.PSObject.Properties[$InputName].Value
+    if ($InputPin -cnotmatch '^[a-f0-9]{64}$' -or $Bundle.source_manifest.PSObject.Properties[$InputName].Value.sha256 -cne $InputPin -or
+        (Get-FileHash -LiteralPath (Join-Path $Source $InputName) -Algorithm SHA256).Hash.ToLower() -cne $InputPin) {
+      throw 'Frozen host source input differs from its payload.'
+    }
+  }
+  if (@($HostSelection.wheels).Count -lt 1 -or @($HostSelection.wheels).Count -gt 256 -or
+      @($HostSelection.wheels).Count -ne @($HostInputs.archives).Count) { throw 'Incomplete frozen host wheel set.' }
+  $ExpectedRequirements = "# Fixed host wheel inputs; generated from frozen source.`n"
+  foreach ($HostWheel in $HostSelection.wheels) {
+    if ($HostWheel.filename -cnotmatch '^[A-Za-z0-9_.!+\-]+\.whl$' -or $HostWheel.sha256 -cnotmatch '^[a-f0-9]{64}$' -or
+        $HostWheel.name -cnotmatch '^[a-z0-9][a-z0-9-]*$' -or $HostWheel.version -cnotmatch '^[A-Za-z0-9.!+]+$' -or
+        $ArtifactCatalog.files.PSObject.Properties[('host-wheels/' + $HostWheel.filename)].Value -cne $HostWheel.sha256) {
+      throw 'Frozen host wheel differs from its artifact binding.'
+    }
+    $ExpectedRequirements += $HostWheel.name + '==' + $HostWheel.version + " \`n    --hash=sha256:" + $HostWheel.sha256 + "`n"
+  }
+  if ((Get-Content -LiteralPath (Join-Path $BundleRoot 'host-requirements.lock') -Raw -Encoding utf8) -cne $ExpectedRequirements) {
+    throw 'Frozen host requirements differ from the selected wheel pins.'
+  }
+}
 $Bootstrap = Join-Path $env:LOCALAPPDATA ('AgentStrata\bootstrap\' + $Bundle.source_digest)
 New-Item -ItemType Directory -Path $Bootstrap -Force | Out-Null
 $Logs = Join-Path $Bootstrap 'logs'
@@ -58,7 +118,9 @@ function Prepare-Environment([string]$PythonVersion, [string]$Environment, [stri
   }
   $ArgsList = @('pip','sync','--no-config','--python',$Python,'--require-hashes','--only-binary',':all:')
   $Wheels = Join-Path $BundleRoot 'wheels'
-  if (Test-Path -LiteralPath $Wheels -PathType Container) { $ArgsList += @('--find-links',$Wheels) }
+  if ($HostWheelsReady -and $Name -in @('bootstrap','application')) {
+    $ArgsList += @('--offline','--no-index','--find-links',$HostWheelDirectory)
+  } elseif (Test-Path -LiteralPath $Wheels -PathType Container) { $ArgsList += @('--find-links',$Wheels) }
   Run-Native $Uv ($ArgsList + $Requirements) ($Name + '-dependencies')
   return $Python
 }
@@ -90,6 +152,7 @@ Expand-Archive -LiteralPath $UvArchive -DestinationPath $Tools -Force
 $Uv = (Get-ChildItem -LiteralPath $Tools -Filter uv.exe -Recurse | Select-Object -First 1).FullName
 if (!$Uv -or (Get-FileHash -LiteralPath $Uv -Algorithm SHA256).Hash.ToLower() -ne $McpLock.uv.binary_sha256) { throw 'Native uv identity mismatch.' }
 $Requirements = Join-Path $Desktop 'windows-host-requirements.lock'
+if ($HostWheelsReady) { $Requirements = Join-Path $BundleRoot 'host-requirements.lock' }
 $env:UV_PYTHON_INSTALL_DIR = Join-Path $Bootstrap 'python'
 $BootstrapPython = Prepare-Environment $Lock.host_python (Join-Path $Bootstrap 'venv') $Requirements 'bootstrap'
 $env:PYTHONPATH = Join-Path $Source 'src'

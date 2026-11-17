@@ -9,8 +9,13 @@ import "../styles/applications.css";
 import ImprovementReadiness from "../features/applications/ImprovementReadiness";
 import ApplicationEvidence from "../features/applications/ApplicationEvidence";
 import QQDevelopment from "../features/applications/QQDevelopment";
+import Live2DImport from "../features/applications/Live2DImport";
+import { readLive2DImport } from "../features/applications/live2dImport";
+import DesktopDevelopment from "../features/applications/DesktopDevelopment";
 import DesktopLaunch from "../features/applications/DesktopLaunch";
 import TrialChat from "../features/applications/TrialChat";
+import { acknowledgedDevelopment, canonicalDevelopmentText, DESKTOP_REQUIREMENT_LIMIT, developmentTextLength, rejectedDevelopmentRequest } from "../features/applications/desktopDevelopment";
+import { usePendingApplicationRequest } from "../features/applications/usePendingApplicationRequest";
 const { Text, Paragraph } = Typography;
 const errorText = (value: unknown) => value instanceof Error ? value.message : String(value);
 function useMounted() { const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []); return alive; }
@@ -26,7 +31,7 @@ export default function ApplicationsPage({ hash, create = false }: { hash: strin
   if (location.id) return <ApplicationWorkspace key={location.id} id={location.id} tab={location.tab} />;
   return <PageSection title="我的应用" description="打开一个应用，在同一工作区使用、配置和改进。应用实例与它使用的组件分开管理。" extra={<><Button onClick={() => void list.refetch()}>刷新</Button><Button type="primary" href="#create">创建应用</Button></>}>
     {list.isPending ? <Spin /> : list.isError ? <Alert type="error" content={errorText(list.error)} /> :
-      !list.data?.applications.length ? <Empty description="还没有应用。先创建一个 QQ 助手，或接入已有应用。" /> :
+      !list.data?.applications.length ? <Empty description="还没有应用。先创建一个 QQ 助手或桌面应用。" /> :
       <div className="applications-grid">{list.data.applications.map(app => <Card key={app.id} title={app.name} extra={<Tag>{typeLabel(app.type)}</Tag>}>
         <Space direction="vertical" style={{ width: "100%" }}>
           <Text type="secondary">{stateLabel(app.state.process)} · 渠道：{stateLabel(app.state.channel)}</Text>
@@ -41,29 +46,48 @@ function CreateApplication() {
   const [type, setType] = useState("qq_official");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const requestId = useRef(crypto.randomUUID());
+  const requestId = useRef(crypto.randomUUID().replace(/-/g, ""));
+  const gate = useRef(false);
+  const [restored, setRestored] = useState(false);
+  const [pendingCreate, setPendingCreate] = useState(false);
+  useEffect(() => {
+    try {
+      const raw = sessionStorage.getItem("agentstrata.application-create");
+      if (raw) {
+        const pending = JSON.parse(raw);
+        if (!/^[a-f0-9]{32}$/.test(pending.id) || !["qq_official", "desktop"].includes(pending.type)) throw new Error("创建请求记录无效，请先核对我的应用，避免重复创建。");
+        requestId.current = pending.id; setType(pending.type); setPendingCreate(true);
+      } else if (readLive2DImport(sessionStorage)) setType("live2d");
+      setRestored(true);
+    } catch (error) { setError(errorText(error)); }
+  }, []);
   const alive = useMounted();
   const client = useQueryClient();
   async function create() {
-    if (busy) return;
-    setBusy(true); setError("");
+    if (gate.current || !restored) return;
+    if (type === "live2d") return;
+    gate.current = true; setBusy(true); setError("");
     try {
+      sessionStorage.setItem("agentstrata.application-create", JSON.stringify({ id: requestId.current, type }));
+      setPendingCreate(true);
       const app = await applicationsApi.create(requestId.current, type);
+      sessionStorage.removeItem("agentstrata.application-create");
       void client.invalidateQueries({ queryKey: ["applications"] });
       if (alive.current) window.location.hash = applicationHref(app.id, "improve");
     } catch (e) { if (alive.current) setError(errorText(e)); }
-    finally { if (alive.current) setBusy(false); }
+    finally { gate.current = false; if (alive.current) setBusy(false); }
   }
   return <PageSection title="创建应用" description="先选择应用类型，再通过对话描述用途。连接凭据在专用配置表单中填写。">
     <Card className="application-form"><Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Select aria-label="应用类型" value={type} disabled={busy} onChange={value => { setType(value); requestId.current = crypto.randomUUID(); }} options={[
-        { value: "qq_official", label: "QQ 助手 · QQ 官方机器人" }, { value: "desktop", label: "桌面应用 · 请使用原开发入口", disabled: true }, { value: "live2d", label: "桌面伙伴 · 尚未迁入创建流程", disabled: true },
+      <Select aria-label="应用类型" value={type} disabled={busy || pendingCreate || !restored} onChange={value => { setType(value); requestId.current = crypto.randomUUID().replace(/-/g, ""); }} options={[
+        { value: "qq_official", label: "QQ 助手 · QQ 官方机器人" }, { value: "desktop", label: "桌面应用 · 通过对话开发" }, { value: "live2d", label: "桌面伙伴 · 导入已安装的 Live2D 应用" },
       ]} />
-      <Alert type="info" content={type === "qq_official" ? "标准 QQ 应用可使用 API 模型；仍需 QQ 平台机器人凭据和允许的测试范围。本机关闭时应用离线。" :
-        type === "live2d" ? "连接现有桌面伙伴并创建管理项目；本操作不是安装或远程启动 Windows 桌宠。开发功能需配置开发账号。" : "创建开发项目，代码改进使用既有 Harness。开发模型和运行模型分别配置。"} />
+      {type === "live2d" ? <Live2DImport /> : <><Alert type="info" content={type === "qq_official" ? "标准 QQ 应用可使用 API 模型；仍需 QQ 平台机器人凭据和允许的测试范围。本机关闭时应用离线。" :
+        type === "live2d" ? "显式打开 Windows 选择器，选择已安装的 AgentStrata 桌面伙伴。仅核对并导入公开源码基线，不复制账号密钥，不安装或启动应用，也不代表已通过开发验收。后续开发使用独立开发账号。" : "创建开发项目，代码改进使用既有 Harness。开发模型和运行模型分别配置。"} />
       <Button href="#models">模型与连接</Button>
       {error && <Alert type="error" content={error} />}
-      <Button type="primary" loading={busy} onClick={() => void create()}>创建并进入应用</Button>
+      {pendingCreate && <Alert type="info" content="保留了原创建请求。重试会打开同一个应用，不会另建副本。" />}
+      <Button type="primary" loading={busy} disabled={!restored} onClick={() => void create()}>{pendingCreate ? "继续原创建请求" : "创建并进入应用"}</Button></>}
     </Space></Card>
   </PageSection>;
 }
@@ -106,7 +130,7 @@ function ApplicationWorkspace({ id, tab }: { id: string; tab: ApplicationTab }) 
         <Tabs.TabPane key="overview" title="概览"><Card><Space direction="vertical" size={16}>
           <Text>{value.message || "请选择使用、配置、记录或改进。进程运行不等于真实消息已完成投递。"}</Text>
           <Text type="secondary">来源：{value.source}。应用名称可以变化，稳定标识用于隔离配置、操作和记录。</Text>
-          <Text>配置 → 检查 → 启动 → 在目标平台验证真实收发。</Text>
+          <Text>{["desktop", "companion"].includes(value.type) ? "描述需求 → 开发与独立验收 → 下载构建 → 安装后验证实际效果。" : "配置 → 检查 → 启动 → 在目标平台验证真实收发。"}</Text>
         </Space></Card></Tabs.TabPane>
         <Tabs.TabPane key="use" title="使用">{value.source === "studio" && ["desktop", "companion"].includes(value.type) ? <DesktopLaunch key={id} id={id} /> : value.capabilities.chat || (value.source === "studio" && value.type === "qq_official") ? <TrialChat id={id} onDirty={setTrialDirty} /> : <Card><Space direction="vertical">
           <Alert type="info" title="应用使用与管理对话相互独立" content="此应用尚未接入安全试聊。这里不会向真实 QQ 发送消息，也不会把改进对话作为机器人聊天。" />
@@ -119,11 +143,11 @@ function ApplicationWorkspace({ id, tab }: { id: string; tab: ApplicationTab }) 
           {value.source === "repository" && <ApplicationEvidence id={id} evalLink={value.links.eval} harnessLink={value.links.harness} />}
           {!value.links.records && <Text type="secondary">此应用的业务运行记录尚未接入统一查看。</Text>}
           <Text>停止应用不会删除历史。业务运行记录与管理、开发对话分开。</Text>
-        {value.source === "studio" && value.capabilities.records && !value.capabilities.improve && <ManagementHistory id={id} />}</Space></Card></Tabs.TabPane>
+        {value.source === "studio" && value.capabilities.records && (["desktop", "companion"].includes(value.type) ? <DesktopDevelopment key={id} id={id} readOnly /> : !value.capabilities.improve ? <ManagementHistory id={id} /> : null)}</Space></Card></Tabs.TabPane>
         <Tabs.TabPane key="improve" title="改进"><Space direction="vertical" size={16} style={{ width: "100%" }}>
           {value.source === "studio" && value.type === "qq_official" && <ImprovementReadiness id={id} />}
           {value.source === "studio" && value.type === "qq_official" && <QQDevelopment id={id} onDirty={setDevelopmentDirty} />}
-          {value.capabilities.improve && value.project_id ? <ManagementConversation id={id} application={value} onDirty={setManagementDirty} configurationDirty={configurationDirty} /> : <Alert type="info" content="此应用沿用现有改进入口；本页不会自动执行开发或修改配置。" />}
+          {value.capabilities.improve && value.project_id && ["desktop", "companion"].includes(value.type) ? <DesktopDevelopment key={id} id={id} onDirty={setManagementDirty} /> : value.capabilities.improve && value.project_id ? <ManagementConversation id={id} application={value} onDirty={setManagementDirty} configurationDirty={configurationDirty} /> : <Alert type="info" content="此应用沿用现有改进入口；本页不会自动执行开发或修改配置。" />}
           <Space wrap><ApplicationLink href={value.links.eval}>检查应用表现</ApplicationLink><ApplicationLink href={value.links.harness}>打开该应用的 Harness</ApplicationLink></Space>
         </Space></Tabs.TabPane>
       </Tabs>
@@ -173,44 +197,71 @@ function ManagementConversation({ id, application, onDirty, configurationDirty }
   const [error, setError] = useState("");
   const [applied, setApplied] = useState("");
   useEffect(() => { onDirty(!!text || busy); }, [text, busy, onDirty]);
-  const request = useRef({ text: "", id: "" });
+  const { pending, restored, storageError, remember, acknowledge } = usePendingApplicationRequest(id, "qq-configuration");
+  const gate = useRef(false);
   const alive = useMounted();
   const client = useQueryClient();
+  const active = messages.data?.some(message => ["console-thinking", "thinking", "starting", "developing", "verifying", "packaging"].includes(message.state));
+  const blocked = !restored || !!storageError || messages.isPending || messages.isError;
+  const draft = canonicalDevelopmentText(text.trim());
+  const tooLong = developmentTextLength(draft) > DESKTOP_REQUIREMENT_LIMIT;
+  useEffect(() => {
+    if (!pending || !messages.data || !acknowledgedDevelopment(pending, messages.data)) return;
+    try {
+      if (acknowledge(pending)) {
+        setText(current => canonicalDevelopmentText(current.trim()) === canonicalDevelopmentText(pending.text) ? "" : current);
+        setError("");
+      }
+    } catch { /* The hook preserves the request and reports the storage failure. */ }
+  }, [pending, messages.data, acknowledge]);
   async function send() {
-    if (busy || !text.trim()) return;
-    if (request.current.text !== text.trim()) request.current = { text: text.trim(), id: crypto.randomUUID() };
+    if (gate.current || blocked || (!pending && (active || !draft || tooLong))) return;
+    const submitted = pending || { id: crypto.randomUUID().replace(/-/g, ""), text: draft };
+    gate.current = true;
     setBusy(true); setError("");
-    try { await applicationsApi.submit(id, request.current.id, request.current.text); if (alive.current) { setText(""); request.current = { text: "", id: "" }; } void messages.refetch(); }
-    catch (e) { if (alive.current) setError(errorText(e)); }
-    finally { if (alive.current) setBusy(false); }
+    try { remember(submitted); await applicationsApi.submit(id, submitted.id, submitted.text); if (alive.current) { setText(""); await messages.refetch(); } }
+    catch (e) {
+      if (alive.current) {
+        if (rejectedDevelopmentRequest(e, submitted)) {
+          try { if (acknowledge(submitted)) setText(submitted.text); } catch { /* Storage failure remains visible. */ }
+        }
+        setError(errorText(e));
+      }
+    }
+    finally { gate.current = false; if (alive.current) setBusy(false); }
   }
   async function apply(message: string) {
-    if (busy || configurationDirty || !window.confirm("确认将这份提案应用到当前应用配置？此操作不会发送 QQ 消息。")) return;
+    if (gate.current || blocked || pending || active || configurationDirty || !window.confirm("确认将这份提案应用到当前应用配置？此操作不会发送 QQ 消息。")) return;
+    gate.current = true;
     setBusy(true); setError("");
     try { await applicationsApi.apply(id, message); if (alive.current) setApplied(message); void client.invalidateQueries({ queryKey: ["application-management", id] }); void client.invalidateQueries({ queryKey: ["application-configuration", id] }); void client.invalidateQueries({ queryKey: ["application", id] }); }
     catch (e) { if (alive.current) setError(errorText(e)); }
-    finally { if (alive.current) setBusy(false); }
+    finally { gate.current = false; if (alive.current) setBusy(false); }
   }
   const latest = messages.data?.filter(message => message.proposal).slice(-1)[0]?.id;
   return <Card title="修改这个应用"><Space direction="vertical" size={16} style={{ width: "100%" }}>
     <Alert type="info" content={application.type === "qq_official" ? "这里与管理助手讨论应用配置，不是与 QQ 机器人聊天。提案需要确认；秘密请在配置页填写。提示词改进须在上方独立开发流程中明确启动。" : "这是应用开发与管理对话，可能创建需要开发账号的 Harness 任务，不是业务聊天。请明确改动范围与验收要求。"} />
     {applied && <Alert type="success" content="提案已应用到当前应用配置。" />}
     {configurationDirty && <Alert type="warning" content="配置页有未保存更改，请先保存或放弃，再应用对话提案。" />}
-    {messages.isError && <Alert type="error" content={errorText(messages.error)} />}
+    {storageError && <Alert type="error" content={storageError} />}
+    {messages.isError && <Alert type="error" content={errorText(messages.error)} action={<Button onClick={() => void messages.refetch()}>重新读取记录</Button>} />}
     <div className="application-conversation">{messages.isPending ? <Spin /> : !messages.data?.length ? <Empty description="描述你想创建或改进的应用" /> : messages.data.map(message => <div className="application-message" key={message.id}>
       <Text bold>你的需求</Text><Paragraph className="application-prose">{message.text}</Paragraph>
       <Tag>{managementStateLabel(message.state)}</Tag><Paragraph className="application-prose">{message.reply || "正在处理…"}</Paragraph>
-      {message.proposal && <Card title="配置提案"><Text bold>{message.proposal.name}</Text><Paragraph className="application-prose">{message.proposal.instructions}</Paragraph><Button disabled={busy || configurationDirty || message.id !== latest || message.state !== "configure" || message.id === applied} onClick={() => void apply(message.id)}>{message.state === "applied" || message.id === applied ? "提案已应用" : "确认应用提案"}</Button></Card>}
+      {message.proposal && <Card title="配置提案"><Text bold>{message.proposal.name}</Text><Paragraph className="application-prose">{message.proposal.instructions}</Paragraph><Button disabled={busy || blocked || !!pending || active || configurationDirty || message.id !== latest || message.state !== "configure" || message.id === applied} onClick={() => void apply(message.id)}>{message.state === "applied" || message.id === applied ? "提案已应用" : "确认应用提案"}</Button></Card>}
     </div>)}</div>
-    <Input.TextArea aria-label="应用改进需求" value={text} onChange={setText} disabled={busy} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="描述希望改变的行为，不要填写密钥" />
+    {pending && <Alert type="warning" title="正在核对原配置需求" content={<><Paragraph className="application-prose">{pending.text}</Paragraph><Text>刷新后保留同一请求编号，核对前不另建需求。</Text></>} action={<Button disabled={busy} onClick={() => void messages.refetch()}>刷新核对状态</Button>} />}
+    {active && <Alert type="info" content="此应用已有配置或开发请求正在处理，可以刷新或离开后继续查看。" />}
+    <Input.TextArea aria-label="应用改进需求" value={text} onChange={setText} disabled={busy || blocked || !!pending || active} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="描述希望改变的行为，不要填写密钥" />
+    {tooLong && <Alert type="warning" content={`需求最多 ${DESKTOP_REQUIREMENT_LIMIT} 个字符，内容已保留，请精简后发送。`} />}
     {error && <Alert type="error" content={error} />}
-    <Button type="primary" loading={busy} disabled={!text.trim()} onClick={() => void send()}>发送改进需求</Button>
+    <Button type="primary" loading={busy} disabled={blocked || (!pending && (active || !draft || tooLong))} onClick={() => void send()}>{pending ? "重试同一配置需求" : "发送改进需求"}</Button>
   </Space></Card>;
 }
 
 function ManagementHistory({ id }: { id: string }) {
   const messages = useQuery({ queryKey: ["application-management", id], queryFn: ({ signal }) => applicationsApi.messages(id, signal) });
-  return <div className="application-conversation"><Text bold>管理与开发历史（只读）</Text><Paragraph>这里不是业务聊天。继续开发请使用原 Studio 入口。已有构建仅提供下载，不会自动安装或启动。</Paragraph>
+  return <div className="application-conversation"><Text bold>管理与开发历史（只读）</Text><Paragraph>这里不是业务聊天。已有构建仅提供下载，不会自动安装或启动。</Paragraph>
     {messages.isPending ? <Spin /> : messages.isError ? <Alert type="error" content={errorText(messages.error)} /> : !messages.data?.length ? <Empty description="暂无管理记录" /> : messages.data.map(message => <div className="application-message" key={message.id}><Tag>{managementStateLabel(message.state)}</Tag><Paragraph className="application-prose">{message.text}</Paragraph><Paragraph className="application-prose">{message.reply}</Paragraph>{message.state === "ready" && message.build === message.id && <Button href={applicationBuildUrl(id, message.id)}>下载此构建</Button>}</div>)}
   </div>;
 }

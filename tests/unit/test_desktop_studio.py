@@ -147,6 +147,10 @@ def test_project_card_reflects_recorded_harness_stages(tmp_path, monkeypatch, st
     studio.create(project)
     studio.submit(project, message, "改一下窗口")
     studio.update(message, "developing", version="initial", task="controlled-task")
+    with studio.db.connect(write=True) as db:
+        db.execute("UPDATE projects SET version='initial' WHERE id=?", (project,))
+    # This test controls both the task controller and its frozen-evidence check.
+    monkeypatch.setattr(studio, "retryable", lambda *_a, **_k: True)
     task = {"status": "running", "stage": stage}
     def controller(_repo, _state, *, task_id):
         assert task_id == "controlled-task"
@@ -214,6 +218,9 @@ def test_followup_uses_last_accepted_source_and_reports_verified_behavior(tmp_pa
     from studio import delivery
 
     studio = Studio(tmp_path / "state", ROOT)
+    # Receipt/candidate behavior is controlled below; legacy-evidence rejection
+    # is covered separately with the retained installed database schema.
+    monkeypatch.setattr(studio, "retryable", lambda *_a, **_k: True)
     project, first, second = (uuid4().hex for _ in range(3))
     studio.create(project)
     work = studio.directory(project)
@@ -275,7 +282,7 @@ def test_packaging_projects_only_the_target_application():
     assert native_inputs(rows | dict.fromkeys(licenses), "books").keys() == set(names[:4]) | licenses
 
 
-def test_accepted_receipt_binds_distinct_runtime_projection(tmp_path):
+def test_accepted_receipt_binds_distinct_runtime_projection(tmp_path, monkeypatch):
     import shutil
     import subprocess
     from chatcopilot.contracts.deployment import ReleaseSource
@@ -283,6 +290,8 @@ def test_accepted_receipt_binds_distinct_runtime_projection(tmp_path):
     from chatcopilot.deployment.application_bundle import read_bundle
     from studio.delivery import build_payload
 
+    from chatcopilot.deployment import windows_dependencies as dependencies
+    monkeypatch.setattr(dependencies, "_export", lambda data, _uv: dependencies.canonical_requirements(data[dependencies.HOST_LOCK]))
     root = tmp_path / "source"
     shutil.copytree(ROOT / "bots/desktop-reader", root / "bots/desktop-reader")
     for p in ("pyproject.toml", "uv.lock", "src/chatcopilot/__main__.py", "src/chatcopilot/application_cli.py",
@@ -292,7 +301,10 @@ def test_accepted_receipt_binds_distinct_runtime_projection(tmp_path):
               "integrations/other-project/private-business-logic.py"):
         path = root / p
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text("controlled fixture\n")
+        if p in dependencies.INPUT_LIMITS:
+            shutil.copyfile(ROOT / p, path)
+        else:
+            path.write_text("controlled fixture\n")
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     subprocess.run(["git", "-C", str(root), "-c", "user.name=Fixture", "-c", "user.email=fixture@example.com",
                     "commit", "--allow-empty", "-qm", "fixture"], check=True)
@@ -307,6 +319,25 @@ def test_accepted_receipt_binds_distinct_runtime_projection(tmp_path):
     assert windows["source_digest"] == receipt["source_digest"] != receipt["accepted_source_digest"]
     assert "integrations/other-project/private-business-logic.py" not in windows["source_manifest"]
     assert "accepted_candidate" not in windows
+    declaration = (tmp_path / "export/runtime-payload" / dependencies.MEMBER).read_bytes()
+    assert receipt["dependency_declarations_sha256"] == dependencies._sha(declaration)
+    assert json.loads(declaration)["source_digest"] == windows["source_digest"]
+    selected_inputs = tmp_path / "export/runtime-payload/windows-host-wheel-inputs.json"
+    assert receipt["host_wheel_inputs_sha256"] == dependencies._sha(selected_inputs.read_bytes())
+    assert receipt["host_wheel_verification_sha256"] is None
+    assert json.loads(selected_inputs.read_bytes())["state"] == "selected"
+    value = json.loads(declaration)
+    value["requirements"].pop()
+    payload = tmp_path / "export/runtime-payload"
+    (payload / dependencies.MEMBER).write_bytes(dependencies.canonical(value))
+    catalog_path = payload / "artifacts.json"
+    catalog = json.loads(catalog_path.read_text())
+    catalog["files"][dependencies.MEMBER] = dependencies._sha((payload / dependencies.MEMBER).read_bytes())
+    catalog_path.write_text(json.dumps(catalog))
+    windows["artifacts_digest"] = dependencies._sha(catalog_path.read_bytes())
+    (payload / "application.json").write_text(json.dumps(windows))
+    with pytest.raises(ValueError, match="declarations differ"):
+        read_bundle(payload)
 
 
 @pytest.mark.parametrize(("failure", "message"), [("timeout", "超时"), ("process", "完成本机准备")])
@@ -426,7 +457,6 @@ def test_trial_ports_are_distinct_and_stable():
 
 def test_verification_runtime_is_frozen_and_socket_tracks_host_version(tmp_path, monkeypatch):
     import subprocess
-    from types import SimpleNamespace
     from studio import runtime
     from studio.projects import socket_path
 
@@ -449,12 +479,10 @@ def test_verification_runtime_is_frozen_and_socket_tracks_host_version(tmp_path,
         next_root, next_identity = runtime.verification_runtime(state)
         assert next_identity != identity and next_root != frozen
         assert socket_path(state, identity) != socket_path(state, next_identity)
-        monkeypatch.setattr(runtime, "HarnessController", lambda *a, **k: SimpleNamespace(
-            get=lambda _: {"source": {"verification_runtime": identity}}))
+        monkeypatch.setattr(runtime, "_read_task_verification_id", lambda *_a: identity)
         assert runtime.task_verification_runtime(platform, state, "existing") == (frozen, identity)
         (frozen / "src/chatcopilot/evals/rules.py").write_text("TAMPERED = True\n")
         runtime.task_verification_runtime.cache_clear()
-        runtime.task_verification_id.cache_clear()
         with pytest.raises(ValueError, match="验证快照已变化"):
             runtime.task_verification_runtime(platform, state, "existing")
     finally:
@@ -481,3 +509,11 @@ def test_old_task_retry_is_read_only_and_new_request_can_use_same_conversation(t
         assert studio.conversation(project.hex)[0] == before
         assert client.post(f"/api/projects/{project}/messages", json={"id":current.hex,"text":"new goal"}).status_code == 200
         assert studio.conversation(project.hex)[0] == before
+
+
+@pytest.mark.parametrize("bot_id", ["books", "live2d-desktop"])
+def test_native_projection_carries_frozen_python_inputs(bot_id):
+    from studio.delivery import native_inputs
+    descriptor = "integrations/live2d_desktop/windows-python-inputs.lock.json"
+    frozen = {descriptor: {"sha256": "frozen-input"}, "integrations/other/private.py": {"sha256": "unrelated"}}
+    assert native_inputs(frozen, bot_id) == {descriptor: frozen[descriptor]}

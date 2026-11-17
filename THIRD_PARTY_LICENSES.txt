@@ -40949,7 +40949,7 @@ OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
 ==============================================================================
 python: packaging 26.3
-Scopes: agent, desktop, dev, evaluation, test
+Scopes: agent, desktop, dev, evaluation, runtime, test
 Declared license: Apache-2.0 OR BSD-2-Clause
 Evidence: original package or pinned upstream license text
 Source/archive: https://files.pythonhosted.org/packages/7d/fa/3944b40b07da9ce895c0e6303a5ab7d53da063554f534556b134a54d6093/packaging-26.3.tar.gz

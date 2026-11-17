@@ -29,6 +29,8 @@ Harness 的正式故障验收使用生产 Gateway 装配的三层回放，规则
 
 Console 按LLM测评、Agent测评、系统测试组织，Agent 任务题库见下一条；旧两个项目套件只保留历史与工程合同验证。现有 `agentstrata-qq-message-flow-v1` 的 7 个 Case 是 legacy Relay/attestation/ACP 合成链，只用于防止旧能力回归，不是新 Gateway 验收或当前推荐部署证据；迁移到 fake OneBot → real Channel → Gateway 前不得称为当前 QQ message-flow 证明。测评只允许 Console 按钮或 CLI 手动启动，默认每 Case 1 次，不接 Git hook、CI、文件/部署/重启回调，不发送真实 QQ。Console 按LLM测评、Agent测评、系统测试三类对象组织，默认 Agent测评；入口内按项目测评/公开基准分组，待接入默认折叠。BFCL 当前模型直测；IFEval 使用独立 PromptPlan 直接调用模型，GAIA/AgentBench 等按实际 Agent 执行归属，QQ 保留 Legacy 合成链路说明；Comparison 保留 CLI/服务入口。基准支持范围、实际执行对象与准备状态必须如实显示；仓库自动化不得描述成真实商用 LLM、真实 QQ、真实 cc-connect/NapCat 或 Canary E2E 通过。
 
+控制面读取私有 JSON 快照时，若写方在打开与校验之间原子替换文件，读方关闭已脱链的旧文件并最多重开两次；新文件仍须通过类型、属主、权限与单硬链接校验。连续替换超过上限或出现不安全元数据时失败关闭，不读取旧脱链文件。
+
 ## Agent 任务题库与目录
 
 `agentstrata-agent-tasks-v1` 是直接 Agent 任务套件；应用链路另由下述桥接 Suite 验证。本套件含 64 题，quick/full/security/live/skills/red-team=12/60/11/2/2/12。`agentstrata-capabilities-v1` 与 `project-business-v1` 已退役，原资源仅用于工程合同测试，正式创建和重跑拒绝，历史快照不改写。Case 通过静态 scenario_id 和参数提供隔离环境，不按新 Case ID 分派；输入不携带参考答案或操作脚本。事实验证结构、数值、依赖、真实产物与保护集，必要语义采用 strict GEval，不允许用 native 关闭。多主体评分必须保留全部回合与会话绑定，评分输入只供判分和复核；自然数量允许单位，拒绝操作不要求固定内部术语。版本 6 的模糊题显式允许合理澄清；结果导向题接受可核验的原生读源和宿主文件读回，协议与交付要求保持。逐题审查见 `docs/reference/evaluation-cases.md`。未记录证据、执行或评分异常不能算通过。IFEval 模型直测复用固定官方检查器，约束不丢弃、未知或参数异常失败关闭，旧 Agent 运行不自动转换。源码、许可、数据和修改说明一并打包。红队通过 Case metadata 的 test_category/red_team_surface 分类，不能用普通异常处理题冒充对抗覆盖；新增题必须同时检查攻击效果与正常功能。GAIA/SWE-bench 使用固定官方版本与私有缓存，缺附件或镜像不得标可运行；准备数据不自动下载全部镜像或调用模型。下载凭据使用私有 CHATCOPILOT_HF_TOKEN 或本机登录，不进入题目和产物。规格见 `docs/reference/evaluation.md` 与 `docs/reference/evaluation.md`。

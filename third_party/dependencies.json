@@ -1,5 +1,5 @@
 {
-  "notices_sha256": "b64b275f0cfd309aac5c7732f5c8b4b46b8d428542832fa158f5066814442288",
+  "notices_sha256": "5744bbe4986a38989a08283f97cd5c629fd9e97e58022b7d445dbda0133d0034",
   "reviewed_sources_sha256": "b0a3d88ad981b19def4156d8eda60131a78c5a073da826da9d900d1c291fb258",
   "dependencies": [
     {
@@ -8922,6 +8922,7 @@
         "desktop",
         "dev",
         "evaluation",
+        "runtime",
         "test"
       ],
       "artifact_url": "https://files.pythonhosted.org/packages/63/34/ba1c580383c9eada3711951fef0795c80b829a078d72188184bcab9dd527/packaging-26.3-py3-none-any.whl",

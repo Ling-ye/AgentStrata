@@ -28,16 +28,25 @@ def verification_runtime(state):
     return frozen, digest
 
 
-@lru_cache(maxsize=None)
 def task_verification_id(repo, state, task_id):
-    return HarnessController(repo, root=state / "harness").get(task_id)["source"].get("verification_runtime")
+    return _read_task_verification_id(repo, state, task_id)
+
+
+def _read_task_verification_id(repo, state, task_id):
+    from chatcopilot.harness.store import read_source_metadata
+    return read_source_metadata(state / "harness", task_id).get("verification_runtime")
 
 
 @lru_cache(maxsize=None)
 def task_verification_runtime(repo, state, task_id):
+    return verify_task_verification_runtime(repo, state, task_id)
+
+
+def verify_task_verification_runtime(repo, state, task_id, *, fresh=False):
+    """Explicit recovery rechecks frozen bytes even if normal polling cached them."""
     import re
     from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
-    digest = task_verification_id(repo, state, task_id)
+    digest = _read_task_verification_id(repo, state, task_id) if fresh else task_verification_id(repo, state, task_id)
     if not isinstance(digest, str) or not re.fullmatch(r"[a-f0-9]{64}", digest):
         raise ValueError("此任务没有独立验证快照，原记录已保留；请在同一聊天发送新的开发请求。")
     frozen = state / "verification" / digest
@@ -76,7 +85,7 @@ def controller(repo, state, *, start_eval=False, application_checks=(), task_id=
                 from chatcopilot.core.install_artifacts import write_private
                 env_file = state / ("eval-" + socket.stem + ".env")
                 write_private(env_file, "".join(key + "=" + json.dumps(value) + "\n"
-                                               for key, value in environment.items()))
+                                               for key, value in settings.items()))
                 command.append("--property=EnvironmentFile=" + str(env_file))
             else:
                 command.extend("--setenv=" + key + "=" + settings[key] for key in
@@ -110,15 +119,15 @@ def stop_evaluation(repo, state, task_id):
                    capture_output=True, timeout=20, check=False)
 
 
-def start_task(repo, state, bot_id, goal, request, *, predecessor_task_id=None):
+def start_task(repo, state, bot_id, goal, request, *, predecessor_task_id=None, environment=None):
     desktop = bot_id != "live2d-desktop"
     checks = ("decision-no-tool",) if desktop else ()
-    cfg, frozen = worker_profile("", environment={**os.environ, **configuration()})
+    cfg, frozen = worker_profile("", environment={**os.environ, **configuration(), **(environment or {})})
     from pathlib import Path
     from chatcopilot.external_tools.codex_cli.auth_cli import status_lanes
     if not cfg.credential_root or status_lanes(Path(cfg.credential_root), "worker")[0].state != "ready":
         raise ValueError("开发账号尚未就绪。请打开「模型与账号」，点击「登录开发账号」，然后重试此请求。")
-    host = controller(repo, state, start_eval=True, application_checks=checks)
+    host = controller(repo, state, start_eval=True, application_checks=checks, **({"environment": environment} if environment is not None else {}))
     options = RepairOptions(cfg.model, cfg.reasoning_effort or "", 3, 3600, frozen, cfg.profile_id)
     scope = [p.relative_to(repo).as_posix() for p in sorted((repo / "bots" / bot_id / "prompts").glob("*.md"))]
     if desktop:

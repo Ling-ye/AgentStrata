@@ -29,7 +29,7 @@ class Applications:
 
     def studio(self):
         if self._studio is None:
-            self._studio = Studio(self.state_dir, self.root)
+            self._studio = Studio(self.state_dir, self.root, model_path=self.model_path)
         return self._studio
 
     def manager(self):
@@ -78,9 +78,9 @@ class Applications:
             standard = p["application_type"] == "qq_official"
             row = self._view("studio:" + p["id"], p["name"], "qq_official" if standard else "companion" if p["bot"] == "live2d-desktop" else "desktop",
                              "studio", project=p["id"], configure=standard, control=standard,
-                             improve=standard, records=True)
+                             improve=True, records=True)
             row["message"] = ("管理对话只生成配置提案；试聊与真实 QQ 往返尚未验证。"
-                              if standard else "开发项目保留在原 Studio；尚未接入统一生命周期控制。")
+                              if standard else "在此讨论需求、开发和验收，完成后下载桌面安装包；安装与运行另行确认。")
             if standard:
                 row["state"]["process"] = "unobserved"
                 row["state"]["channel"] = "not_checked"
@@ -114,8 +114,8 @@ class Applications:
 
     def create(self, ident, kind):
         key = UUID(str(ident)).hex
-        if kind != "qq_official":
-            raise ValueError("当前统一创建入口仅支持 QQ 官方应用；桌面开发仍使用原 Studio")
+        if kind not in {"qq_official", "desktop"}:
+            raise ValueError("不支持的应用类型")
         self.studio().create(key, live=kind == "live2d",
                              application_type="qq_official" if kind == "qq_official" else "desktop")
         return self.detail("studio:" + key)
@@ -162,6 +162,10 @@ class Applications:
         text = text.strip()
         if not text or len(text) > 16000:
             raise ValueError("请输入有效的应用需求")
+        if row["type"] != "qq_official":
+            with self._operation_lock(row):
+                self.studio().submit(row["project_id"], key, text)
+            return
         with self._operation_lock(row), self.studio().db.connect(write=True) as db:
             db.execute("CREATE TABLE IF NOT EXISTS console_requests (id TEXT PRIMARY KEY, context TEXT NOT NULL, baseline TEXT NOT NULL)")
             # Include legacy pending states: only one management mutation per application.
@@ -187,6 +191,8 @@ class Applications:
         from studio import runtime
         studio = self.studio()
         row = self.require(ident, "improve")
+        if row["type"] != "qq_official":
+            return  # Durable Studio worker owns desktop development.
         with self._lock, private_lock(self.state_dir / "console-guide.lock", timeout=10):
             with studio.db.connect() as db:
                 item = db.execute("SELECT state,text FROM messages WHERE id=? AND project=?",
@@ -241,7 +247,29 @@ class Applications:
             self.studio().update(key, "applied", "配置已应用。")
             return result
 
+    def retry(self, ident, message):
+        row = self.require(ident, "improve")
+        if row["type"] == "qq_official":
+            raise PermissionError("请重新提出配置需求")
+        with self._operation_lock(row):
+            self.studio().retry(row["project_id"], UUID(str(message)).hex)
+        return {"ok": True}
+
     async def resume(self):
+        from studio.worker import StudioWorker
+        async def development():
+            while not (self.state_dir / "studio.sqlite").is_file():
+                await asyncio.sleep(1)
+            await StudioWorker(self.studio()).run()
+        tasks = [asyncio.create_task(development()), asyncio.create_task(self._resume_configuration())]
+        try:
+            await asyncio.gather(*tasks)
+        finally:
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _resume_configuration(self):
         """Resume only this workbench's explicit configuration requests after restart."""
         while True:
             if (self.state_dir / "studio.sqlite").is_file():

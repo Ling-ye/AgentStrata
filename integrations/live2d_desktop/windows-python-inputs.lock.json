@@ -1,0 +1,38 @@
+{
+  "schema": "agentstrata-windows-python-inputs/v2",
+  "source": {
+    "repository": "astral-sh/uv",
+    "tag": "0.12.5",
+    "commit": "210d1f6785e95a8c8c0d53e284408c9be1134700",
+    "url": "https://raw.githubusercontent.com/astral-sh/uv/210d1f6785e95a8c8c0d53e284408c9be1134700/crates/uv-python/download-metadata.json",
+    "git_blob_sha1": "0cf56746b548270f9285c37412eb0658737ae24f",
+    "sha256": "3c517040d06a37f47e9ee01a538242428a217f04d9f55310411dcac58b73472c",
+    "bytes": 3111598
+  },
+  "archives": {
+    "host_python": {
+      "version": "3.13.15",
+      "selector": "cpython-3.13.15-windows-x86_64-none",
+      "sha256": "07c977bbe4abad07e3bbc314608633e6c74eab482a7bae81f4361cda970b45e6",
+      "build": "20260814",
+      "format": "tar.gz",
+      "root": "python"
+    },
+    "vtuber_python": {
+      "version": "3.12.14",
+      "selector": "cpython-3.12.14-windows-x86_64-none",
+      "sha256": "89f18f6932917163b74339ebcec2645c8e47ae7f1c5f2ac37f2b4f4cf3beb647",
+      "build": "20260814",
+      "format": "tar.gz",
+      "root": "python"
+    },
+    "windows_mcp_python": {
+      "version": "3.14.7",
+      "selector": "cpython-3.14.7-windows-x86_64-none",
+      "sha256": "649e1eebf754a5ca76ddfda8c498ff25c574599408b8a52b6a2c24265fd6314c",
+      "build": "20260814",
+      "format": "tar.gz",
+      "root": "python"
+    }
+  }
+}

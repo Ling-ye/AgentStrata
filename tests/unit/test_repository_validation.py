@@ -60,14 +60,13 @@ def test_validation_profiles_include_static_and_runtime_checks(
     full_pytest = profiles["python"][-1]
     fast_paths = check_repo._fast_test_paths()
     assert fast_pytest.argv[3:3 + len(fast_paths)] == fast_paths
-    assert fast_pytest.argv[3 + len(fast_paths):-1] == (
+    assert fast_pytest.argv[3 + len(fast_paths):] == (
         "-q", "-n", "4", "--dist=loadfile",
     )
     assert "tests/unit" not in fast_pytest.argv
     assert full_pytest.argv[1:4] == ("-m", "pytest", "-q")
-    assert full_pytest.argv[4:-1] == ("-n", "4", "--dist=loadfile")
-    assert f"--basetemp={tmp_path / 'chatcopilot-pytest-fast'}" in fast_pytest.argv
-    assert f"--basetemp={tmp_path / 'chatcopilot-pytest-full'}" in full_pytest.argv
+    assert full_pytest.argv[4:] == ("-n", "4", "--dist=loadfile")
+    assert not list(tmp_path.iterdir())
     indexed_checks = {
         check.name
         for check in profiles["full"]
@@ -363,6 +362,7 @@ def test_requirements_check_detects_dependency_missing_from_runtime_lock(monkeyp
     sync = _load_script("sync_requirements.py")
     monkeypatch.setattr(sync, "ROOT", tmp_path)
     monkeypatch.setattr(sync, "rendered_requirements", lambda: {})
+    monkeypatch.setattr(sync, "native_drift", lambda: [])
     (tmp_path / "pyproject.toml").write_text(
         '[project]\nname="sample"\n[project.optional-dependencies]\nagent=["deepeval==4.2.2"]\n')
     lock = ('[[package]]\nname="sample"\nsource={editable="."}\n'
@@ -558,12 +558,138 @@ def test_skipped():
     assert False
 """)
     monkeypatch.setattr(gate, '_profiles', lambda: {'fast': (gate.Check('core tests', (sys.executable, '-m', 'pytest', str(test), '-q'), cwd=tmp_path),)})
-    output = tmp_path / 'report'
-    monkeypatch.setattr(sys, 'argv', ['check_repo.py', 'fast', '--report-dir', str(output)])
+    monkeypatch.setattr(gate, "ROOT", tmp_path)
+    monkeypatch.setattr(sys, 'argv', ['check_repo.py', 'fast'])
     assert gate.main() == 0
-    record = json.loads((output / 'manifest.json').read_text())['checks'][0]
+    report, = (tmp_path / ".cache/check-repo").glob("fast-*/manifest.json")
+    record = json.loads(report.read_text())['checks'][0]
     assert record['test_inventory']['count'] == 2
     assert len(record['test_inventory']['skipped_ids']) == 1
+
+
+def test_concurrent_pytest_runs_cleanup_their_own_directories_and_keep_reports(tmp_path, monkeypatch):
+    import json
+    import subprocess
+    from concurrent.futures import ThreadPoolExecutor
+
+    temp_root = tmp_path / "scratch"
+    temp_root.mkdir()
+    monkeypatch.setenv("TMPDIR", str(temp_root))
+    test = tmp_path / "test_isolated.py"
+    test.write_text("""import os
+from pathlib import Path
+
+def test_write(tmp_path):
+    root = Path(os.environ["TMPDIR"])
+    assert tmp_path.is_relative_to(root)
+    (tmp_path / "fixture").write_text("evidence")
+    print("scratch=" + str(root))
+    assert False, "preserved failure"
+""")
+    argv = (sys.executable, "-m", "pytest", "-n", "2", "-rA", str(test))
+    launcher = tmp_path / "launcher.py"
+    launcher.write_text(f"""
+import importlib.util
+import json
+import sys
+from pathlib import Path
+spec = importlib.util.spec_from_file_location("gate", {str(ROOT / 'scripts/check_repo.py')!r})
+gate = importlib.util.module_from_spec(spec)
+sys.modules[spec.name] = gate
+spec.loader.exec_module(gate)
+root = Path({str(tmp_path)!r})
+gate._documentation_changes = lambda *args, **kwargs: None
+gate._profiles = lambda: {{"fast": (gate.Check("core tests", {argv!r}, cwd=root),)}}
+sys.argv = ["check_repo.py", "fast", "--report-dir", str(root / sys.argv[1])]
+raise SystemExit(gate.main())
+""")
+
+    def run_gate(index):
+        name = f"report-{index}"
+        result = subprocess.run([sys.executable, str(launcher), name], capture_output=True, text=True,
+                                timeout=60)
+        assert result.returncode == 1, result.stdout + result.stderr
+        report = tmp_path / name
+        record = json.loads((report / "manifest.json").read_text())["checks"][0]
+        assert record["status"] == "failed" and record["test_inventory"]["count"] == 1
+        log = Path(record["log_path"]).read_text()
+        assert "preserved failure" in log
+        return next(line.removeprefix("scratch=") for line in log.splitlines() if line.startswith("scratch="))
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first, second = pool.map(run_gate, range(2))
+    assert first != second
+    assert not list(temp_root.iterdir())
+
+
+@pytest.mark.skipif(sys.platform != "linux", reason="Linux process-tree cleanup")
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_test_cleanup_waits_for_detached_child(tmp_path, monkeypatch, interrupted):
+    import json
+    import signal
+    import subprocess
+    import time
+
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    monkeypatch.setenv("TMPDIR", str(scratch))
+    child = tmp_path / "child.py"
+    child.write_text("""import os
+import signal
+import sys
+from pathlib import Path
+
+def finish(signum, frame):
+    Path(sys.argv[2]).write_text(str(Path(os.environ["TMPDIR"]).is_dir()))
+    raise SystemExit(0)
+
+signal.signal(signal.SIGTERM, finish)
+Path(sys.argv[1]).touch()
+signal.pause()
+""")
+    parent = tmp_path / "parent.py"
+    parent.write_text("""import subprocess
+import sys
+import time
+from pathlib import Path
+
+subprocess.Popen([sys.executable, *sys.argv[1:]], start_new_session=True)
+while not Path(sys.argv[2]).exists():
+    time.sleep(0.01)
+if sys.argv[4] == "True":
+    import signal
+    signal.pause()
+""")
+    ready = tmp_path / "ready"
+    marker = tmp_path / "cleanup-order"
+    argv = (sys.executable, str(parent), str(child), str(ready), str(marker), str(interrupted))
+    report = tmp_path / "report"
+    code = f"""
+import sys
+from pathlib import Path
+sys.path.insert(0, {str(ROOT / 'scripts')!r})
+import check_repo as gate
+gate._documentation_changes = lambda *args, **kwargs: None
+gate._profiles = lambda: {{"console": (gate.Check("console tests", {argv!r}, cwd=Path({str(tmp_path)!r})),)}}
+sys.argv = ["check_repo.py", "console", "--report-dir", {str(report)!r}]
+raise SystemExit(gate.main())
+"""
+    with subprocess.Popen([sys.executable, "-B", "-c", code]) as process:
+        if interrupted:
+            try:
+                deadline = time.monotonic() + 15
+                while not ready.exists() and process.poll() is None and time.monotonic() < deadline:
+                    time.sleep(0.05)
+                assert ready.exists()
+            finally:
+                if process.poll() is None:
+                    process.send_signal(signal.SIGTERM)
+        assert process.wait(timeout=30) == (143 if interrupted else 0)
+    record = json.loads((report / "manifest.json").read_text())["checks"][0]
+    assert record["exit_code"] == (143 if interrupted else 0)
+    assert Path(record["log_path"]).is_file()
+    assert marker.read_text() == "True"
+    assert not list(scratch.iterdir())
 
 
 def test_repository_report_keeps_failed_unittest_subtests(tmp_path: Path, monkeypatch) -> None:
@@ -602,3 +728,32 @@ def test_retry_cannot_reuse_an_older_junit_inventory(tmp_path, monkeypatch):
     record = json.loads((output / "manifest.json").read_text())["checks"][0]
     assert record["status"] == "failed" and "test_inventory" not in record
     assert not stale.exists()
+
+
+
+def test_native_host_lock_drift_is_checked_even_when_compatibility_files_match(monkeypatch, tmp_path):
+    from chatcopilot.deployment.windows_dependencies import HOST_LOCK
+    sync = _load_script("sync_requirements.py")
+    path = tmp_path / HOST_LOCK
+    path.parent.mkdir(parents=True)
+    pinned = "demo==1 \\\n    --hash=sha256:" + "a" * 64 + "\n"
+    monkeypatch.setattr(sync, "native_requirements", lambda: (path, pinned))
+    assert sync.native_drift()
+    path.write_text("# old annotation\n" + pinned)
+    assert sync.native_drift() == []
+    path.write_text(pinned.replace("demo==1", "demo==2"))
+    assert sync.native_drift()
+
+
+def test_native_export_failure_preserves_all_existing_requirements(monkeypatch, tmp_path):
+    sync = _load_script("sync_requirements.py")
+    original = tmp_path / "requirements.txt"
+    original.write_text("original\n")
+    monkeypatch.setattr(sync, "rendered_requirements", lambda: {original: "changed\n"})
+    monkeypatch.setattr(sys, "argv", ["sync_requirements.py"])
+    def fail():
+        raise ValueError("controlled offline export failure")
+    monkeypatch.setattr(sync, "native_requirements", fail)
+    with pytest.raises(ValueError, match="controlled offline"):
+        sync.main()
+    assert original.read_text() == "original\n"

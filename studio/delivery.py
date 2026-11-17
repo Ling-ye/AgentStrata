@@ -11,6 +11,24 @@ import subprocess
 from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest
 from chatcopilot.deployment.application_bundle import MANIFEST, NATIVE_SCHEMA, export_bundle, read_bundle
 from chatcopilot.deployment.runtime_package import export_runtime
+from chatcopilot.deployment.windows_wheels import (
+    DIRECTORY as HOST_WHEEL_DIRECTORY, MEMBER as HOST_WHEEL_INPUTS, VERIFIED as HOST_WHEEL_VERIFIED,
+    LAYOUT as HOST_WHEEL_LAYOUT, ENVIRONMENT_INPUTS as HOST_ENVIRONMENT_INPUTS,
+    prepare_host_wheels, reserved_member,
+)
+from chatcopilot.deployment.windows_dependencies import MEMBER as DEPENDENCIES, build_dependency_declarations
+from chatcopilot.deployment.runtime_requirements import MEMBER as RUNTIME_REQUIREMENTS, prepare_runtime_requirements
+from chatcopilot.deployment.windows_python_inputs import (
+    MEMBER as PYTHON_VERIFICATION, METADATA as PYTHON_METADATA, prepare_native_python_inputs,
+)
+from chatcopilot.deployment.windows_mcp_inputs import (
+    MEMBER as MCP_INPUTS, SOURCE as MCP_SOURCE, PYTHON as MCP_PYTHON, WHEELS as MCP_WHEELS, LAYOUT as MCP_LAYOUT, prepare_native_mcp_inputs,
+    reserved_member as reserved_mcp_member,
+)
+from chatcopilot.deployment.windows_plugin_inputs import (
+    MEMBER as PLUGIN_INPUTS, WHEELS as PLUGIN_WHEELS, prepare_native_plugin_inputs,
+    reserved_member as reserved_plugin_member,
+)
 
 
 def digest(path):
@@ -26,6 +44,7 @@ def native_inputs(manifest, bot_id):
     """Select runtime and corresponding source from the exact reviewed source tree."""
     native_bootstrap = {"integrations/live2d_desktop/scripts/bootstrap-windows.ps1",
                         "integrations/live2d_desktop/windows-runtime.lock.json",
+                        "integrations/live2d_desktop/windows-python-inputs.lock.json",
                         "integrations/live2d_desktop/windows-mcp.lock.json",
                         "integrations/live2d_desktop/windows-host-requirements.lock"}
     def included(name):
@@ -42,7 +61,8 @@ def native_inputs(manifest, bot_id):
     return {name:row for name,row in manifest.items() if included(name)}
 
 
-def build_payload(project, stage, *, bot_relative, release=None, assets=None):
+def build_payload(project, stage, *, bot_relative, release=None, assets=None, host_wheelhouse=None, python_metadata=None,
+                  mcp_source_archive=None, mcp_python_archive=None, mcp_wheel_cache=None, plugin_wheel_cache=None):
     """The native origin describes the build. The separate receipt binds accepted source, when available."""
     payload = stage / "runtime-payload"
     if release is None:
@@ -74,10 +94,35 @@ def build_payload(project, stage, *, bot_relative, release=None, assets=None):
             if name.startswith(paths) and previous["source_manifest"].get(name) != record["source_manifest"].get(name):
                 raise ValueError("桌宠资源的构建输入已经改变，需要匹配候选版本的载荷")
         for name, expected in json.loads((assets / "artifacts.json").read_text())["files"].items():
+            if (name in {DEPENDENCIES, RUNTIME_REQUIREMENTS, PYTHON_VERIFICATION, PYTHON_METADATA}
+                    or reserved_member(name) or reserved_mcp_member(name) or reserved_plugin_member(name)):
+                continue  # Regenerate declarations for this exact source projection.
             target = payload / name
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copyfile(assets / name, target)
             rows[name] = expected
+    if host_wheelhouse is None and assets is not None and (assets / HOST_WHEEL_DIRECTORY).is_dir():
+        host_wheelhouse = assets / HOST_WHEEL_DIRECTORY
+    if python_metadata is None and assets is not None and (assets / PYTHON_METADATA).is_file():
+        python_metadata = assets / PYTHON_METADATA
+    rows.update(prepare_native_python_inputs(payload, record["source_manifest"], metadata=python_metadata))
+    if assets is not None:
+        if mcp_source_archive is None and (assets/MCP_SOURCE).is_file():
+            mcp_source_archive = assets/MCP_SOURCE
+        if mcp_python_archive is None and (assets/MCP_PYTHON).is_file():
+            mcp_python_archive = assets/MCP_PYTHON
+        if mcp_wheel_cache is None and (assets/MCP_WHEELS).is_dir():
+            mcp_wheel_cache = assets/MCP_WHEELS
+    rows.update(prepare_native_mcp_inputs(payload,record["source_manifest"],record["bot_relative"],
+        source_archive=mcp_source_archive,python_archive=mcp_python_archive,wheel_cache=mcp_wheel_cache))
+    if plugin_wheel_cache is None and assets is not None and (assets/PLUGIN_WHEELS).is_dir():
+        plugin_wheel_cache = assets/PLUGIN_WHEELS
+    rows.update(prepare_native_plugin_inputs(payload,record["source_manifest"],record["bot_relative"],wheel_cache=plugin_wheel_cache))
+    declarations = build_dependency_declarations(payload / "source", record["source_manifest"])
+    (payload / DEPENDENCIES).write_bytes(declarations)
+    rows[DEPENDENCIES] = hashlib.sha256(declarations).hexdigest()
+    rows.update(prepare_host_wheels(payload, record["source_manifest"], cache=host_wheelhouse))
+    rows.update(prepare_runtime_requirements(payload, record["source_manifest"], record["bot_relative"], record["bot_id"]))
     catalog = payload / "artifacts.json"
     catalog.write_text(json.dumps({"source_digest": record["source_digest"], "files": rows}, sort_keys=True))
     record["artifacts_digest"] = digest(catalog)
@@ -86,17 +131,30 @@ def build_payload(project, stage, *, bot_relative, release=None, assets=None):
     return {"task_id": release.task_id if release else None, "accepted_candidate": receipt,
             "accepted_source_digest": receipt["candidate_digest"] if receipt else None,
             "source_digest": record["source_digest"], "artifacts_digest": record["artifacts_digest"],
+            "runtime_requirements_sha256": rows[RUNTIME_REQUIREMENTS],
+            "python_input_verification_sha256": rows.get(PYTHON_VERIFICATION),
+            "python_supplier_metadata_sha256": rows.get(PYTHON_METADATA),
+            "mcp_inputs_sha256": rows.get(MCP_INPUTS),
+            "mcp_source_archive_sha256": rows.get(MCP_SOURCE),
+            "mcp_python_archive_sha256": rows.get(MCP_PYTHON),
+            "mcp_installation_plan_sha256": rows.get(MCP_LAYOUT),
+            "plugin_inputs_sha256": rows.get(PLUGIN_INPUTS),
+            "dependency_declarations_sha256": rows[DEPENDENCIES],
+            "host_wheel_inputs_sha256": rows[HOST_WHEEL_INPUTS],
+            "host_wheel_verification_sha256": rows.get(HOST_WHEEL_VERIFIED),
+            "host_wheel_layout_sha256": rows.get(HOST_WHEEL_LAYOUT),
+            "host_environment_inputs_sha256": rows.get(HOST_ENVIRONMENT_INPUTS),
             "bot_id": record["bot_id"], "bot_relative": record["bot_relative"]}
 
 
-def pack(project, stage, *, bot_relative, release=None, assets=None, name, install_id, windows_build=None):
+def pack(project, stage, *, bot_relative, release=None, assets=None, name, install_id, windows_build=None, python_metadata=None):
     if (not name.strip() or not name.isprintable() or any(c in name for c in '\\/:*?"<>|$')
             or name.endswith((' ', '.'))):
         raise ValueError("应用名称包含 Windows 安装器无法使用的字符")
     if not re.fullmatch("[a-z][a-z0-9-]{1,80}", install_id):
         raise ValueError("Invalid desktop installation identity")
     stage.mkdir(parents=True, exist_ok=False)
-    receipt = build_payload(project, stage, bot_relative=bot_relative, release=release, assets=assets)
+    receipt = build_payload(project, stage, bot_relative=bot_relative, release=release, assets=assets, python_metadata=python_metadata)
     recipe = Path(__file__).resolve().parents[1] / "integrations/desktop_app"
     descriptor = {"installId": install_id, "name": name, "botId": receipt["bot_id"],
                   "kind": "live2d" if receipt["bot_id"] == "live2d-desktop" else "application"}

@@ -2,10 +2,13 @@
 from __future__ import annotations
 
 import json
+import os
 from pathlib import Path
 import shutil
 
 from chatcopilot.core.application_installation import installation
+from chatcopilot.deployment.application_bundle import read_bundle
+from chatcopilot.deployment.windows_plugin_inputs import verify_native_plugin_inputs
 from chatcopilot.core.install_artifacts import InstallError, private_directory, sha256
 from .application_binding import configure_application_client
 from .assets import prepare_assets
@@ -22,6 +25,14 @@ def prepare(request: dict) -> dict:
     record = json.loads((payload / "artifacts.json").read_text())
     if installed is None or record.get("source_digest") != installed.delivered_digest:
         raise InstallError("Native artifacts belong to another application source")
+    package = read_bundle(payload, native_volume=os.name == "nt")
+    if package["source_digest"] != installed.delivered_digest:
+        raise InstallError("Native plugin inputs identify another installed application source")
+    plugin_inputs = verify_native_plugin_inputs(payload, package["source_manifest"], package["bot_relative"])
+    if plugin_inputs is not None:
+        # Input consistency and even an inert source stage never authorize this
+        # legacy provisioner to copy projects, fetch models or configure a client.
+        raise InstallError("Plugin original inputs remain data; compiled assets, safe prefix/loading/ABI and independent installation acceptance are incomplete")
     for name, digest in record["files"].items():
         relative = Path(name)
         if relative.is_absolute() or ".." in relative.parts or "\\" in name:

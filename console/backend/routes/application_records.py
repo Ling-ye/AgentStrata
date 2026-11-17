@@ -3,8 +3,8 @@ from uuid import UUID
 from typing import Literal
 from pydantic import BaseModel, ConfigDict
 
-from fastapi.responses import FileResponse
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from studio.downloads import VerifiedBuildResponse
 
 from chatcopilot.evals.service import EvaluationServiceError
 from console.backend.routes.applications import PrivateRoute, access, call, service
@@ -52,9 +52,10 @@ def desktop_build(request: Request, application_id: str, message: UUID):
     row = call(lambda: service(request).require(application_id))
     if row["source"] != "studio" or row["type"] not in {"desktop", "companion"}:
         raise HTTPException(409, "此应用没有桌面构建下载入口")
-    artifact = call(lambda: service(request).studio().artifact(row["project_id"], message.hex))
-    return FileResponse(artifact, media_type="application/octet-stream",
-                        filename="AgentStrata-" + row["project_id"][:8] + ".exe")
+    def response():
+        artifact, digest = service(request).studio().artifact_reference(row["project_id"], message.hex)
+        return VerifiedBuildResponse(artifact, digest, filename="AgentStrata-" + row["project_id"][:8] + ".exe")
+    return call(response)
 
 
 @router.post("/{application_id}/builds/{message}/desktop/{action}")

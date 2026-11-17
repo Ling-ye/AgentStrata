@@ -62,12 +62,39 @@ def main():
     from agentstrata_vtuber.resources import artifact_lock
     from chatcopilot.core.install_artifacts import download, extract_archive, sha256
     from chatcopilot.deployment.runtime_package import export_runtime
+    from chatcopilot.deployment.windows_wheels import prepare_host_wheels
+    from chatcopilot.deployment.runtime_requirements import prepare_runtime_requirements
+    from chatcopilot.deployment.windows_python_inputs import prepare_native_python_inputs
+    from chatcopilot.deployment.windows_mcp_inputs import prepare_native_mcp_inputs
+    from chatcopilot.deployment.windows_plugin_inputs import prepare_native_plugin_inputs, stage_native_plugin_projects
+    from chatcopilot.deployment.windows_dependencies import MEMBER as DEPENDENCIES, build_dependency_declarations
     from chatcopilot.deployment.application_bundle import MANIFEST, read_bundle
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-root", type=Path, required=True)
     parser.add_argument("--uv", default=shutil.which("uv"), help="Locked uv build executable")
+    parser.add_argument("--host-wheelhouse", type=Path, help="Complete source-pinned Windows host wheel cache; never downloaded or repaired here")
+    parser.add_argument("--python-metadata", type=Path,
+        help="Optional original supplier table matching the frozen source copy and lock; never downloaded here")
+    parser.add_argument("--mcp-source-archive", type=Path, help="Original pinned MCP Git archive; audited as data before vendor builds")
+    parser.add_argument("--mcp-python-archive", type=Path, help="Original separately pinned MCP Python archive; never executed by input audit")
+    parser.add_argument("--mcp-wheelhouse", type=Path, help="Complete original MCP wheel inputs; no automatic downloads or builds")
+    parser.add_argument("--plugin-wheelhouse", type=Path, help="Complete source-pinned original VTuber wheels; derived build receipts never add hashes")
+    parser.add_argument("--plugin-sourcehouse", type=Path, help="Exact original sources required by frozen paired source/wheel recipes; never built or downloaded here")
+    parser.add_argument("--plugin-projecthouse", type=Path, help="Both original pinned backend/frontend Git TARs; patches come only from the frozen source")
+    parser.add_argument("--plugin-project-lab", type=Path, help="Existing empty private lab for inert project file staging; never an installation root")
     args = parser.parse_args()
+    package = export_runtime(ROOT, args.output)
+    python_files = prepare_native_python_inputs(args.output, package["source_manifest"], metadata=args.python_metadata)
+    mcp_files = prepare_native_mcp_inputs(args.output,package["source_manifest"],package["bot_relative"],
+        source_archive=args.mcp_source_archive,python_archive=args.mcp_python_archive,wheel_cache=args.mcp_wheelhouse)
+    plugin_files = prepare_native_plugin_inputs(args.output,package["source_manifest"],package["bot_relative"],
+        wheel_cache=args.plugin_wheelhouse,source_cache=args.plugin_sourcehouse,project_cache=args.plugin_projecthouse)
+    if args.plugin_project_lab is not None:
+        staged=stage_native_plugin_projects(args.output,package['source_manifest'],package['bot_relative'],workspace=args.plugin_project_lab)
+        print(json.dumps(staged,sort_keys=True))
+    if plugin_files:
+        raise ValueError("Plugin original inputs remain data; compiled frontend/assets/tools, prefix/loading/ABI and installation identity lack runtime admission. Original input audit retained; vendor builds were not started")
     args.build_root.mkdir(parents=True, exist_ok=True)
     if not args.uv:
         raise ValueError("Prepare the locked uv build tool or pass --uv")
@@ -86,7 +113,6 @@ def main():
     client = args.build_root / "vtuber"
     sources = prepare_sources(client)
     prepare_frontend(client, sources, node, node_root / "lib/node_modules/npm/bin/npm-cli.js")
-    package = export_runtime(ROOT, args.output)
     destination = args.output / "vtuber/apps"
     destination.mkdir(parents=True)
     for name, path in sources.items():
@@ -101,6 +127,14 @@ def main():
     files = {path.relative_to(args.output).as_posix(): sha256(path)
              for directory in (args.output / "vtuber", wheels) for path in directory.rglob("*") if path.is_file()}
     files["vtuber-requirements.lock"] = sha256(args.output / "vtuber-requirements.lock")
+    declarations = build_dependency_declarations(args.output / "source", package["source_manifest"], uv=Path(args.uv))
+    (args.output / DEPENDENCIES).write_bytes(declarations)
+    files[DEPENDENCIES] = hashlib.sha256(declarations).hexdigest()
+    files.update(python_files)
+    files.update(mcp_files)
+    files.update(prepare_host_wheels(args.output, package["source_manifest"], cache=args.host_wheelhouse))
+    files.update(plugin_files)
+    files.update(prepare_runtime_requirements(args.output, package["source_manifest"], package["bot_relative"], package["bot_id"]))
     artifact_manifest = args.output / "artifacts.json"
     artifact_manifest.write_text(json.dumps({"source_digest": package["source_digest"],
         "files": files}, sort_keys=True), encoding="utf-8")

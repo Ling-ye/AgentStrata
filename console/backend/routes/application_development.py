@@ -55,6 +55,11 @@ def start(request: Request, application_id: str, body: Start):
     return invoke(request, lambda host: host.start(application_id, body.id.hex, body.goal))
 
 
+@router.get("/{application_id}/development/requests/{request_id}")
+def original_request(request: Request, application_id: str, request_id: UUID):
+    return invoke(request, lambda host: host.request(application_id, request_id.hex))
+
+
 @router.get("/{application_id}/development/tasks/{task_id}")
 def get(request: Request, application_id: str, task_id: TaskId):
     return invoke(request, lambda host: host.get(application_id, task_id))

@@ -307,6 +307,36 @@ def test_retired_runtime_vocabulary_rejects_backend_name(checker, tmp_path, monk
     assert rejected["src/chatcopilot/agent/session.py"] == ["backend_name"]
 
 
+@pytest.mark.parametrize("source", [
+    "def build_backend(context): pass\n",
+    "value = factory.build_backend\n",
+    'config = {"build_backend": "legacy"}\n',
+])
+def test_retired_agent_factory_identifier_stays_rejected(checker, tmp_path, monkeypatch, source):
+    source_root = tmp_path / "src/chatcopilot"
+    probe = source_root / "agent/session.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", source_root)
+    assert checker._semantic_invariants()["retired_agent_runtime_vocabulary"]["src/chatcopilot/agent/session.py"] == ["build_backend"]
+
+
+@pytest.mark.parametrize("source", [
+    "build_backend_executed = False\n",
+    'audit = {"upstream_build_backend_executed": False}\n',
+    'metadata = {"build-backend": "setuptools.build_meta"}\n',
+])
+def test_source_build_audit_status_is_distinct_from_retired_agent_factory(checker, tmp_path, monkeypatch, source):
+    source_root = tmp_path / "src/chatcopilot"
+    probe = source_root / "core/source_audit.py"
+    probe.parent.mkdir(parents=True)
+    probe.write_text(source, encoding="utf-8")
+    monkeypatch.setattr(checker, "ROOT", tmp_path)
+    monkeypatch.setattr(checker, "SRC", source_root)
+    assert "retired_agent_runtime_vocabulary" not in checker._semantic_invariants()
+
+
 @pytest.fixture
 def runtime_architecture_workspace(tmp_path: Path, monkeypatch, checker):
     original_root = checker.ROOT

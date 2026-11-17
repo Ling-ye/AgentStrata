@@ -19,6 +19,14 @@ class ArtifactRepository:
         self.directory = private_directory(directory)
         self.root = private_directory(self.directory / "artifacts")
 
+    @classmethod
+    def read_existing(cls, directory: Path, ref: ArtifactRef | dict[str, Any]) -> Any:
+        """Read original evidence without initializing or repairing its directories."""
+        reader = cls.__new__(cls)
+        reader.directory = private_directory(directory, create=False)
+        reader.root = private_directory(reader.directory / "artifacts", create=False)
+        return reader.read(ref)
+
     def put(self, kind: str, revision: int, value: Any) -> ArtifactRef:
         content = json_text(value).encode()
         digest = hashlib.sha256(content).hexdigest()

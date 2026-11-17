@@ -195,7 +195,7 @@ def test_unsupported_and_unknown_actions_cannot_reach_runtime(applications, monk
     with client_for(applications) as client:
         assert client.post("/api/applications/plugin:p/start").status_code == 409
         assert client.post("/api/applications/missing/start").status_code == 404
-        assert client.post("/api/applications", json={"id": str(uuid4()), "type": "desktop"}).status_code == 400
+        assert client.post("/api/applications", json={"id": str(uuid4()), "type": "unknown"}).status_code == 400
 
 
 def test_gateway_health_matches_host_credential_binding(applications, monkeypatch):

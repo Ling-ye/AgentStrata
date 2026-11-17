@@ -4,18 +4,24 @@ export interface SourceState {
   definition_matches: boolean;
   message: string;
 }
-export interface DevelopmentTask { task_id: string; status: string; can_install: boolean; can_cancel: boolean }
+export interface DevelopmentTask { task_id: string; status: string; can_install: boolean; can_cancel: boolean; request_id?: string }
+export interface DevelopmentRequest { id: string; state: "not_found" | "pending" | "submitted"; goal?: string; task?: DevelopmentTask }
+export class DevelopmentRequestError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); this.name = "DevelopmentRequestError"; }
+}
 async function request<T>(id: string, suffix = "", options?: RequestInit): Promise<T> {
   const result = await fetch("/api/applications/" + encodeURIComponent(id) + "/development" + suffix,
     { cache: "no-store", ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
   const value = await result.json();
-  if (!result.ok) throw new Error(typeof value.detail === "string" ? value.detail : "应用开发操作失败，请核对原请求状态");
+  if (!result.ok) throw new DevelopmentRequestError(typeof value.detail === "string" ? value.detail : "应用开发操作失败，请核对原请求状态", result.status);
   return value;
 }
 export const developmentApi = {
   status: (id: string, signal?: AbortSignal) => request<SourceState>(id, "", { signal }),
   prepare: (id: string) => request<SourceState>(id, "/prepare", { method: "POST", body: "{}" }),
   tasks: (id: string, signal?: AbortSignal) => request<{ tasks: DevelopmentTask[]; total: number }>(id, "/tasks", { signal }),
+  request: (id: string, requestId: string, signal?: AbortSignal) => request<DevelopmentRequest>(id, "/requests/" + encodeURIComponent(requestId), { signal }),
+  task: (id: string, taskId: string, signal?: AbortSignal) => request<DevelopmentTask>(id, "/tasks/" + encodeURIComponent(taskId), { signal }),
   start: (id: string, requestId: string, goal: string) => request<DevelopmentTask>(id, "/tasks", { method: "POST", body: JSON.stringify({ id: requestId, goal }) }),
   action: (id: string, task: string, action: "cancel" | "install") => request<SourceState | DevelopmentTask>(id, "/tasks/" + encodeURIComponent(task) + "/" + action, { method: "POST", body: "{}" }),
 };

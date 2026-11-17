@@ -30,6 +30,7 @@ source = { editable = "." }
 dependencies = [
     { name = "jsonschema" },
     { name = "mcp-server-git" },
+    { name = "packaging" },
     { name = "pywin32", marker = "sys_platform == 'win32'" },
     { name = "pyyaml" },
     { name = "requests" },
@@ -119,6 +120,7 @@ requires-dist = [
     { name = "nltk", marker = "extra == 'evaluation'", specifier = ">=3.9.2,<4" },
     { name = "numpy", marker = "extra == 'desktop'", specifier = ">=2.2,<2.3" },
     { name = "openai", marker = "extra == 'agent'", specifier = ">=1.40.0" },
+    { name = "packaging", specifier = "==26.3" },
     { name = "pandas", marker = "extra == 'desktop'", specifier = "==2.3.3" },
     { name = "pip", marker = "extra == 'dev'" },
     { name = "pyarrow", marker = "extra == 'evaluation'", specifier = ">=18" },

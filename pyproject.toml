@@ -31,6 +31,7 @@ classifiers = [
 dependencies = [
     "ruamel.yaml>=0.18",
     "PyYAML>=6.0",
+    "packaging==26.3",
     "jsonschema>=4.26,<5",
     "Requests>=2.32,<3",
     "urllib3>=2.8,<3",

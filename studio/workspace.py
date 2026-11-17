@@ -5,11 +5,12 @@ import asyncio
 from pathlib import Path
 import json
 import os
+import sqlite3
 import time
 import uuid
 
-from chatcopilot.core.private_sqlite import PrivateDatabase, private_directory
-from chatcopilot.harness.models import TERMINAL
+from chatcopilot.core.private_sqlite import PrivateDatabase, private_directory, private_lock
+from chatcopilot.harness.models import TERMINAL, HarnessError
 from studio import delivery, projects, runtime
 
 _SCHEMA = """
@@ -22,13 +23,31 @@ CREATE UNIQUE INDEX one_operation ON messages(project) WHERE state IN ('thinking
 
 
 class Studio:
-    def __init__(self, home, framework):
+    def __init__(self, home, framework, *, model_path=None):
         self.state_dir = private_directory(home)
         self.framework = framework
+        self.model_path = Path(model_path) if model_path else None
         self.db = PrivateDatabase(home / "studio.sqlite", _SCHEMA)
+        with self.db.connect(write=True) as db:
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_console_operation ON messages(project) "
+                       "WHERE state IN ('thinking','console-thinking','starting','developing','verifying','packaging')")
 
-    def create(self, project_id, *, live=False, application_type="desktop"):
+    def environment(self):
+        if self.model_path is None:
+            return {}
+        return {"environment": {"AGENTSTRATA_LLM_CONFIG": str(self.model_path)}}
+
+    def create(self, project_id, *, live=False, application_type="desktop", selection=None):
         self.directory(project_id)
+        with private_lock(self.state_dir / ("project-create-" + project_id + ".lock"), timeout=1):
+            return self._create(project_id, live=live, application_type=application_type, selection=selection)
+
+    def _create(self, project_id, *, live=False, application_type="desktop", selection=None):
+        with self.db.connect() as db:
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='studio_imports'").fetchone():
+                reserved = db.execute("SELECT 1 FROM studio_imports WHERE id=?", (project_id,)).fetchone()
+                if reserved and not (live and selection is not None):
+                    raise ValueError("此请求标识属于桌面伙伴导入，请使用原导入请求")
         if application_type not in {"desktop", "qq_official"} or (live and application_type != "desktop"):
             raise ValueError("不支持的应用类型")
         with self.db.connect() as db:
@@ -42,7 +61,7 @@ class Studio:
         if application_type == "qq_official":
             bot, title = "qq-official-" + project_id, "AgentStrata Bot"
         if live:
-            root, payload = projects.select_live2d()
+            root, payload = selection if selection is not None else projects.select_live2d()
             projects.import_live2d(self.directory(project_id), root, payload)
             bot, title, version, assets = "live2d-desktop", "AgentStrata Companion", "initial", str(payload)
         with self.db.connect(write=True) as db:
@@ -62,24 +81,62 @@ class Studio:
 
     def conversation(self, project_id):
         with self.db.connect() as db:
-            if not db.execute("SELECT 1 FROM projects WHERE id=?", (project_id,)).fetchone():
+            project = db.execute("SELECT version FROM projects WHERE id=?", (project_id,)).fetchone()
+            if not project:
                 raise KeyError("会话不存在")
             rows = [dict(row) for row in db.execute(
                 "SELECT id,text,state,reply,task,build,launched,version,goal FROM messages WHERE project=? ORDER BY rowid", (project_id,))]
         for row in rows:
-            if row["state"] == "failed":
-                row["retryable"] = self.retryable(project_id, row)
+            if self.recovery_blocked(project_id, row, project["version"]):
+                row.update(read_only=True, retryable=False, blocks_development=True,
+                    recovery_message="此未完成记录的原任务、当前版本或冻结验证证据无法核对。记录保持只读；请先核对原版本和任务证据，当前应用暂不开始新的开发。")
+            elif row["state"] == "failed":
+                row["retryable"] = row["version"] == project["version"] and self.retryable(project_id, row)
+                row["read_only"] = not row["retryable"]
+                if row["read_only"]:
+                    row["recovery_message"] = "原任务不属于当前应用版本，或独立验证证据缺失、已变化；原记录只读，请提出新的开发请求。"
             row.pop("version")
             proposal = row.pop("goal")
             if row["state"] == "configure" and proposal:
                 row["proposal"] = json.loads(proposal)
         return rows
 
-    def retryable(self, project_id, row):
+    def recovery_blocked(self, project_id, row, current_version):
+        if row["state"] not in {"thinking", "starting", "developing", "verifying", "packaging"}:
+            return False
+        if row["version"] != current_version:
+            return True
+        if row["state"] in {"developing", "verifying", "packaging"} and not row["task"]:
+            return True
+        return bool(row["task"]) and not self.retryable(project_id, row)
+
+    def retryable(self, project_id, row, *, fresh=False):
         if not row["task"]:
             return True
-        work = self.directory(project_id)
-        return bool(runtime.task_verification_id(work / row["version"], work, row["task"]))
+        try:
+            if uuid.UUID(project_id).hex != project_id:
+                return False
+            work = self.state_dir / "projects" / project_id
+            database = work / "harness" / "harness.sqlite3"
+            if database.is_symlink() or not database.is_file():
+                return False
+            if fresh:
+                runtime.verify_task_verification_runtime(work / row["version"], work, row["task"], fresh=True)
+            else:
+                digest = runtime.task_verification_id(work / row["version"], work, row["task"])
+                if not digest:
+                    return False
+                frozen, checked = runtime.task_verification_runtime(work / row["version"], work, row["task"])
+                if digest != checked or not frozen.is_dir():
+                    return False
+            return True
+        except (ValueError, KeyError, OSError, TypeError, HarnessError, sqlite3.Error):
+            if fresh:
+                for check in (runtime.task_verification_id, runtime.task_verification_runtime):
+                    clear = getattr(check, "cache_clear", None)
+                    if clear is not None:
+                        clear()
+            return False
 
     def submit(self, project_id, message_id, text):
         text = text.strip()
@@ -97,10 +154,22 @@ class Studio:
             db.execute("INSERT INTO messages(id,project,text,state,version,updated) VALUES (?,?,?,'thinking',?,?)",
                        (message_id, project_id, text, project["version"], time.time()))
 
+    def retry(self, project_id, message_id):
+        with self.db.connect(write=True) as db:
+            row = db.execute("SELECT m.*,p.version AS current FROM messages m JOIN projects p ON p.id=m.project "
+                             "WHERE m.id=? AND p.id=?", (message_id, project_id)).fetchone()
+            if not row or row["state"] != "failed" or row["version"] != row["current"]:
+                raise ValueError("原任务无法在当前版本重试，请提出新的改进")
+            if not self.retryable(project_id, row, fresh=True):
+                raise ValueError("旧任务及证据保持只读，请发送新的开发请求")
+            db.execute("UPDATE messages SET state=?,reply='' WHERE id=?",
+                       ("starting" if row["task"] or row["goal"] else "thinking", message_id))
+
     def pending(self):
         with self.db.connect() as db:
-            return [r[0] for r in db.execute("SELECT id FROM messages WHERE state IN "
-                    "('thinking','starting','developing','verifying','packaging') ORDER BY rowid")]
+            rows = list(db.execute("SELECT m.*,p.version AS current FROM messages m JOIN projects p ON p.id=m.project "
+                    "WHERE m.state IN ('thinking','starting','developing','verifying','packaging') ORDER BY m.rowid"))
+        return [row["id"] for row in rows if not self.recovery_blocked(row["project"], row, row["current"])]
 
     def update(self, msg, state, reply="", **values):
         values.update(state=state, reply=reply, updated=time.time())
@@ -112,6 +181,8 @@ class Studio:
         with self.db.connect() as db:
             row = dict(db.execute("SELECT * FROM messages WHERE id=?", (msg,)).fetchone())
             app = dict(db.execute("SELECT * FROM projects WHERE id=?", (row["project"],)).fetchone())
+        if self.recovery_blocked(app["id"], row, app["version"]):
+            return
         work = self.directory(app["id"])
         state = row["state"]
         try:
@@ -125,7 +196,7 @@ class Studio:
                 context = json.dumps({"saved_definition": definition, "application_type": "qq_official" if standard else "desktop", "current_application": app["name"], "already_bound": bool(app["version"]),
                                       "message": row["text"]}, ensure_ascii=False)
                 decision = asyncio.run(runtime.discuss(self.state_dir, app["id"], msg, context))
-                if decision["action"] == "configure" and not standard and not app["version"]:
+                if decision["action"] == "configure" and not standard and not app["version"] and self.model_path is None:
                     with self.db.connect(write=True) as db:
                         db.execute("UPDATE projects SET bot=? WHERE id=?", ("qq-official-" + app["id"], app["id"]))
                     standard = True
@@ -172,7 +243,7 @@ class Studio:
             repo = work / row["version"]
             if state == "starting":
                 if row["task"]:
-                    host = runtime.controller(repo, work, start_eval=True, task_id=row["task"])
+                    host = runtime.controller(repo, work, start_eval=True, task_id=row["task"], **self.environment())
                     task = host.get(row["task"])
                     if task["status"] in TERMINAL and task["status"] != "fixed":
                         extra = {}
@@ -190,10 +261,10 @@ class Studio:
                     previous = db.execute("SELECT task FROM messages WHERE project=? AND state='ready' "
                                           "AND build=id ORDER BY rowid DESC LIMIT 1", (app["id"],)).fetchone()
                 task = runtime.start_task(repo, work, app["bot"], row["goal"], msg,
-                                          **({"predecessor_task_id": previous["task"]} if previous else {}))
+                                          **self.environment(), **({"predecessor_task_id": previous["task"]} if previous else {}))
                 self.update(msg, "developing", row["reply"], task=task["task_id"])
                 return
-            host = runtime.controller(repo, work, task_id=row["task"])
+            host = runtime.controller(repo, work, task_id=row["task"], **self.environment())
             task = host.get(row["task"])
             if task["status"] not in TERMINAL:
                 stage = str(task.get("stage") or task["status"])
@@ -241,19 +312,27 @@ class Studio:
             version = receipt["accepted_source_digest"]
             projects.source_tree(work, version, release.candidate, release.candidate_manifest)
         verified = "\n".join(item["text"] for item in task["acceptance"]["items"] if item.get("required"))
-        reply = "已验证的改动\n" + verified + "\n\n试用方法\n点击「试用桌面版」安装，打开应用后尝试以上操作。"
+        reply = "已验证的改动\n" + verified + "\n\n试用方法\n下载桌面安装包并完成安装，打开应用后尝试以上操作。"
         with self.db.connect(write=True) as db:
             db.execute("UPDATE projects SET version=? WHERE id=?", (version, app["id"]))
             db.execute("UPDATE messages SET state='ready',reply=?,build=?,updated=? WHERE id=?",
                        (reply, row["id"], time.time(), row["id"]))
 
-    def artifact(self, project_id, message_id):
+    def artifact_reference(self, project_id, message_id):
+        """Resolve an application-bound receipt; callers must verify the bytes they use."""
         with self.db.connect() as db:
             row = db.execute("SELECT 1 FROM messages WHERE project=? AND id=? AND build=id AND state='ready'",
                              (project_id, message_id)).fetchone()
             if not row:
                 raise KeyError("安装包尚未就绪")
         path = self.directory(project_id) / "builds" / message_id
-        if delivery.digest(path / "application.exe") != json.loads((path / "build-receipt.json").read_text())["installer_sha256"]:
+        expected = json.loads((path / "build-receipt.json").read_text())["installer_sha256"]
+        if not isinstance(expected, str) or len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
+            raise ValueError("安装包摘要记录无效")
+        return path / "application.exe", expected
+
+    def artifact(self, project_id, message_id):
+        path, expected = self.artifact_reference(project_id, message_id)
+        if delivery.digest(path) != expected:
             raise ValueError("安装包摘要不一致")
-        return path / "application.exe"
+        return path

@@ -82,6 +82,14 @@ def linux_path(windows):
     return Path(subprocess.check_output(["wslpath", "-u", windows], text=True).strip())
 
 
+class SelectionCancelled(ValueError):
+    pass
+
+
+class SelectionInterrupted(ValueError):
+    pass
+
+
 def select_live2d():
     script = Path(__file__).resolve().parents[1] / "integrations/desktop_app/select-live2d.ps1"
     win = subprocess.check_output(["wslpath", "-w", str(script)], text=True).strip()
@@ -90,12 +98,12 @@ def select_live2d():
                                  "-File", win], capture_output=True, text=True, encoding="utf-8",
                                 errors="replace", timeout=300, check=True)
     except subprocess.TimeoutExpired as exc:
-        raise ValueError("等待选择桌宠超时。请再次点击「连接 Companion · 桌面伙伴」并在 Windows 窗口选择程序。") from exc
+        raise SelectionInterrupted("等待选择桌宠超时。请再次点击「连接 Companion · 桌面伙伴」并在 Windows 窗口选择程序。") from exc
     except subprocess.CalledProcessError as exc:
         raise ValueError("无法连接桌宠。请先打开已安装的 AgentStrata Companion（安装器仍使用 AgentStrata Live2D Native 名称）完成本机准备，再重试。") from exc
     selection = json.loads(result.stdout.lstrip("\ufeff"))
     if not selection:
-        raise ValueError("未选择桌宠")
+        raise SelectionCancelled("未选择桌宠")
     return linux_path(selection["root"]), linux_path(selection["assets"])
 
 
@@ -112,7 +120,12 @@ def import_live2d(parent, root, assets):
         raise ValueError("所选桌宠的实际安装版本与运行载荷不一致")
     if any(not is_deployable_source_path(p) for p in manifest):
         raise ValueError("Invalid public source manifest")
-    return source_tree(parent, "initial", root, manifest)
+    destination = source_tree(parent, "initial", root, manifest)
+    from chatcopilot.core.source_snapshot import verify_copy
+    verify_copy(destination, manifest)
+    if manifest_digest(source_manifest(destination)) != manifest_digest(manifest):
+        raise ValueError("导入基线含有额外或缺失的源码，不能继续使用原导入目录")
+    return destination
 
 
 def socket_path(root, verification=""):

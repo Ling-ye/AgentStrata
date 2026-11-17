@@ -16,6 +16,7 @@ ensure_src_path()
 from console.backend.routes import (  # noqa: E402
     architecture,
     applications,
+    development_setup,
     application_records,
     application_development,
     bots,
@@ -85,6 +86,7 @@ from console.control.discovery import repo_root  # noqa: E402
 app.state.llm = ModelControl(repo_root())
 
 app.include_router(applications.router)
+app.include_router(development_setup.router)
 app.include_router(application_records.router)
 app.include_router(application_development.router)
 app.include_router(overview.router)

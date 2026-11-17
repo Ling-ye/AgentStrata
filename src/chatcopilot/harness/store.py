@@ -5,9 +5,11 @@ from __future__ import annotations
 import json
 import hashlib
 import logging
+import re
+import sqlite3
 import time
 import uuid
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any
@@ -16,9 +18,11 @@ from chatcopilot.core.private_sqlite import (
     PrivateDatabase,
     json_text,
     private_directory,
+    private_file,
     private_lock,
     repair_owned_private_directory,
     storage_error_details,
+    sqlite_uri,
 )
 from chatcopilot.harness.models import ACTIVE, Cancelled, HarnessError, can_resume_exhausted
 from chatcopilot.core.source_snapshot import manifest_digest
@@ -39,6 +43,56 @@ CREATE TABLE IF NOT EXISTS repair_steps (
  payload TEXT NOT NULL, PRIMARY KEY(task_id, step_id)
 );
 """
+
+
+def read_source_metadata(root: Path, task_id: str) -> dict[str, Any]:
+    """Read only a persisted task's original source, never initialize a store."""
+    from chatcopilot.harness.artifact_repository import ArtifactRepository
+    if type(task_id) is not str or re.fullmatch(r"[A-Za-z0-9_-]{1,128}", task_id) is None:
+        raise HarnessError("not_found", "原开发任务标识无效")
+    root = private_directory(root, create=False)
+    database = root / "harness.sqlite3"
+    before = private_file(database)
+    # SQLite's read-only mode can still create or mutate WAL shared-memory
+    # files. Current Harness stores use DELETE journals. An unsettled legacy
+    # WAL database requires its original owner to finish it; a history read
+    # must never checkpoint, recover or initialize that user's database.
+    with database.open("rb") as stream:
+        header = stream.read(20)
+    if header[:16] == b"SQLite format 3\x00" and header[18:20] != b"\x01\x01":
+        raise HarnessError("artifact_changed", "原任务库日志尚未收尾，保留只读历史")
+    for suffix in ("-journal", "-wal", "-shm"):
+        try:
+            private_file(Path(str(database) + suffix))
+        except FileNotFoundError:
+            pass
+    with closing(sqlite3.connect(sqlite_uri(database, mode="ro"), uri=True, timeout=5)) as db:
+        db.execute("PRAGMA query_only=ON")
+        db.execute("PRAGMA trusted_schema=OFF")
+        row = db.execute("SELECT payload FROM tasks WHERE task_id=?", (task_id,)).fetchone()
+        after = private_file(database)
+        if (before.st_dev, before.st_ino) != (after.st_dev, after.st_ino):
+            raise HarnessError("artifact_changed", "原任务库身份已变化")
+    if row is None:
+        raise HarnessError("not_found", "原开发任务不存在")
+    if type(row[0]) is not str or len(row[0].encode("utf-8")) > 8*1024*1024:
+        raise HarnessError("artifact_changed", "原任务元数据无法读取")
+    value = json.loads(row[0])
+    if type(value) is not dict or value.get("task_id") != task_id:
+        raise HarnessError("artifact_changed", "原任务元数据身份不匹配")
+    references = value.get("artifact_fields", {})
+    if type(references) is not dict:
+        raise HarnessError("artifact_changed", "原任务来源证据引用无法读取")
+    reference = references.get("source")
+    if reference is not None:
+        if type(reference) is not dict or reference.get("kind") != "source":
+            raise HarnessError("artifact_changed", "原任务来源证据引用无效")
+        source = ArtifactRepository.read_existing(root / "jobs" / task_id, reference)
+    else:
+        source = value.get("source", {})
+    if type(source) is not dict:
+        raise HarnessError("artifact_changed", "原任务来源证据无法读取")
+    return source
 
 
 class HarnessStore:

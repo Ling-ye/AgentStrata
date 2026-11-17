@@ -97,6 +97,42 @@ def create(request: Request, body: Create):
     return call(lambda: service(request).create(body.id.hex, body.type))
 
 
+class ImportRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+
+
+class ImportRetry(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    selection_closed: bool = False
+
+
+def imports(request):
+    from console.control.application_imports import Imports
+    return Imports(service(request))
+
+
+@router.post("/imports/live2d")
+def import_live2d(request: Request, body: ImportRequest, background: BackgroundTasks):
+    manager = imports(request)
+    result = call(lambda: manager.register(body.id.hex))
+    background.add_task(manager.process, result["id"])
+    return result
+
+
+@router.get("/imports/{request_id}")
+def import_status(request: Request, request_id: UUID):
+    return call(lambda: imports(request).status(request_id.hex))
+
+
+@router.post("/imports/{request_id}/retry")
+def import_retry(request: Request, request_id: UUID, body: ImportRetry, background: BackgroundTasks):
+    manager = imports(request)
+    result = call(lambda: manager.retry(request_id.hex, selection_closed=body.selection_closed))
+    background.add_task(manager.process, request_id.hex)
+    return result
+
+
 @router.get("/{application_id}")
 def detail(request: Request, application_id: str):
     return call(lambda: service(request).detail(application_id))
@@ -175,3 +211,8 @@ def chat_abort(request: Request, application_id: str, message: UUID):
 def improvement_readiness(request: Request, application_id: str):
     from console.control.application_readiness import improvement_readiness as inspect_source
     return call(lambda: inspect_source(service(request), application_id))
+
+
+@router.post("/{application_id}/messages/{message}/retry")
+def retry(request: Request, application_id: str, message: UUID):
+    return call(lambda: service(request).retry(application_id, message.hex))

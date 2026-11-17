@@ -11,6 +11,31 @@ from chatcopilot.core.source_snapshot import source_manifest
 from studio.delivery import native_inputs, pack, windows_path
 
 
+def studio_archive(root: Path, archive: Path) -> None:
+    """Package current source with frontend resources compiled from that source."""
+    if archive.exists():
+        raise FileExistsError(archive)
+    manifest = source_manifest(root)
+    with tempfile.TemporaryDirectory(prefix="studio-web-") as temp:
+        frontend = Path(temp) / "dist"
+        subprocess.run(["npm", "run", "build", "--prefix", str(root / "console/web"),
+                        "--", "--outDir", str(frontend)], check=True)
+        assets = sorted(frontend.rglob("*"))
+        if not (frontend / "index.html").is_file() or any(p.is_symlink() for p in assets):
+            raise ValueError("Studio frontend build must contain index.html and regular resources")
+        if source_manifest(root) != manifest:
+            raise ValueError("Studio source changed while building frontend resources")
+        with tarfile.open(archive, "x:gz") as stream:
+            for name in manifest:
+                stream.add(root / name, arcname=name, recursive=False)
+            for path in assets:
+                if path.is_file():
+                    stream.add(path, arcname="console/web/dist/" + path.relative_to(frontend).as_posix(), recursive=False)
+    if source_manifest(root) != manifest:
+        archive.unlink()
+        raise ValueError("Studio source changed while preparing the installer archive")
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("kind", choices=("studio", "reader"))
@@ -28,9 +53,7 @@ def main():
         return
     stage.mkdir(parents=True, exist_ok=False)
     archive = stage / "framework.tar.gz"
-    with tarfile.open(archive, "w:gz") as stream:
-        for name in source_manifest(root):
-            stream.add(root / name, arcname=name, recursive=False)
+    studio_archive(root, archive)
     with archive.open("rb") as stream:
         sha = hashlib.file_digest(stream, "sha256").hexdigest()
     (stage / "framework.sha256").write_text(sha + "\n")

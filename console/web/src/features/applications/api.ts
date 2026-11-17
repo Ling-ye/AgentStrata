@@ -7,12 +7,15 @@ export interface ApplicationView {
   state: { process: string; channel: string; end_to_end: string }; message?: string;
 }
 export interface Configuration { name: string; instructions: string; app_id: string; app_secret?: string; secret_configured?: boolean; credentials_configured?: boolean }
-export interface ManagementMessage { build?: string; id: string; text: string; state: string; reply: string; task?: string; proposal?: { name?: string; instructions?: string } }
+export interface ManagementMessage { blocks_development?: boolean; read_only?: boolean; recovery_message?: string; retryable?: boolean; launched?: number | null; build?: string; id: string; text: string; state: string; reply: string; task?: string; proposal?: { name?: string; instructions?: string } }
 export interface CheckResult { checks?: { ok: boolean; message: string }[]; message?: string; state?: string }
+export class ApplicationRequestError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); this.name = "ApplicationRequestError"; }
+}
 async function request<T>(path = "", options?: RequestInit): Promise<T> {
   const response = await fetch("/api/applications" + path, { cache: "no-store", ...options, headers: { "Content-Type": "application/json", ...options?.headers } });
   const value = await response.json();
-  if (!response.ok) throw new Error(typeof value.detail === "string" ? value.detail : "应用操作失败，请检查连接后重试");
+  if (!response.ok) throw new ApplicationRequestError(typeof value.detail === "string" ? value.detail : "应用操作失败，请检查连接后重试", response.status);
   return value;
 }
 const path = (id: string) => "/" + encodeURIComponent(id);
@@ -32,6 +35,7 @@ export const applicationsApi = {
   action: (id: string, action: "check" | "start" | "stop") => request<CheckResult>(path(id) + "/" + action, { method: "POST", body: "{}" }),
   messages: (id: string, signal?: AbortSignal) => request<ManagementMessage[]>(path(id) + "/messages", { signal }),
   submit: (id: string, messageId: string, text: string) => request<{ id: string }>(path(id) + "/messages", { method: "POST", body: JSON.stringify({ id: messageId, text }) }),
+  retryDevelopment: (id: string, messageId: string) => request<{ ok: boolean }>(path(id) + "/messages/" + encodeURIComponent(messageId) + "/retry", { method: "POST", body: "{}" }),
   apply: (id: string, messageId: string) => request<Configuration>(path(id) + "/proposals/" + encodeURIComponent(messageId) + "/apply", { method: "POST", body: "{}" }),
 };
 
