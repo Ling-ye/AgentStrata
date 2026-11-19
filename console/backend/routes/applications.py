@@ -5,6 +5,7 @@ import ipaddress
 import sqlite3
 from urllib.parse import urlsplit
 from uuid import UUID
+from typing import Literal
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
@@ -95,6 +96,53 @@ def listing(request: Request):
 @router.post("")
 def create(request: Request, body: Create):
     return call(lambda: service(request).create(body.id.hex, body.type))
+
+
+class Draft(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    id: UUID
+    name: str = Field(default="", max_length=100)
+    icon: Literal["box", "chat", "book", "cat", "tools"] = "box"
+    requirement: str = Field(min_length=1, max_length=16000)
+
+
+class PlanReview(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    revision: int = Field(ge=1)
+    name: str = Field(default="", max_length=100)
+    target: Literal["web", "desktop", "source", "qq_official", ""] = ""
+    scope: str = Field(default="", max_length=16000)
+    acceptance: str = Field(default="", max_length=16000)
+
+
+@router.post("/drafts")
+def create_draft(request: Request, body: Draft):
+    from studio.first_plan import create as create_plan
+    apps = service(request)
+    call(lambda: create_plan(apps.studio(), body.id.hex, body.name.strip(), body.icon, body.requirement))
+    return {"id": "studio:" + body.id.hex}
+
+
+def planned_project(apps, application_id):
+    row = apps.require(application_id)
+    if not row.get("first_plan") or row["source"] != "studio":
+        raise KeyError("此应用没有首版方案")
+    return row["project_id"]
+
+
+@router.get("/{application_id}/first-plan")
+def first_plan_view(request: Request, application_id: str):
+    from studio.first_plan import read
+    apps = service(request)
+    return call(lambda: read(apps.studio(), planned_project(apps, application_id)))
+
+
+@router.post("/{application_id}/first-plan/{action}")
+def first_plan_action(request: Request, application_id: str, action: Literal["edit", "retry", "confirm"], body: PlanReview):
+    from studio.first_plan import review
+    apps = service(request)
+    call(lambda: review(apps.studio(), planned_project(apps, application_id), action=action, **body.model_dump()))
+    return first_plan_view(request, application_id)
 
 
 class ImportRequest(BaseModel):

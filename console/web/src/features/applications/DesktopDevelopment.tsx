@@ -1,3 +1,4 @@
+import ProjectTaskRecord from "./ProjectTaskRecord";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Empty, Input, Space, Spin, Tag, Typography } from "@arco-design/web-react";
@@ -7,7 +8,7 @@ import { acknowledgedDevelopment, canonicalDevelopmentText, DESKTOP_REQUIREMENT_
 const { Text, Paragraph } = Typography;
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export default function DesktopDevelopment({ id, onDirty, readOnly = false }: { id: string; onDirty?: (dirty: boolean) => void; readOnly?: boolean }) {
+export default function DesktopDevelopment({ id, onDirty, readOnly = false, versionsOnly = false, web = false }: { id: string; onDirty?: (dirty: boolean) => void; readOnly?: boolean; versionsOnly?: boolean; web?: boolean }) {
   const messages = useQuery({ queryKey: ["application-management", id], queryFn: ({ signal }) => applicationsApi.messages(id, signal), refetchInterval: 3000 });
   const client = useQueryClient();
   const [text, setText] = useState("");
@@ -72,21 +73,22 @@ export default function DesktopDevelopment({ id, onDirty, readOnly = false }: { 
     catch (error) { if (alive.current) setError(errorText(error)); }
     finally { gate.current = false; if (alive.current) setBusy(false); }
   }
-  return <Card title={readOnly ? "开发与验收记录" : "创建与改进桌面应用"}><Space direction="vertical" size={16} style={{ width: "100%" }}>
-    <Alert type="info" content="在这里说明要做什么、给谁用，以及怎样算完成。先讨论需求，确认后由开发任务实现、独立验收并生成安装包。这里不是应用的业务聊天；下载构建不代表已经安装或运行。" />
+  const shown = (messages.data ?? []).filter(message => !versionsOnly || readyDesktopBuild(message) || message.state === "packaging");
+  return <Card title={versionsOnly ? "版本与交付" : readOnly ? "开发与验收记录" : "开发对话"}><Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Alert type="info" content="在这里说明要做什么、给谁用，以及怎样算完成。先讨论需求，确认后由开发任务实现、独立验收并生成可用产物。这里不是应用的业务聊天；下载构建不代表已经安装或运行。" />
     {!readOnly && <Space wrap><Button href="#models">检查模型与开发账号</Button><Text type="secondary">开发、测评和应用运行分别使用各自的模型配置。</Text></Space>}
     {storageError && <Alert type="error" content={storageError} />}
     {messages.isError && <Alert type="error" content={errorText(messages.error)} action={<Button onClick={() => void messages.refetch()}>重新读取记录</Button>} />}
-    <div className="application-conversation">{messages.isPending ? <Spin /> : !messages.data?.length ? <Empty description="还没有开发记录。先描述你想做的桌面应用。" /> : messages.data.map(message => <div className="application-message" key={message.id}>
+    <div className="application-conversation">{messages.isPending ? <Spin /> : !shown.length ? <Empty description={versionsOnly ? "暂无已验收的构建。" : "还没有开发记录。先描述应用需求。"} /> : shown.map(message => <div className="application-message" key={message.id}>
       <Text bold>你的需求</Text><Paragraph className="application-prose">{message.text}</Paragraph>
       <Tag>{message.read_only ? "历史状态 · " : ""}{managementStateLabel(message.state)}</Tag>
       <Paragraph className="application-prose">{message.reply || "请求已保存，等待处理。"}</Paragraph>
       {message.recovery_message && <Alert type={message.read_only ? "warning" : "info"} content={message.recovery_message} />}
       {message.read_only && <Text type="secondary">历史记录仅供查看，不会自动继续执行或重新打包；已保存的验收构建仍需通过校验后下载。</Text>}
-      {message.task && <Paragraph type="secondary">开发任务：{message.task}</Paragraph>}
+      {message.task && <><Paragraph type="secondary">开发任务：{message.task}</Paragraph><ProjectTaskRecord id={id} task={message.task} active={["starting","developing","verifying","packaging"].includes(message.state)} /></>}
       {readyDesktopBuild(message) && <Space direction="vertical">
-        <Button href={applicationBuildUrl(id, message.id)}>下载已验收构建</Button>
-        <Text type="secondary">{message.launched ? "曾记录到此构建运行；当前运行状态仍需另外核对。" : "尚未记录安装后的运行验证。下载后由你安装并打开应用。"}</Text>
+        <Button href={applicationBuildUrl(id, message.id)}>{web ? "下载网页包（ZIP）" : "下载已验收构建"}</Button>
+        <Text type="secondary">{web ? "解压网页包后，在浏览器中打开 index.html。" : message.launched ? "曾记录到此构建运行；当前运行状态仍需另外核对。" : "尚未记录安装后的运行验证。下载后由你安装并打开应用。"}</Text>
       </Space>}
       {!readOnly && message.state === "failed" && (message.retryable && !message.read_only ? <Button disabled={busy || active || !!pending || blocked} onClick={() => void retry(message.id)}>重试原开发请求</Button> : <Text type="secondary">此历史任务不能继续，请保留证据并提出新的需求。</Text>)}
     </div>)}</div>

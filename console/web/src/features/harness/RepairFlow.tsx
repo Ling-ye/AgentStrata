@@ -1,16 +1,18 @@
+import { useHarnessClient } from "./useHarnessClient";
 import { useEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Tag, Typography } from "@arco-design/web-react";
 import StructuredData from "../architecture/StructuredData";
 import { DetailScope } from "../architecture/observationDetailState";
 import { captureLabels, type TracePage, type TraceSpan } from "../traces/model";
-import { harnessApi, harnessRequest } from "./api";
-import { descendants, flowChildren, flowApi, initialExpansion, stepLabels, type FlowStep, type RepairFlow as Flow } from "./flowModel";
+
+import { descendants, flowChildren, initialExpansion, stepLabels, type FlowStep, type RepairFlow as Flow } from "./flowModel";
 import "./repairFlow.css";
 
 const { Text } = Typography;
 const color = (status: string) => status === "completed" ? "green" : status === "running" ? "blue" : "orange";
 function ExecutionBody({ taskId, refId, span }: { taskId: string; refId: string; span: TraceSpan }) {
+  const { harnessRequest } = useHarnessClient();
   const query = useQuery({ queryKey: ["repair-execution-body", taskId, refId, span.id],
     queryFn: ({ signal }) => harnessRequest<{ input?: unknown; output?: unknown }>(`/tasks/${encodeURIComponent(taskId)}/traces/${refId}/steps/${span.id}`, { signal, cache: "no-store" }), retry: false, staleTime: Infinity });
   return <section className="repair-execution-message"><Text bold>{({ coding_request: "执行输入", coding_result: "执行输出", coding_error: "执行错误", agent_message: "公开过程消息" } as Record<string, string>)[span.name]}</Text>
@@ -18,6 +20,7 @@ function ExecutionBody({ taskId, refId, span }: { taskId: string; refId: string;
       <StructuredData value={query.data.input ?? query.data.output} />}</section>;
 }
 function ExecutionArchive({ taskId, refId }: { taskId: string; refId: string }) {
+  const { harnessRequest } = useHarnessClient();
   const query = useInfiniteQuery({ queryKey: ["repair-execution", taskId, refId], initialPageParam: 0,
     queryFn: ({ signal, pageParam }) => harnessRequest<TracePage>(`/tasks/${encodeURIComponent(taskId)}/traces/${refId}?after=${pageParam}`, { signal, cache: "no-store" }),
     getNextPageParam: page => page.has_more ? page.next_cursor : undefined, retry: false, staleTime: Infinity });
@@ -31,6 +34,7 @@ function ExecutionArchive({ taskId, refId }: { taskId: string; refId: string }) 
   </div>;
 }
 function StepBody({ taskId, step, active, commands }: { taskId: string; step: FlowStep; active: boolean; commands: (id: string) => void }) {
+  const { harnessApi, flowApi, harnessBase } = useHarnessClient();
   const [archiveOpen, setArchiveOpen] = useState(false);
   const query = useQuery({ queryKey: ["repair-step", taskId, step.id, step.status, step.finished_at],
     queryFn: ({ signal }) => flowApi.step(taskId, step.id, signal), retry: false,
@@ -60,7 +64,7 @@ function StepBody({ taskId, step, active, commands }: { taskId: string; step: Fl
         {data.context_metrics != null && <><h4>上下文指标</h4><DetailScope id="context-metrics"><StructuredData value={data.context_metrics} /></DetailScope></>}
         {data.evidence != null && data.result != null && <details><summary>结论依据快照</summary><DetailScope id="evidence"><StructuredData value={data.evidence} /></DetailScope></details>}</section></div>
     <Space wrap>{step.source_id && <Button size="small" onClick={() => commands(step.source_id!)}>查看命令日志</Button>}
-      {step.attempt && step.phase === "coding" && step.status === "completed" && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${step.attempt}/patch`} download>下载候选补丁</a>}
+      {step.attempt && step.phase === "coding" && step.status === "completed" && <a href={`${harnessBase}/tasks/${encodeURIComponent(taskId)}/attempts/${step.attempt}/patch`} download>下载候选补丁</a>}
       </Space>
     {step.status === "running" && step.source_id && <section aria-label="步骤公开过程消息"><h4>公开过程消息</h4>
       {progress.isError && <Alert type="warning" content="公开过程消息暂不可读取；步骤状态与输入仍保留。" />}
@@ -103,6 +107,7 @@ function FlowTree({ flow, taskId, active, commands }: { flow: Flow; taskId: stri
   return <>{flow.groups.filter(g => !g.parent_id).map(g => groupRow(g.id))}</>;
 }
 export function RepairFlow({ taskId, active, commands }: { taskId: string; active: boolean; commands: (id: string) => void }) {
+  const { flowApi } = useHarnessClient();
   const client = useQueryClient();
   const prior = useRef(active);
   const query = useQuery({ queryKey: ["repair-flow", taskId], queryFn: ({ signal }) => flowApi.flow(taskId, signal), retry: false, refetchInterval: active ? 2000 : false });

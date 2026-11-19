@@ -30,17 +30,18 @@ export interface Activation {
 export type ActivationAction = "prepare" | "activate" | "rollback" | "reconcile" | "cancel";
 const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const taskPath = (id: string) => `/tasks/${encodeURIComponent(id)}`;
-export const improvementApi = {
-  applications: (signal?: AbortSignal) => harnessRequest<{ applications: ApplicationChoice[]; activation_targets: ActivationTarget[]; unavailable: Array<{ application: string; message: string }> }>("/applications", { signal }),
-  preview: (bot: string, suite: string, signal?: AbortSignal) => harnessRequest<ImprovementPreview>(`/applications/${encodeURIComponent(bot)}/preview?${new URLSearchParams({ suite_id: suite })}`, { signal }),
-  start: (body: StartImprovement) => harnessRequest<import("./api").RepairTask>("/improvements", post(body)),
-  comparison: (id: string, signal?: AbortSignal) => harnessRequest<Comparison>(`${taskPath(id)}/comparison`, { signal }),
+export const improvementClient = (request = harnessRequest) => ({
+  applications: (signal?: AbortSignal) => request<{ applications: ApplicationChoice[]; activation_targets: ActivationTarget[]; unavailable: Array<{ application: string; message: string }> }>("/applications", { signal }),
+  preview: (bot: string, suite: string, signal?: AbortSignal) => request<ImprovementPreview>(`/applications/${encodeURIComponent(bot)}/preview?${new URLSearchParams({ suite_id: suite })}`, { signal }),
+  start: (body: StartImprovement) => request<import("./api").RepairTask>("/improvements", post(body)),
+  comparison: (id: string, signal?: AbortSignal) => request<Comparison>(`${taskPath(id)}/comparison`, { signal }),
   activation: async (id: string, signal?: AbortSignal): Promise<Activation | null> => {
-    try { return await harnessRequest<Activation>(`${taskPath(id)}/activation`, { signal }); }
+    try { return await request<Activation>(`${taskPath(id)}/activation`, { signal }); }
     catch (error) { if (error instanceof HarnessRequestError && error.code === "activation_missing") return null; throw error; }
   },
-  changeActivation: (id: string, action: ActivationAction, target?: string) => harnessRequest<Activation>(`${taskPath(id)}/activation/${action}`, post(target ? { target_id: target } : {})),
-};
+  changeActivation: (id: string, action: ActivationAction, target?: string) => request<Activation>(`${taskPath(id)}/activation/${action}`, post(target ? { target_id: target } : {})),
+});
+export const improvementApi = improvementClient();
 export const ACTIVATION_PENDING = ["draining", "stopping", "switching", "starting", "restoring", "recovery_required"];
 export const activationLabel = (state: string) => ({ prepared: "版本已准备", draining: "等待在途任务收尾", stopping: "停止原版本", switching: "切换版本", starting: "启动并核验", active: "版本已启用", restoring: "恢复原版本", rolled_back: "已撤回", recovery_required: "需要恢复对账", cancelled: "已取消", failed: "启用失败" } as Record<string, string>)[state] ?? state;
 

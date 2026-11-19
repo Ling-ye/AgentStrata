@@ -1,8 +1,9 @@
+import { useHarnessClient } from "./useHarnessClient";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Popconfirm, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
 import { deliveryActive, type RepairTask } from "./api";
-import { ACTIVATION_PENDING, activationLabel, comparisonRows, improvementApi, type Activation, type ActivationAction, type CheckFact } from "./improvements";
+import { ACTIVATION_PENDING, activationLabel, comparisonRows, type Activation, type ActivationAction, type CheckFact } from "./improvements";
 
 const { Text } = Typography;
 const factsStyle = { maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" } as const;
@@ -13,6 +14,7 @@ function factLabel(fact?: CheckFact) {
 }
 
 export function ApplicationResult({ task }: { task: RepairTask }) {
+  const { improvementApi, harnessBase } = useHarnessClient();
   const comparison = useQuery({ queryKey: ["harness-comparison", task.task_id], queryFn: ({ signal }) => improvementApi.comparison(task.task_id, signal),
     retry: false, refetchInterval: deliveryActive(task) ? 2000 : false });
   const value = comparison.data;
@@ -39,7 +41,7 @@ export function ApplicationResult({ task }: { task: RepairTask }) {
             review: value.review, accepted_candidate: value.accepted_candidate, plan: value.plan,
             versions: Object.fromEntries(Object.entries(value.phases).map(([key, phase]) => [key, phase.versions ?? null])) }, null, 2)}</pre>
         </details>
-        {!!value.changed_files.length && <a href={`/api/harness/tasks/${encodeURIComponent(task.task_id)}/candidate-patch`} download>下载候选补丁</a>}
+        {!!value.changed_files.length && <a href={`${harnessBase}/tasks/${encodeURIComponent(task.task_id)}/candidate-patch`} download>下载候选补丁</a>}
       </Space>}
       {comparison.isPending && <Text>正在读取对照证据…</Text>}
     </Card>
@@ -48,6 +50,7 @@ export function ApplicationResult({ task }: { task: RepairTask }) {
 }
 
 function ActivationPanel({ task }: { task: RepairTask }) {
+  const { improvementApi, id: appId } = useHarnessClient();
   const client = useQueryClient();
   const [target, setTarget] = useState(`instance:${task.source.bot_id}`);
   const [busy, setBusy] = useState<ActivationAction>();
@@ -85,11 +88,11 @@ function ActivationPanel({ task }: { task: RepairTask }) {
         <details><summary>切换步骤与运行版本</summary><pre style={factsStyle}>{JSON.stringify({ steps: record.steps, running_versions: record.running_versions, restored: record.restored, cancel_requested: record.cancel_requested }, null, 2)}</pre></details>
       </>}
       {current && <>
-        <Select aria-label="版本启用目标" value={record?.target_id || target} onChange={setTarget} disabled={!!busy || !!record}
+        {!appId && <Select aria-label="版本启用目标" value={record?.target_id || target} onChange={setTarget} disabled={!!busy || !!record}
           loading={targets.isPending} options={(targets.data?.activation_targets ?? []).filter(item => item.kind === "plugin" || item.bot_id === task.source.bot_id)
-            .map(item => ({ value: item.target_id, label: `${item.display_name} · ${item.target_id}` }))} />
+            .map(item => ({ value: item.target_id, label: `${item.display_name} · ${item.target_id}` }))} />}
         {targets.isError && <Alert type="error" content={String(targets.error)} />}
-        <Text type="secondary">插件安装需要与本次仓库应用的冻结配置、模型和基线配对；准备时会核对实际安装身份。</Text>
+        {!appId && <Text type="secondary">插件安装需要与本次仓库应用的冻结配置、模型和基线配对；准备时会核对实际安装身份。</Text>}
         <Space wrap>
           {(!record || ["cancelled", "rolled_back", "failed"].includes(record.state)) && <Button disabled={!accepted || !!busy || query.isPending || query.isError || !target.trim()} loading={busy === "prepare"} onClick={() => void change("prepare")}>准备候选版本</Button>}
           {record?.state === "prepared" && <Popconfirm title="启用后将等待在途任务收尾并切换所选实例，确认继续？" onOk={() => change("activate")}><Button type="primary" disabled={!accepted || !!busy} loading={busy === "activate"}>启用已验收版本</Button></Popconfirm>}

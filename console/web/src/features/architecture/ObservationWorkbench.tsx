@@ -1,3 +1,4 @@
+import { applicationHref } from "../applications/navigation";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { keepPreviousData, useInfiniteQuery, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Empty, Spin } from "@arco-design/web-react";
@@ -118,6 +119,8 @@ export default function ObservationWorkbench({ bot, visible, applicationId }: {
           {detail.error && <Alert type="warning" content={<><span>任务详情读取失败：{detail.error.message}</span><Button size="mini" onClick={() => void detail.refetch()}>重试</Button></>} />}
           {selectedDetail && selected ? <>
             {eventPages.error && <Alert type="warning" content={<><span>后续事件读取失败，当前展示已取得的记录。</span><Button size="mini" onClick={() => void eventPages.refetch()}>重试</Button></>} />}
+            {applicationId && ["completed", "failed", "aborted"].includes(selectedDetail.run.state) &&
+              <Button size="small" href={applicationHref(applicationId, "repairs", { sourceKind: "robot_task", sourceId: selected })}>发起 Harness 修复</Button>}
             <RunInspector key={`${bot.instance_id}:${selected}`} instanceId={bot.instance_id} detail={selectedDetail} events={events} visible={flowVisible}
               onMore={() => void eventPages.fetchNextPage()} hasMore={!!eventPages.hasNextPage} fetchingMore={eventPages.isFetchingNextPage} />
           </> : detail.isLoading && selected ? <Spin tip="读取任务记录…" /> : !detail.error && <Empty description="选择任务查看运行过程" />}

@@ -18,6 +18,7 @@ from console.backend.routes import (  # noqa: E402
     applications,
     development_setup,
     application_records,
+    application_quality,
     application_management,
     application_development,
     bots,
@@ -91,6 +92,7 @@ app.include_router(applications.router)
 _ = application_management
 app.include_router(development_setup.router)
 app.include_router(application_records.router)
+app.include_router(application_quality.router)
 app.include_router(application_development.router)
 app.include_router(overview.router)
 app.include_router(legal.router)

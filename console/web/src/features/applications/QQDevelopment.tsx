@@ -1,3 +1,4 @@
+import ProjectTaskRecord from "./ProjectTaskRecord";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Card, Input, Space, Tag, Typography } from "@arco-design/web-react";
@@ -5,7 +6,7 @@ import { developmentApi, DevelopmentRequestError, developmentTaskLabel, sourceSt
 import { canonicalDevelopmentText, DESKTOP_REQUIREMENT_LIMIT, developmentTextLength } from "./desktopDevelopment";
 import { usePendingApplicationRequest } from "./usePendingApplicationRequest";
 const { Text, Paragraph } = Typography;
-export default function QQDevelopment({ id, onDirty }: { id: string; onDirty: (dirty: boolean) => void }) {
+export default function QQDevelopment({ id, onDirty, mode = "develop" }: { id: string; onDirty?: (dirty: boolean) => void; mode?: "develop" | "records" | "versions" }) {
   const client = useQueryClient();
   const source = useQuery({ queryKey: ["application-development", id], queryFn: ({ signal }) => developmentApi.status(id, signal), retry: false });
   const tasks = useQuery({ queryKey: ["application-development-tasks", id], queryFn: ({ signal }) => developmentApi.tasks(id, signal), retry: false, refetchInterval: 5000 });
@@ -15,14 +16,14 @@ export default function QQDevelopment({ id, onDirty }: { id: string; onDirty: (d
   const [notice, setNotice] = useState("");
   const { pending, restored, storageError, remember, acknowledge } = usePendingApplicationRequest(id, "qq-development");
   const original = useQuery({ queryKey: ["application-development-request", id, pending?.id],
-    queryFn: ({ signal }) => developmentApi.request(id, pending!.id, signal), enabled: !!pending, retry: false, refetchInterval: 3000 });
+    queryFn: ({ signal }) => developmentApi.request(id, pending!.id, signal), enabled: mode === "develop" && !!pending, retry: false, refetchInterval: 3000 });
   const [recovered, setRecovered] = useState<DevelopmentTask>();
   const recoveredTask = useQuery({ queryKey: ["application-development-task", id, recovered?.task_id],
     queryFn: ({ signal }) => developmentApi.task(id, recovered!.task_id, signal), enabled: !!recovered, retry: false, refetchInterval: 5000 });
   const gate = useRef(false);
   const alive = useRef(true);
   useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []);
-  useEffect(() => { onDirty(!!goal || busy); }, [goal, busy, onDirty]);
+  useEffect(() => { onDirty?.(!!goal || busy); }, [goal, busy, onDirty]);
   useEffect(() => {
     const result = original.data;
     if (!pending || result?.id !== pending.id || result.state !== "submitted" || !result.task ||
@@ -83,11 +84,11 @@ export default function QQDevelopment({ id, onDirty }: { id: string; onDirty: (d
   const outsideCurrentList = recovered && !visibleTasks.some(task => task.task_id === recovered.task_id);
   const extraTask = outsideCurrentList ? recoveredTask.data : undefined;
   const draftTooLong = developmentTextLength(canonicalDevelopmentText(goal.trim())) > DESKTOP_REQUIREMENT_LIMIT;
-  return <Card title="提示词改进与受控交付"><Space direction="vertical" size={12} style={{ width: "100%" }}>
+  return <Card title={mode === "develop" ? "提示词改进与受控交付" : mode === "versions" ? "版本与交付" : "本应用的 Harness 记录"}><Space direction="vertical" size={12} style={{ width: "100%" }}>
     <Alert type="info" content="这是独立的开发流程，不是配置对话。首版只改进此应用的身份与回复提示词，保持渠道、权限、模型引用和框架代码不变。必须先停止应用；独立验收通过后再明确安装。" />
     {source.data && <><Tag>{sourceStateLabel(source.data.state)}</Tag><Text>{source.data.message}</Text>{source.data.source_digest && <Text type="secondary">当前源码：{source.data.source_digest}</Text>}</>}
     {(source.isError || tasks.isError) && <Alert type="warning" content="当前开发状态暂不可用。不会回退到其他应用或全局开发记录，请刷新核对。" />}
-    <Space wrap><Button disabled={busy} loading={source.isFetching || tasks.isFetching || original.isFetching} onClick={() => void refresh()}>刷新开发状态</Button><Button disabled={busy || !!pending || source.isPending || ready} onClick={prepare}>准备当前源码</Button><Button href="#models">模型与开发账号</Button></Space>
+    {mode === "develop" && <><Space wrap><Button disabled={busy} loading={source.isFetching || tasks.isFetching || original.isFetching} onClick={() => void refresh()}>刷新开发状态</Button><Button disabled={busy || !!pending || source.isPending || ready} onClick={prepare}>准备当前源码</Button><Button href="#models">模型与开发账号</Button></Space>
     {error && <Alert type="warning" content={error} />}{notice && <Alert type="info" content={notice} />}
     {storageError && <Alert type="error" content={storageError} />}
     {pending && <Alert type="warning" title="正在核对原开发请求" content={<><Paragraph className="application-prose">{pending.text}</Paragraph><Text>刷新只查询原请求，不调用模型。需要继续时使用同一编号，不会换目标或源码版本。</Text></>} />}
@@ -95,11 +96,13 @@ export default function QQDevelopment({ id, onDirty }: { id: string; onDirty: (d
     {outsideCurrentList && recoveredTask.isError && <Alert type="warning" content="原请求已登记，但其历史任务状态暂无法核对。请刷新；不会将缓存状态作为当前验收或安装依据。" />}
     <Input.TextArea aria-label="提示词改进目标" value={goal} onChange={setGoal} disabled={busy || !restored || !!storageError || !!pending} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="具体描述希望改变的回复行为与验收要求，不要输入凭据" />
     {draftTooLong && <Alert type="warning" content={`目标最多 ${DESKTOP_REQUIREMENT_LIMIT} 个字符，内容已保留，请精简后发送。`} />}
-    <Button type="primary" disabled={busy || !restored || !!storageError || (!pending && (!ready || !goal.trim() || draftTooLong))} loading={busy} onClick={start}>{pending ? "核对并重试原开发请求" : "启动提示词改进与测评"}</Button>
-    {[...(extraTask ? [extraTask] : []), ...visibleTasks].map(task => <Card key={task.task_id} size="small"><Space direction="vertical"><Text>{task.task_id}</Text><Tag>{developmentTaskLabel(task.status)}</Tag>
+    <Button type="primary" disabled={busy || !restored || !!storageError || (!pending && (!ready || !goal.trim() || draftTooLong))} loading={busy} onClick={start}>{pending ? "核对并重试原开发请求" : "启动提示词改进与测评"}</Button></>}
+    {[...(extraTask ? [extraTask] : []), ...visibleTasks].filter(task => mode !== "versions" || task.can_install).map(task => <Card key={task.task_id} size="small"><Space direction="vertical"><Text>{task.task_id}</Text><Tag>{developmentTaskLabel(task.status)}</Tag>
+      <ProjectTaskRecord id={id} task={task.task_id} active={task.can_cancel} />
       {extraTask?.task_id === task.task_id && <Text type="secondary">原请求对应任务；可能属于此前源码基线，以核对结果为准。</Text>}
-      {task.can_install ? <Button disabled={busy || !!pending} onClick={() => action(task.task_id, "install")}>安装此验收版本</Button> : task.can_cancel && <Button disabled={busy} onClick={() => action(task.task_id, "cancel")}>请求取消任务</Button>}
+      {task.can_install && mode !== "records" ? <Button disabled={busy || !!pending} onClick={() => action(task.task_id, "install")}>安装此验收版本</Button> : task.can_cancel && <Button disabled={busy} onClick={() => action(task.task_id, "cancel")}>请求取消任务</Button>}
     </Space></Card>)}
+    {mode !== "develop" && (error || notice) && <Alert type={error ? "warning" : "info"} content={error || notice} />}
     <Text type="secondary">显示当前基线最近 20 项开发记录。版本切换后旧证据仍保留，不混入其他应用。静态检查或模拟测评不代表真实 QQ 已完成交付。</Text>
   </Space></Card>;
 }

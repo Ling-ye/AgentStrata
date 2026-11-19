@@ -1,7 +1,8 @@
+import { useHarnessClient } from "./useHarnessClient";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Space, Spin, Tag, Typography } from "@arco-design/web-react";
-import { ACTIVE, harnessApi, repairStatusLabel, stageLabel, type ProgressTask } from "./api";
+import { ACTIVE, repairStatusLabel, stageLabel, type ProgressTask } from "./api";
 import { heartbeatStatus, progressSourceLabel, repairRoundLabel, budgetLabel } from "./progress";
 import "./progress.css";
 
@@ -10,6 +11,7 @@ const { Text } = Typography;
 export function RepairProgress({ task, refreshTask, title = "修复进度", statusLabel, summaryOnly = false }: {
   task: ProgressTask; refreshTask: () => Promise<unknown>; title?: string; statusLabel?: string; summaryOnly?: boolean;
 }) {
+  const { harnessApi } = useHarnessClient();
   const client = useQueryClient();
   const active = ACTIVE.includes(task.status);
   const wasActive = useRef(active);

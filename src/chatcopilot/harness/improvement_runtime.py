@@ -38,7 +38,7 @@ def predecessor_checks(controller, bot_id, task_id):
         return {"regression_tests": list(tests.values()), "regression_cases": list(cases.values())}
 
 
-def source(repository: Path, request, evaluator, *, regression_tests=(), regression_cases=(), predecessor_task_id=None):
+def source(repository: Path, request, evaluator, *, regression_tests=(), regression_cases=(), predecessor_task_id=None, repair_origin=None):
     from chatcopilot.core.application_installation import application_source
     selected = application_source(repository, request.bot_id)
     product = selected[0] if selected else repository
@@ -54,6 +54,8 @@ def source(repository: Path, request, evaluator, *, regression_tests=(), regress
     value = {"kind": "application", **asdict(request), **verification, "original_input": request.goal, "passed_cases": [],
              "repetitions": 3, "failure_signature": [], "warnings": [], "blockers": [],
              "request": {**verification["request"], "preset": "custom", "case_ids": ids}}
+    if repair_origin is not None:
+        value["repair_origin"] = repair_origin
     if predecessor_task_id:
         value.update(predecessor_task_id=predecessor_task_id, regression_tests=regression_tests,
                      regression_cases=regression_cases)

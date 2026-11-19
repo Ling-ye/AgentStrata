@@ -9,15 +9,15 @@ import RunDetail from "../features/schedules/RunDetail";
 import PageSection from "../shared/ui/PageSection";
 import "../features/schedules/schedules.css";
 
-export default function SchedulesPage() {
+export default function SchedulesPage({ instanceId }: { instanceId?: string }) {
   const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots, retry: false });
   const [selected, setSelected] = useState("");
   const supported = bots.data?.filter(bot => bot.origin.kind === "repository" && bot.runtime_kind === "gateway" && bot.platform === "qq") ?? [];
-  const bot = supported.find(bot => bot.instance_id === selected) ?? supported[0];
+  const bot = instanceId ? supported.find(bot => bot.instance_id === instanceId) : supported.find(bot => bot.instance_id === selected) ?? supported[0];
   const [editing, setEditing] = useState(false);
   return <div className="schedules-page">
     <PageSection title="机器人定时任务" description="告诉 AI 定期调查什么，查看每次报告和 QQ 群投递结果。"
-      extra={<Select aria-label="定时任务机器人" disabled={editing} value={bot?.instance_id} style={{ width: "min(300px, 70vw)" }}
+      extra={instanceId ? undefined : <Select aria-label="定时任务机器人" disabled={editing} value={bot?.instance_id} style={{ width: "min(300px, 70vw)" }}
         onChange={setSelected} options={supported.map(bot => ({ label: bot.display_name || bot.instance_id, value: bot.instance_id }))} />}>
       {bots.isLoading && <Spin tip="读取机器人…" />}
       {bots.error && <Alert type="error" content={bots.error.message} action={<Button onClick={() => void bots.refetch()}>重试</Button>} />}

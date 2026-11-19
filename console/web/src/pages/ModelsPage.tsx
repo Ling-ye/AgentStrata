@@ -10,7 +10,7 @@ import { llmApi, profileOptions, type ModelCatalog, type ModelConfiguration, typ
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit,minmax(min(100%,240px),1fr))", gap: 16 } as const;
 const { Text } = Typography;
 
-export default function ModelsPage() {
+export default function ModelsPage({ section = "connections" }: { section?: string }) {
   const client = useQueryClient();
   const query = useQuery({ queryKey: ["llm-config"], queryFn: ({ signal }) => llmApi.config(signal), retry: false, refetchOnMount: "always" });
   const [draft, setDraft] = useState<ModelConfiguration>();
@@ -92,13 +92,13 @@ export default function ModelsPage() {
   const connection = draft.connections[connectionId];
   const profiles = Object.entries(draft.profiles).filter(([, value]) => value.connection === connectionId);
   const validId = (id: string) => /^[A-Za-z0-9][A-Za-z0-9_.:-]*$/.test(id);
-  return <PageSection title="模型配置" description="集中维护连接、模型方案与用途引用。模型能力只采用当前连接接口明确返回的值。">
+  return <PageSection title={section === "account" ? "开发账号" : section === "profiles" ? "共享模型方案与后台用途" : "模型连接与凭据"}>
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <DevelopmentSetup configurationDirty={dirty} />
-      <Space wrap><Button type="primary" loading={saving} disabled={!dirty && draft.source !== "defaults"} onClick={() => void save()}>保存配置</Button>
-        <Text type="secondary">{dirty ? "有未保存更改" : draft.source === "defaults" ? "使用默认配置；保存后以保存值为准" : draft.source === "empty" ? "尚未配置" : "已保存"}；机器人通过现有应用／重启入口加载配置。</Text></Space>
+      {section === "account" && <DevelopmentSetup configurationDirty={dirty} />}
+      {section !== "account" && <Space wrap><Button type="primary" loading={saving} disabled={!dirty && draft.source !== "defaults"} onClick={() => void save()}>保存配置</Button>
+        <Text type="secondary">{dirty ? "有未保存更改" : draft.source === "defaults" ? "使用默认配置；保存后以保存值为准" : draft.source === "empty" ? "尚未配置" : "已保存"}；机器人通过现有应用／重启入口加载配置。</Text></Space>}
       {error && <Alert type="error" content={error} />}
-      <Card title="连接">
+      {section === "connections" && <Card title="连接">
         <Space direction="vertical" style={{ width: "100%" }}>
           <div style={grid}><Select aria-label="模型连接" value={connectionId || undefined} options={Object.keys(draft.connections)} onChange={setConnectionId} placeholder="选择连接" />
             <Space><Input aria-label="新连接名称" value={newConnection} onChange={setNewConnection} placeholder="新连接标识" />
@@ -128,8 +128,9 @@ export default function ModelsPage() {
             {catalog?.fetched_at && <Text type="secondary">来源：{catalog.source} · 获取时间：{new Date(catalog.fetched_at).toLocaleString()}</Text>}
           </>}
         </Space>
-      </Card>
-      <Card title="当前连接的模型方案">
+      </Card>}
+      {section === "profiles" && <><Card title="当前连接的模型方案"><label>连接
+        <Select aria-label="选择方案的模型连接" value={connectionId || undefined} options={Object.keys(draft.connections).map(value=>({value,label:value}))} onChange={setConnectionId} /></label>
         <Space direction="vertical" size={16} style={{ width: "100%" }}>
           {profiles.map(([id, profile]) => {
             const model = catalog?.models.find(item => item.id === profile.model);
@@ -159,15 +160,15 @@ export default function ModelsPage() {
       <Card title="用途引用">
         <Space direction="vertical" style={{ width: "100%" }}>
           <Text type="secondary">应用在 Agent 配置中选择 binding；后台用途为 harness、code_health、evaluation.judge。多个用途可显式引用同一方案。</Text>
-          {Object.entries(draft.bindings).map(([purpose, profile]) => <div key={purpose} style={grid}>
+          {Object.entries(draft.bindings).filter(([purpose]) => !purpose.startsWith("bot.")).map(([purpose, profile]) => <div key={purpose} style={grid}>
             <Text>{purpose}</Text><Select aria-label={`${purpose} 方案`} value={profile} options={profileOptions(draft)} onChange={value => change(next => { next.bindings[purpose] = value; })} />
             <Button size="small" status="danger" onClick={() => change(next => { delete next.bindings[purpose]; })}>解除引用</Button>
           </div>)}
           <Space wrap><Input aria-label="新用途名称" value={newPurpose} onChange={setNewPurpose} placeholder="用途标识，如 harness" />
-            <Select placeholder="选择方案并添加用途" value={undefined} disabled={!validId(newPurpose) || newPurpose in draft.bindings}
+            <Select placeholder="选择方案并添加用途" value={undefined} disabled={!validId(newPurpose) || newPurpose.startsWith("bot.") || newPurpose in draft.bindings}
               options={profileOptions(draft)} onChange={profile => { change(next => { next.bindings[newPurpose] = profile; }); setNewPurpose(""); }} style={{ minWidth: 240 }} /></Space>
         </Space>
-      </Card>
+      </Card></>}
     </Space>
   </PageSection>;
 }

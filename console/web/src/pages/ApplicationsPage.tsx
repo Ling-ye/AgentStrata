@@ -1,116 +1,157 @@
-import { useContext, useEffect, useRef, useState } from "react";
+import { lazy, useContext, useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Empty, Input, Select, Space, Spin, Tabs, Tag, Typography } from "@arco-design/web-react";
+import {
+  Alert,
+  Button,
+  Card,
+  Empty,
+  Input,
+  Space,
+  Spin,
+  Tabs,
+  Tag,
+  Typography,
+} from "@arco-design/web-react";
 import PageSection from "../shared/ui/PageSection";
 import { NavigationGuardContext } from "../shared/navigationGuard";
-import { applicationsApi, applicationBuildUrl, type ApplicationView, type Configuration } from "../features/applications/api";
-import { applicationHref, applicationLocation, leavesApplication, localLink, stateLabel, managementStateLabel, typeLabel, type ApplicationTab } from "../features/applications/navigation";
+import { applicationsApi, type ApplicationView, type Configuration } from "../features/applications/api";
+import {
+  applicationHref,
+  applicationLocation,
+  leavesApplication,
+  stateLabel,
+  managementStateLabel,
+  typeLabel,
+  type ApplicationTab,
+} from "../features/applications/navigation";
 import "../styles/applications.css";
 import ApplicationRecords from "../features/applications/ApplicationRecords";
 import ApplicationSettings from "../features/applications/ApplicationSettings";
-import NativeConnection from "../features/applications/NativeConnection";
 import ImprovementReadiness from "../features/applications/ImprovementReadiness";
-import ApplicationEvidence from "../features/applications/ApplicationEvidence";
 import QQDevelopment from "../features/applications/QQDevelopment";
-import Live2DImport from "../features/applications/Live2DImport";
-import { readLive2DImport } from "../features/applications/live2dImport";
 import DesktopDevelopment from "../features/applications/DesktopDevelopment";
 import DesktopLaunch from "../features/applications/DesktopLaunch";
 import TrialChat from "../features/applications/TrialChat";
-import { acknowledgedDevelopment, canonicalDevelopmentText, DESKTOP_REQUIREMENT_LIMIT, developmentTextLength, rejectedDevelopmentRequest } from "../features/applications/desktopDevelopment";
+import {
+  acknowledgedDevelopment,
+  canonicalDevelopmentText,
+  DESKTOP_REQUIREMENT_LIMIT,
+  developmentTextLength,
+  rejectedDevelopmentRequest,
+} from "../features/applications/desktopDevelopment";
 import { usePendingApplicationRequest } from "../features/applications/usePendingApplicationRequest";
+import ApplicationDirectory, { AppIcon } from "../features/applications/ApplicationDirectory";
+import FirstPlanPanel from "../features/applications/FirstPlanPanel";
+import { StudioShell, type StudioGroup } from "../features/applications/StudioSidebar";
+import { ApplicationQualityScope } from "../features/applications/QualityScope";
+import ProjectEvaluation from "../features/applications/ProjectEvaluation";
+import ProjectRepair from "../features/applications/ProjectRepair";
+import ApplicationVersions from "../features/applications/ApplicationVersions";
+import { ImprovementForm } from "../features/harness/ImprovementForm";
+const EvalsPage = lazy(() => import("./EvalsPage"));
+const HarnessPage = lazy(() => import("./HarnessPage"));
+const BotsPage = lazy(() => import("./BotsPage"));
+const SchedulesPage = lazy(() => import("./SchedulesPage"));
+const ServicesPage = lazy(() => import("./ServicesPage"));
 const { Text, Paragraph } = Typography;
-const errorText = (value: unknown) => value instanceof Error ? value.message : String(value);
-function useMounted() { const alive = useRef(true); useEffect(() => { alive.current = true; return () => { alive.current = false; }; }, []); return alive; }
-function ApplicationLink({ href, children }: { href?: string; children: React.ReactNode }) {
-  const safe = localLink(href);
-  return safe ? <Button href={safe}>{children}</Button> : null;
-}
-
-export default function ApplicationsPage({ hash, create = false }: { hash: string; create?: boolean }) {
-  const location = applicationLocation(hash);
-  const list = useQuery({ queryKey: ["applications"], queryFn: ({ signal }) => applicationsApi.list(signal), refetchInterval: 10000 });
-  if (create) return <CreateApplication />;
-  if (location.id) return <ApplicationWorkspace key={location.id} id={location.id} tab={location.tab} />;
-  return <PageSection title="我的应用" description="查看应用的活动记录，调整模型和回复方式。" extra={<><Button onClick={() => void list.refetch()}>刷新</Button><Button type="primary" href="#create">创建应用</Button></>}>
-    {list.isPending ? <Spin /> : list.isError ? <Alert type="error" content={errorText(list.error)} /> :
-      !list.data?.applications.length ? <Empty description="还没有应用。先创建一个 QQ 助手或桌面应用。" /> :
-      <div className="applications-grid">{list.data.applications.map(app => <ApplicationCard key={app.id} app={app} />)}</div>}
-
-  </PageSection>;
-}
-function ApplicationCard({ app }: { app: ApplicationView }) {
-  const live = useQuery({ queryKey: ["application", app.id], queryFn: ({ signal }) => applicationsApi.get(app.id, signal),
-    enabled: app.source === "native", refetchInterval: app.source === "native" ? 10000 : false, retry: false });
-  const value = app.source === "native" && live.data ? live.data : app;
-  return <Card title={value.name} extra={<Tag>{typeLabel(value.type)}</Tag>}><Space direction="vertical" style={{ width: "100%" }}>
-    <Text type="secondary">{live.isError ? "连接暂不可用" : stateLabel(value.state.process)}</Text>
-    {value.last_activity && <Text type="secondary">最近活动：{new Date(value.last_activity * 1000).toLocaleString()}</Text>}
-    <Button type="primary" href={applicationHref(value.id)}>进入应用</Button>
-  </Space></Card>;
-}
-function CreateApplication() {
-  const [type, setType] = useState("qq_official");
-  const [mode, setMode] = useState("connect");
-  const [busy, setBusy] = useState(false);
-  const [error, setError] = useState("");
-  const requestId = useRef(crypto.randomUUID().replace(/-/g, ""));
-  const gate = useRef(false);
-  const [restored, setRestored] = useState(false);
-  const [pendingCreate, setPendingCreate] = useState(false);
+const errorText = (value: unknown) => (value instanceof Error ? value.message : String(value));
+function useMounted() {
+  const alive = useRef(true);
   useEffect(() => {
-    try {
-      const raw = sessionStorage.getItem("agentstrata.application-create");
-      if (raw) {
-        const pending = JSON.parse(raw);
-        if (!/^[a-f0-9]{32}$/.test(pending.id) || !["qq_official", "desktop"].includes(pending.type)) throw new Error("创建请求记录无效，请先核对我的应用，避免重复创建。");
-        requestId.current = pending.id; setType(pending.type); setPendingCreate(true); setMode("create");
-      } else if (readLive2DImport(sessionStorage)) { setType("live2d"); setMode("create"); }
-      setRestored(true);
-    } catch (error) { setError(errorText(error)); }
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
   }, []);
-  const alive = useMounted();
-  const client = useQueryClient();
-  async function create() {
-    if (gate.current || !restored) return;
-    if (type === "live2d") return;
-    gate.current = true; setBusy(true); setError("");
-    try {
-      sessionStorage.setItem("agentstrata.application-create", JSON.stringify({ id: requestId.current, type }));
-      setPendingCreate(true);
-      const app = await applicationsApi.create(requestId.current, type);
-      sessionStorage.removeItem("agentstrata.application-create");
-      void client.invalidateQueries({ queryKey: ["applications"] });
-      if (alive.current) window.location.hash = applicationHref(app.id, "improve");
-    } catch (e) { if (alive.current) setError(errorText(e)); }
-    finally { gate.current = false; if (alive.current) setBusy(false); }
-  }
-  return <PageSection title="创建应用" description="将已有应用接入工作台，或创建新的应用。">
-    <Tabs activeTab={mode} onChange={setMode}><Tabs.TabPane key="connect" title="接入已有应用"><NativeConnection /></Tabs.TabPane><Tabs.TabPane key="create" title="新建应用">
-    <Card className="application-form"><Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Select aria-label="应用类型" value={type} disabled={busy || pendingCreate || !restored} onChange={value => { setType(value); requestId.current = crypto.randomUUID().replace(/-/g, ""); }} options={[
-        { value: "qq_official", label: "QQ 助手 · QQ 官方机器人" }, { value: "desktop", label: "桌面应用 · 通过对话开发" }, { value: "live2d", label: "桌面伙伴 · 导入已安装的 Live2D 应用" },
-      ]} />
-      {type === "live2d" ? <Live2DImport /> : <><Alert type="info" content={type === "qq_official" ? "标准 QQ 应用可使用 API 模型；仍需 QQ 平台机器人凭据和允许的测试范围。本机关闭时应用离线。" :
-        type === "live2d" ? "显式打开 Windows 选择器，选择已安装的 AgentStrata 桌面伙伴。仅核对并导入公开源码基线，不复制账号密钥，不安装或启动应用，也不代表已通过开发验收。后续开发使用独立开发账号。" : "创建开发项目，代码改进使用既有 Harness。开发模型和运行模型分别配置。"} />
-      <Button href="#models">模型与连接</Button>
-      {error && <Alert type="error" content={error} />}
-      {pendingCreate && <Alert type="info" content="保留了原创建请求。重试会打开同一个应用，不会另建副本。" />}
-      <Button type="primary" loading={busy} disabled={!restored} onClick={() => void create()}>{pendingCreate ? "继续原创建请求" : "创建并进入应用"}</Button></>}
-    </Space></Card></Tabs.TabPane></Tabs>
-  </PageSection>;
+  return alive;
 }
-function ApplicationWorkspace({ id, tab }: { id: string; tab: ApplicationTab }) {
+export default function ApplicationsPage({
+  hash,
+  create = false,
+  connect = false,
+}: {
+  hash: string;
+  create?: boolean;
+  connect?: boolean;
+}) {
+  const { id, tab } = applicationLocation(hash);
+  return id ? (
+    <ApplicationWorkspace key={id} id={id} tab={tab} hash={hash} />
+  ) : (
+    <ApplicationDirectory create={create} connect={connect} />
+  );
+}
+const menuGroups: [string, [ApplicationTab, string][]][] = [
+  [
+    "应用",
+    [
+      ["overview", "基本信息"],
+      ["use", "使用应用"],
+    ],
+  ],
+  [
+    "运行监控",
+    [
+      ["records", "任务流"],
+      ["runtime", "运行状态"],
+      ["schedules", "定时任务"],
+    ],
+  ],
+  [
+    "质量与改进",
+    [
+      ["evaluations", "测评"],
+      ["repairs", "Harness 修复"],
+    ],
+  ],
+  [
+    "开发与交付",
+    [
+      ["improve", "开发对话"],
+      ["versions", "版本与交付"],
+    ],
+  ],
+  [
+    "应用配置",
+    [
+      ["configuration", "模型与行为"],
+      ["channels", "渠道与工具"],
+    ],
+  ],
+];
+function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationTab; hash: string }) {
   const [configurationDirty, setConfigurationDirty] = useState(false);
-  const [developerRecords, setDeveloperRecords] = useState(false);
+  const [channelDirty, setChannelDirty] = useState(false);
+  const [planDirty, setPlanDirty] = useState(false);
   const [managementDirty, setManagementDirty] = useState(false);
   const [trialDirty, setTrialDirty] = useState(false);
   const [developmentDirty, setDevelopmentDirty] = useState(false);
   const register = useContext(NavigationGuardContext);
-  const dirty = configurationDirty || managementDirty || trialDirty || developmentDirty;
-  useEffect(() => register({ shouldBlock: next => dirty && leavesApplication(next, id), confirm: async () => window.confirm("当前应用有未保存的配置或消息草稿，确定离开并丢弃吗？已发送的任务不会因此停止。") }), [register, dirty, id]);
-  useEffect(() => { const before = (event: BeforeUnloadEvent) => { if (dirty) { event.preventDefault(); event.returnValue = ""; } }; window.addEventListener("beforeunload", before); return () => window.removeEventListener("beforeunload", before); }, [dirty]);
-  const app = useQuery({ queryKey: ["application", id], queryFn: ({ signal }) => applicationsApi.get(id, signal), refetchInterval: 5000 });
+  const dirty = configurationDirty || channelDirty || managementDirty || trialDirty || developmentDirty || planDirty;
+  useEffect(
+    () =>
+      register({
+        shouldBlock: next => dirty && leavesApplication(next, id),
+        confirm: async () =>
+          window.confirm("当前应用有未保存的配置或消息草稿，确定离开并丢弃吗？已发送的任务不会因此停止。"),
+      }),
+    [register, dirty, id],
+  );
+  useEffect(() => {
+    const before = (event: BeforeUnloadEvent) => {
+      if (dirty) {
+        event.preventDefault();
+        event.returnValue = "";
+      }
+    };
+    window.addEventListener("beforeunload", before);
+    return () => window.removeEventListener("beforeunload", before);
+  }, [dirty]);
+  const app = useQuery({
+    queryKey: ["application", id],
+    queryFn: ({ signal }) => applicationsApi.get(id, signal),
+    refetchInterval: 5000,
+  });
   const [busy, setBusy] = useState("");
   const [result, setResult] = useState("");
   const [error, setError] = useState("");
@@ -119,51 +160,289 @@ function ApplicationWorkspace({ id, tab }: { id: string; tab: ApplicationTab }) 
   async function action(verb: "check" | "start" | "stop") {
     if (busy) return;
     if (verb === "start" && !window.confirm("启动后应用将按现有配置处理真实输入。确认启动这个应用？")) return;
-    setBusy(verb); setError(""); setResult("");
+    setBusy(verb);
+    setError("");
+    setResult("");
     try {
       const value = await applicationsApi.action(id, verb);
-      if (alive.current) setResult(value.checks?.map(check => (check.ok ? "通过：" : "待处理：") + check.message).join("；") || value.message || "操作已完成，状态以最新检查为准。");
-      void client.invalidateQueries({ queryKey: ["application", id] }); void client.invalidateQueries({ queryKey: ["applications"] });
-    } catch (e) { if (alive.current) setError(errorText(e)); }
-    finally { if (alive.current) setBusy(""); }
+      if (alive.current)
+        setResult(
+          value.checks?.map(check => (check.ok ? "通过：" : "待处理：") + check.message).join("；") ||
+            value.message ||
+            "操作已完成，状态以最新检查为准。",
+        );
+      void client.invalidateQueries({ queryKey: ["application", id] });
+      void client.invalidateQueries({ queryKey: ["applications"] });
+    } catch (e) {
+      if (alive.current) setError(errorText(e));
+    } finally {
+      if (alive.current) setBusy("");
+    }
   }
-  if (app.isPending) return <PageSection title="加载应用"><Spin /></PageSection>;
-  if (app.isError || !app.data) return <PageSection title="应用不可用" extra={<Button href="#applications">返回应用列表</Button>}><Alert type="error" content={errorText(app.error)} action={<Button onClick={() => void app.refetch()}>重试</Button>} /></PageSection>;
+  if (app.isPending)
+    return (
+      <PageSection title="加载应用">
+        <Spin />
+      </PageSection>
+    );
+  if (app.isError || !app.data)
+    return (
+      <PageSection title="应用不可用" extra={<Button href="#applications">返回应用列表</Button>}>
+        <Alert
+          type="error"
+          content={errorText(app.error)}
+          action={<Button onClick={() => void app.refetch()}>重试</Button>}
+        />
+      </PageSection>
+    );
   const value = app.data;
-  return <PageSection title={value.name} description={typeLabel(value.type)} extra={<Button href="#applications">所有应用</Button>}>
-    <Space direction="vertical" size={16} style={{ width: "100%" }}>
-      <Space wrap><Tag>{stateLabel(value.state.process)}</Tag>
-        {value.capabilities.control && <>{value.capabilities.configure && value.source === "studio" && <Button loading={busy === "check"} disabled={!!busy} onClick={() => void action("check")}>检查</Button>}<Button loading={busy === "start"} disabled={!!busy} onClick={() => void action("start")}>启动</Button><Button loading={busy === "stop"} disabled={!!busy} onClick={() => void action("stop")}>停止</Button></>}
-      </Space>
-      {error && <Alert type="error" content={error} />}{result && <Alert type="info" content={result} />}
-      <Tabs activeTab={tab} onChange={next => { window.location.hash = applicationHref(id, next as ApplicationTab); }} destroyOnHide={false}>
-        <Tabs.TabPane key="overview" title="概览"><Card><Space direction="vertical" size={16}>
-          <Text>{value.type === "qq_personal" ? "在 QQ 中使用这个助手，在这里查看回复过程和调整设置。" : value.type === "companion" ? "从桌宠客户端启动应用，在这里查看后台活动和调整设置。" : "查看应用活动，调整配置，继续改进。"}</Text>
-          <Space><Button type="primary" href={applicationHref(id, "records")}>查看运行记录</Button><Button href={applicationHref(id, "configuration")}>调整配置</Button></Space>
-          <details><summary>应用详情</summary><Text type="secondary">来源：{value.source} · 标识：{id}</Text><Paragraph>渠道：{stateLabel(value.state.channel)}；真实收发：{stateLabel(value.state.end_to_end)}</Paragraph>{value.message && <Paragraph>{value.message}</Paragraph>}</details>
-          <Text>{["desktop", "companion"].includes(value.type) ? "描述需求 → 开发与独立验收 → 下载构建 → 安装后验证实际效果。" : "配置 → 检查 → 启动 → 在目标平台验证真实收发。"}</Text>
-        </Space></Card></Tabs.TabPane>
-        <Tabs.TabPane key="use" title="使用">{value.source === "native" || value.type === "qq_personal" ? <Card><Text>{value.source === "native" ? "请从 Windows 桌宠客户端启动和使用。后台在线时，本工作台会显示运行记录。" : "请在 QQ 中与助手交互，随后在记录页查看处理过程。"}</Text></Card> : value.source === "studio" && ["desktop", "companion"].includes(value.type) ? <DesktopLaunch key={id} id={id} /> : value.capabilities.chat || (value.source === "studio" && value.type === "qq_official") ? <TrialChat id={id} onDirty={setTrialDirty} /> : <Card><Space direction="vertical">
-          <Alert type="info" title="应用使用与管理对话相互独立" content="此应用尚未接入安全试聊。这里不会向真实 QQ 发送消息，也不会把改进对话作为机器人聊天。" />
-          <Paragraph>{value.type === "qq_official" ? "在配置页连接官方 QQ 机器人，启动后用平台允许的测试账号发送消息，再核对回复与投递。连接成功不能替代这一步。" : ["live2d", "companion", "desktop"].includes(value.type) ? "现有版本尚未记录可信的安装位置和可执行文件校验信息，请从已安装客户端打开。工作台不会猜测路径或直接启动桌面程序。" : "请使用该应用已有的用户入口；工作台管理不会自动开启业务会话。"}</Paragraph>
-        </Space></Card>}</Tabs.TabPane>
-        <Tabs.TabPane key="configuration" title="配置">{value.capabilities.settings ? <ApplicationSettings key={id} id={id} onDirty={setConfigurationDirty} /> : value.capabilities.configure && value.source === "studio" && value.type === "qq_official" ? <ApplicationConfiguration id={id} onDirty={setConfigurationDirty} /> : <Card><Space direction="vertical"><Text>沿用该应用已有配置与权限边界。</Text><ApplicationLink href={value.links.configuration}>打开应用配置</ApplicationLink>{!value.links.configuration && <Text type="secondary">此来源尚无工作台配置入口。</Text>}</Space></Card>}</Tabs.TabPane>
-        <Tabs.TabPane key="records" title="记录"><Card className="application-records"><Space direction="vertical" style={{ width: "100%" }}>
-          {value.capabilities.observation ? <ApplicationRecords key={id} application={value} visible={tab === "records"} /> : <ApplicationLink href={value.links.records}>查看该应用运行记录</ApplicationLink>}
-          {value.source === "studio" && value.type === "qq_official" && <ImprovementReadiness id={id} />}
-          {value.source === "repository" && <details onToggle={event => setDeveloperRecords(event.currentTarget.open)}><summary>开发与测评记录</summary>{developerRecords && <ApplicationEvidence id={id} evalLink={value.links.eval} harnessLink={value.links.harness} />}</details>}
-          {!value.capabilities.observation && !value.links.records && <Text type="secondary">此应用的业务运行记录尚未接入统一查看。</Text>}
-          <Text>历史记录按应用保存。</Text>
-        {value.source === "studio" && value.capabilities.records && (["desktop", "companion"].includes(value.type) ? <DesktopDevelopment key={id} id={id} readOnly /> : !value.capabilities.improve ? <ManagementHistory id={id} /> : null)}</Space></Card></Tabs.TabPane>
-        <Tabs.TabPane key="improve" title="改进">{value.capabilities.settings && <Card><Paragraph>调整人设和回复风格，请前往配置页。代码开发沿用高级管理中的已有流程。</Paragraph><Button href={applicationHref(id, "configuration")}>调整人设与回复风格</Button></Card>}<Space direction="vertical" size={16} style={{ width: "100%" }}>
-          {value.source === "studio" && value.type === "qq_official" && <ImprovementReadiness id={id} />}
-          {value.source === "studio" && value.type === "qq_official" && <QQDevelopment id={id} onDirty={setDevelopmentDirty} />}
-          {value.capabilities.improve && value.project_id && ["desktop", "companion"].includes(value.type) ? <DesktopDevelopment key={id} id={id} onDirty={setManagementDirty} /> : value.capabilities.improve && value.project_id ? <ManagementConversation id={id} application={value} onDirty={setManagementDirty} configurationDirty={configurationDirty} /> : <Alert type="info" content="此应用沿用现有改进入口；本页不会自动执行开发或修改配置。" />}
-          <Space wrap><ApplicationLink href={value.links.eval}>检查应用表现</ApplicationLink><ApplicationLink href={value.links.harness}>打开该应用的 Harness</ApplicationLink></Space>
-        </Space></Tabs.TabPane>
-      </Tabs>
+  const repo = value.source === "repository",
+    studio = value.source === "studio";
+  const managedProject = studio && ["desktop", "web", "source", "companion"].includes(value.type);
+  const qq = studio && value.type === "qq_official";
+  const instance = value.instance_id || "";
+  const params = new URLSearchParams(hash.split("?")[1]);
+  const task = params.get("task") || "";
+  const groups: StudioGroup[] = menuGroups.map(([title, items]) => ({
+    title,
+    items: items.map(([key, label]) => ({ label, href: applicationHref(id, key) })),
+  }));
+  const planPending =
+    value.first_plan &&
+    ["planning", "plan_failed", "plan_review", "initializing", "initialization_failed"].includes(
+      value.plan_state || "",
+    );
+  const sourceHelp = (
+    <Space direction="vertical" style={{ width: "100%" }}>
+      <ImprovementReadiness id={id} />
+      {qq ? (
+        <Button href={applicationHref(id, "improve")}>准备当前 QQ 应用源码</Button>
+      ) : managedProject ? (
+        <Button href={applicationHref(id, "improve")}>查看本应用开发基线与验收</Button>
+      ) : (
+        <Button href="#connect">连接运行端或导入可验证的桌宠源码</Button>
+      )}
     </Space>
-  </PageSection>;
+  );
+  return (
+    <>
+      <header className="studio-appbar">
+        <a href="#applications">← 我的应用</a>
+        <AppIcon app={value} />
+        <div>
+          <strong>{value.name}</strong>
+          <small>{typeLabel(value.type)}</small>
+        </div>
+        <Tag>
+          {value.plan_state ? managementStateLabel(value.plan_state) : stateLabel(value.state.process)}
+        </Tag>
+        {planPending && tab !== "improve" && (
+          <Button size="small" href={applicationHref(id, "improve")}>
+            查看首版方案
+          </Button>
+        )}
+      </header>
+      <StudioShell current={applicationHref(id, tab)} groups={groups}>
+        <Tabs renderTabHeader={() => <></>} activeTab={tab} destroyOnHide={false} lazyload>
+          <Tabs.TabPane key="overview" title="基本信息">
+            <Card title="应用基本信息">
+              <dl className="studio-info">
+                <dt>应用名称</dt>
+                <dd>{value.name}</dd>
+                <dt>应用标识</dt>
+                <dd>{id}</dd>
+                <dt>应用形态</dt>
+                <dd>{typeLabel(value.type)}</dd>
+                <dt>运行进程</dt>
+                <dd>{stateLabel(value.state.process)}</dd>
+                <dt>渠道</dt>
+                <dd>{stateLabel(value.state.channel)}</dd>
+                <dt>真实收发</dt>
+                <dd>{stateLabel(value.state.end_to_end)}</dd>
+              </dl>
+            </Card>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="use" title="使用应用">
+            {value.source === "native" || value.type === "qq_personal" ? (
+              <Card title="使用应用">
+                {value.source === "native"
+                  ? "从 Windows 桌宠客户端启动应用。"
+                  : "在 QQ 中与助手交互，再到任务流查看运行过程。"}
+              </Card>
+            ) : qq ? (
+              <TrialChat id={id} onDirty={setTrialDirty} />
+            ) : managedProject && ["desktop","companion"].includes(value.type) ? (
+              <DesktopLaunch id={id} />
+            ) : (
+              <Card title="使用应用">
+                {["web","source"].includes(value.type) ? (
+                  <Button href={applicationHref(id, "versions")}>查看可下载的应用构建</Button>
+                ) : (
+                  "请从应用的客户端打开。"
+                )}
+              </Card>
+            )}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="records" title="任务流">
+            {value.capabilities.observation ? (
+              <ApplicationRecords application={value} visible={tab === "records"} />
+            ) : (
+              <Card title="连接运行端">
+                <p>当前应用还没有接入业务任务观测。</p>
+                <Button href={applicationHref(id, "runtime")}>查看运行状态</Button>
+                {qq && <Button href={applicationHref(id, "use")}>本机试聊与记录</Button>}
+                {value.source === "native" && <Button href="#connect">连接运行端</Button>}
+              </Card>
+            )}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="runtime" title="运行状态">
+            <Card title="运行状态">
+              <Space wrap>
+                <Tag>{stateLabel(value.state.process)}</Tag>
+                {value.capabilities.control && (
+                  <>
+                    {qq && (
+                      <Button disabled={!!busy} onClick={() => void action("check")}>
+                        检查
+                      </Button>
+                    )}
+                    <Button loading={busy === "start"} disabled={!!busy} onClick={() => void action("start")}>
+                      启动
+                    </Button>
+                    <Button loading={busy === "stop"} disabled={!!busy} onClick={() => void action("stop")}>
+                      停止
+                    </Button>
+                  </>
+                )}
+                {value.source === "native" && <Button href="#connect">连接运行端</Button>}
+              </Space>
+              {error && <Alert type="error" content={error} />}{" "}
+              {result && <Alert type="info" content={result} />}
+            </Card>
+            {repo && instance && tab === "runtime" && (
+              <>
+                <BotsPage key={id} fixed={{ id: instance, tab: "runtime" }} loadError={null} />
+                <ServicesPage scope={instance} />
+              </>
+            )}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="schedules" title="定时任务">
+            {repo && instance ? (
+              <SchedulesPage instanceId={instance} />
+            ) : (
+              <Empty description="此来源未接入应用定时任务。" />
+            )}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="evaluations" title="测评">
+            {tab === "evaluations" &&
+              (repo && instance ? (
+                <ApplicationQualityScope key={id} id={id}>
+                  <EvalsPage initialApplication={instance} />
+                </ApplicationQualityScope>
+              ) : (
+                <ProjectEvaluation application={value} help={sourceHelp} />
+              ))}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="repairs" title="Harness 修复">
+            {tab === "repairs" &&
+              (repo && instance ? (
+                <ApplicationQualityScope key={id} id={id}>
+                  <HarnessPage key={params.get("sourceId") || id} initialApplication={instance} />
+                </ApplicationQualityScope>
+              ) : (
+                <>
+                  {params.get("sourceId") && (
+                    <ProjectRepair
+                      key={params.get("sourceId")}
+                      id={id}
+                      kind={params.get("sourceKind") || "robot_task"}
+                      sourceId={params.get("sourceId")!}
+                      evaluation={params.get("evaluation") || ""}
+                    />
+                  )}
+                  {sourceHelp}
+                  {qq && <QQDevelopment id={id} mode="records" />}
+                  {managedProject && <DesktopDevelopment id={id} readOnly />}
+                </>
+              ))}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="improve" title="开发对话">
+            <Space direction="vertical" style={{ width: "100%" }}>
+              {value.first_plan && <FirstPlanPanel id={id} onDirty={setPlanDirty} />}
+              {!planPending &&
+                (repo && instance ? (
+                  <ApplicationQualityScope key={id} id={id}>
+                    <ImprovementForm
+                      initialApplication={instance}
+                      created={t => {
+                        if (applicationLocation(window.location.hash).id === id)
+                          window.location.hash = applicationHref(id, "repairs", { task: t.task_id });
+                      }}
+                    />
+                  </ApplicationQualityScope>
+                ) : managedProject ? (
+                  <DesktopDevelopment id={id} web={value.type === "web"} onDirty={setManagementDirty} />
+                ) : qq ? (
+                  <>
+                    <ManagementConversation
+                      id={id}
+                      application={value}
+                      onDirty={setManagementDirty}
+                      configurationDirty={configurationDirty || channelDirty}
+                    />
+                    <QQDevelopment id={id} onDirty={setDevelopmentDirty} />
+                  </>
+                ) : (
+                  sourceHelp
+                ))}
+            </Space>
+          </Tabs.TabPane>
+          <Tabs.TabPane key="versions" title="版本与交付">
+            {tab === "versions" &&
+              (repo ? (
+                <ApplicationQualityScope key={id} id={id}>
+                  <ApplicationVersions id={id} taskId={task} />
+                </ApplicationQualityScope>
+              ) : managedProject ? (
+                <DesktopDevelopment id={id} readOnly versionsOnly web={value.type === "web"} />
+              ) : qq ? (
+                <QQDevelopment id={id} mode="versions" />
+              ) : (
+                sourceHelp
+              ))}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="configuration" title="模型与行为">
+            {value.capabilities.settings ? (
+              <ApplicationSettings id={id} onDirty={setConfigurationDirty} />
+            ) : qq ? (
+              <Button href={applicationHref(id, "channels")}>配置 QQ 官方连接</Button>
+            ) : (
+              <Card title="模型与行为">
+                <Text>模型与行为由此应用的 Agent 配置管理。</Text>
+                <Button href={applicationHref(id, "improve")}>进入本应用开发对话</Button>
+              </Card>
+            )}
+          </Tabs.TabPane>
+          <Tabs.TabPane key="channels" title="渠道与工具">
+            {(repo || value.source === "plugin") && instance ? (
+              <BotsPage
+                key={id}
+                fixed={{ id: instance, tab: "configuration" }}
+                visible={tab === "channels"}
+                loadError={null}
+              />
+            ) : qq ? (
+              <ApplicationConfiguration id={id} onDirty={setChannelDirty} />
+            ) : (
+              <Card title="渠道与工具">
+                <Text>由该应用宿主管理渠道和工具。</Text>
+              </Card>
+            )}
+          </Tabs.TabPane>
+        </Tabs>
+      </StudioShell>
+    </>
+  );
 }
 function ApplicationConfiguration({ id, onDirty }: { id: string; onDirty: (dirty: boolean) => void }) {
   const query = useQuery({ queryKey: ["application-configuration", id], queryFn: ({ signal }) => applicationsApi.configuration(id, signal), retry: false });
@@ -268,11 +547,4 @@ function ManagementConversation({ id, application, onDirty, configurationDirty }
     {error && <Alert type="error" content={error} />}
     <Button type="primary" loading={busy} disabled={blocked || (!pending && (active || !draft || tooLong))} onClick={() => void send()}>{pending ? "重试同一配置需求" : "发送改进需求"}</Button>
   </Space></Card>;
-}
-
-function ManagementHistory({ id }: { id: string }) {
-  const messages = useQuery({ queryKey: ["application-management", id], queryFn: ({ signal }) => applicationsApi.messages(id, signal) });
-  return <div className="application-conversation"><Text bold>管理与开发历史（只读）</Text><Paragraph>这里不是业务聊天。已有构建仅提供下载，不会自动安装或启动。</Paragraph>
-    {messages.isPending ? <Spin /> : messages.isError ? <Alert type="error" content={errorText(messages.error)} /> : !messages.data?.length ? <Empty description="暂无管理记录" /> : messages.data.map(message => <div className="application-message" key={message.id}><Tag>{managementStateLabel(message.state)}</Tag><Paragraph className="application-prose">{message.text}</Paragraph><Paragraph className="application-prose">{message.reply}</Paragraph>{message.state === "ready" && message.build === message.id && <Button href={applicationBuildUrl(id, message.id)}>下载此构建</Button>}</div>)}
-  </div>;
 }

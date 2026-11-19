@@ -109,7 +109,7 @@ class Development:
         result.update(state="submitted", task={**self.view(value, row["project_id"]), "request_id": request_id})
         return result
 
-    def start(self, ident, request_id, goal):
+    def start(self, ident, request_id, goal, *, repair=None):
         row, manager = self.selected(ident)
         request_id = UUID(str(request_id)).hex
         goal = goal.strip()
@@ -126,6 +126,8 @@ class Development:
                 return previous["task"]
             manager._require_stopped(row["project_id"])
             state = manager.source_status(row["project_id"])
+            if repair is not None and state.get("source_digest") != repair["source_digest"]:
+                raise ValueError("修复来源与当前 QQ 源码不一致，请重新核对")
             if state["state"] not in {"prepared", "installed"} or not state.get("definition_matches"):
                 raise ValueError("请先准备与当前配置一致的应用源码")
             # Persist intent before starting any worker, so a lost response cannot move
@@ -148,9 +150,14 @@ class Development:
             host = manager.source_controller(row["project_id"], start_eval=True)
             bot = "qq-app-" + row["project_id"]
             scope = (f"bots/{bot}/identity.md", f"bots/{bot}/response.md")
-            request = ImprovementRequest("improve", bot, goal, scope, suite_id="agentstrata-agent-tasks-v1")
+            case_ids = (repair["case_id"],) if repair and repair["kind"] == "evaluation" else ()
+            suite = repair["suite_id"] if case_ids else "agentstrata-agent-tasks-v1"
+            if case_ids:
+                host.evaluator.application_checks = case_ids
+            request = ImprovementRequest("improve", bot, goal, scope, case_ids, suite_id=suite)
             options = RepairOptions(cfg.model, cfg.reasoning_effort or "", 3, 3600, frozen, cfg.profile_id)
-            return {**self.view(host.start_improvement(request, options, request_id=request_id), row["project_id"]), "request_id": request_id}
+            task = host.start_improvement(request, options, request_id=request_id, **({"repair_origin":repair} if repair else {}))
+            return {**self.view(task, row["project_id"]), "request_id": request_id}
 
     def cancel(self, ident, task_id):
         row, manager = self.selected(ident)

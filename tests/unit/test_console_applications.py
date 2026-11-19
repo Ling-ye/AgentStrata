@@ -29,6 +29,13 @@ def test_read_does_not_create_state(applications):
     assert not applications.state_dir.exists()
 
 
+def test_directory_excludes_only_the_studio_owned_guide(applications):
+    names = ("desktop-reader", "lingye-copilot-qq", "lingye-copilot-weixin", "live2d-desktop", "studio-guide")
+    applications._discover = lambda: [BotInstance(key,str(applications.root/"bots"/key/"bot.yaml"),
+        display_name="应用开发助手" if key=="desktop-reader" else key) for key in names]
+    assert [app["id"] for app in applications.catalog()] == ["repo:"+key for key in names[:-1]]
+
+
 def test_sources_keep_stable_ids_and_controls(applications, tmp_path):
     spec = str(tmp_path / "repo.yaml")
     repo = BotInstance("same", spec, display_name="renamable")

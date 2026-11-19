@@ -20,11 +20,12 @@ export interface CommandPage {
   source: CommandSource | null; sources: CommandSource[]; events: CommandEvent[];
   next_cursor: string | null; has_more: boolean; truncated: boolean; message: string | null;
 }
-export const flowApi = {
-  flow: (task: string, signal?: AbortSignal) => harnessRequest<RepairFlow>(`/tasks/${encodeURIComponent(task)}/flow`, { signal, cache: "no-store" }),
-  step: (task: string, id: string, signal?: AbortSignal) => harnessRequest<StepDetail>(`/tasks/${encodeURIComponent(task)}/flow/steps/${encodeURIComponent(id)}`, { signal, cache: "no-store" }),
-  commands: (task: string, source = "", cursor = "", signal?: AbortSignal) => harnessRequest<CommandPage>(`/tasks/${encodeURIComponent(task)}/commands?${new URLSearchParams({ source_id: source, cursor })}`, { signal, cache: "no-store" }),
-};
+export const flowClient = (request = harnessRequest) => ({
+  flow: (task: string, signal?: AbortSignal) => request<RepairFlow>(`/tasks/${encodeURIComponent(task)}/flow`, { signal, cache: "no-store" }),
+  step: (task: string, id: string, signal?: AbortSignal) => request<StepDetail>(`/tasks/${encodeURIComponent(task)}/flow/steps/${encodeURIComponent(id)}`, { signal, cache: "no-store" }),
+  commands: (task: string, source = "", cursor = "", signal?: AbortSignal) => request<CommandPage>(`/tasks/${encodeURIComponent(task)}/commands?${new URLSearchParams({ source_id: source, cursor })}`, { signal, cache: "no-store" }),
+});
+export const flowApi = flowClient();
 export const stepLabels: Record<string, string> = { recorded: "回执已记录", running: "执行中", completed: "已完成", failed: "未通过", cancelled: "已取消", interrupted: "未确认完成", blocked: "受阻" };
 export function descendants(flow: RepairFlow, id: string): FlowStep[] {
   const ids = new Set([id]);

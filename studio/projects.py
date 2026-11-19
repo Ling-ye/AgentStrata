@@ -52,12 +52,33 @@ def project_inputs(framework):
     return {p:v for p,v in official.items() if p in tracked or p in new_files or p.startswith(source_areas)}
 
 
-def new_project(framework, parent, bot_id, name):
+def new_project(framework, parent, bot_id, name, *, target="desktop"):
     from studio.delivery import native_inputs
 
     manifest = native_inputs(project_inputs(framework), bot_id)
     def seed(root):
         app = root / "bots" / bot_id
+        if target in {"web", "source"}:
+            prompts = app / "prompts"
+            prompts.mkdir(parents=True)
+            (prompts / "identity.md").write_text(f"你是{name}的应用助手。\n")
+            (prompts / "response-style.md").write_text("根据当前应用的实际信息回应用户。\n")
+            (app / "agent.yaml").write_text(yaml.safe_dump({
+                "prompts": {"schema_version": 2, "identity": "prompts/identity.md", "response_style": "prompts/response-style.md"},
+                "agents": {"runtime": "langgraph"}, "llm": {"chat": {"binding": "chat"}}}))
+            (app / "bot.yaml").write_text(yaml.safe_dump({"id": bot_id, "display_name": name, "agent_profile": "agent.yaml",
+                "gateway": {"port_env": "CHATCOPILOT_GATEWAY_PORT", "state_root_env": "CHATCOPILOT_GATEWAY_STATE_ROOT",
+                            "clients": [{"id": "app-user", "role": "user", "token_env": "AGENTSTRATA_APP_GATEWAY_TOKEN"}]},
+                "workspace": {"root_env": "CHATCOPILOT_WORKSPACE_ROOT"}, "deploy": {"target": "wsl", "instance_id": bot_id}},
+                allow_unicode=True))
+            site = root / "integrations" / bot_id
+            site.mkdir(parents=True)
+            if target == "web":
+                (site / "index.html").write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>新应用</title><main></main></html>\n')
+            else:
+                (site / "README.md").write_text("应用源码与启动说明。\n")
+            load_application_spec(app / "bot.yaml")
+            return
         template = framework / "bots/desktop-reader"
         for relative in ("bot.yaml", "agent.yaml", "mcp/servers.yaml", "prompts/identity.md", "prompts/response-style.md"):
             (app / relative).parent.mkdir(parents=True, exist_ok=True)
@@ -128,7 +149,7 @@ def import_live2d(parent, root, assets):
     return destination
 
 
-def socket_path(root, verification=""):
+def socket_path(root, verification="", *, create=True):
     base = Path(os.environ.get("XDG_RUNTIME_DIR") or f"/run/user/{os.getuid()}")
     key = hashlib.sha256((str(root) + ("\0" + verification if verification else "")).encode()).hexdigest()[:20]
-    return private_directory(base / "as-studio") / (key + ".sock")
+    return private_directory(base / "as-studio", create=create) / (key + ".sock")

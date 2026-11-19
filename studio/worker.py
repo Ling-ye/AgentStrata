@@ -31,12 +31,14 @@ class StudioWorker:
                 for message in pending:
                     with self.studio.db.connect() as db:
                         row = db.execute("SELECT state FROM messages WHERE id=?", (message,)).fetchone()
-                    if row and row["state"] == "thinking":
+                    if row and row["state"] in {"thinking", "planning"}:
                         try:
                             await self._finish_thread(self.guide.start)
                         except Exception:
                             # Discussion setup cannot block an existing build.
                             logging.getLogger(__name__).warning("Studio guide startup unavailable")
+                            if row["state"] == "planning":
+                                self.studio.update(message, "plan_failed", "请在平台管理中连接讨论模型，再重新生成方案。")
                             continue
                     try:
                         await self._finish_thread(self.studio.step, message)

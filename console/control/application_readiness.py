@@ -57,9 +57,19 @@ def improvement_readiness(applications, ident):
         ])
         if source["source_bound"]:
             requirements = requirements[1:] if source["state"] == "prepared" else requirements[-1:]
+    elif row["source"] == "studio":
+        from console.control.project_evaluation import target
+        try:
+            target(applications, row)
+            checks.append({"code": "project_baseline", "status": "passed",
+                           "message": "已有此项目的开发源码。可连接本应用的独立测评服务。"})
+        except (ValueError, KeyError, OSError):
+            requirements.append({"code": "confirm_first_plan", "message": "在开发对话中确认首版方案，或导入已安装应用的可验证源码。"})
+        requirements.append({"code": "connect_project_evaluation", "message": "进入本应用的测评页，连接独立测评服务。"})
     else:
         checks.append({'code': 'source_adapter_not_supported', 'status': 'blocked',
                        'message': '此来源尚未接入统一测评与 Harness 源码管理，不能仅凭同名实例或外部路径复用结果。'})
+        requirements.append({"code":"connect_native_source","message":"先连接运行端查看业务记录；开发时显式导入与安装版本一致的公开源码。"})
     checks.append({'code': 'execution_preflight_not_run', 'status': 'not_checked',
                    'message': '本检查未调用模型、启动测评或开发任务；预算、模型、依赖及实际效果仍须单独核验。'})
     return {'application_id': ident, 'scope': 'source_registration', 'source_supported': supported,

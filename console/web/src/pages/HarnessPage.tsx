@@ -1,26 +1,28 @@
+import { applicationHref, applicationLocation } from "../features/applications/navigation";
+import { useHarnessClient } from "../features/harness/useHarnessClient";
 import { useEffect, useRef, useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, Card, Drawer, Input, InputNumber, Select, Space, Table, Tag, Typography } from "@arco-design/web-react";
-import { api } from "../api";
+import { Alert, Button, Card, Drawer, Input, InputNumber, Select, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import PageSection from "../shared/ui/PageSection";
-import { harnessApi, REPAIR_LABELS, deliveryLabel, repairStatusLabel, sourceLabel, stageLabel,
-  type RepairTask, type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
+import { REPAIR_LABELS, deliveryLabel, repairStatusLabel, sourceLabel, stageLabel, type RepairTask, type SourceKind, type SourcePreview, type StartRepair } from "../features/harness/api";
 import { caseInstanceId, selectedInstance } from "../features/harness/caseInstance";
 import { RepairDetail } from "../features/harness/RepairDetail";
 import ModelProfileSelect from "../features/llm/ModelProfileSelect";
 import { llmApi, profileOptions } from "../features/llm/api";
-import { ImprovementForm } from "../features/harness/ImprovementForm";
 
 const { Text } = Typography;
 const taskFromHash = () => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("task") ?? "";
 
 export default function HarnessPage({ initialApplication = "" }: { initialApplication?: string }) {
+  const { harnessApi, id: appId } = useHarnessClient();
   const client = useQueryClient();
-  const [mode, setMode] = useState("improve");
+  const route = new URLSearchParams(window.location.hash.split("?")[1]);
+  const linkedKind: SourceKind = route.get("sourceKind") === "robot_task" ? "robot_task" : "evaluation";
+  const linkedId = appId ? route.get("sourceId") || "" : "";
   const [taskKind, setTaskKind] = useState("repair");
-  const [kind, setKind] = useState<SourceKind>("evaluation");
-  const [sourceId, setSourceId] = useState("");
-  const [botId, setBotId] = useState("");
+  const [kind, setKind] = useState<SourceKind>(linkedKind);
+  const [sourceId, setSourceId] = useState(linkedId);
+  const [botId, setBotId] = useState(initialApplication);
   const [preview, setPreview] = useState<SourcePreview>();
   const [loadedId, setLoadedId] = useState("");
   const [loading, setLoading] = useState(false);
@@ -37,7 +39,6 @@ export default function HarnessPage({ initialApplication = "" }: { initialApplic
   const [status, setStatus] = useState("");
   const generation = useRef(0);
   const submitted = useRef({ body: "", requestId: "" });
-  const bots = useQuery({ queryKey: ["bots"], queryFn: api.listBots });
   const inspection = useQuery({ queryKey: ["llm-config"], queryFn: ({ signal }) => llmApi.config(signal), retry: false });
   const models = { options: profileOptions(inspection.data, true), error: "", defaultModel: inspection.data?.bindings.harness ?? "" };
   const model = selectedModel || models.defaultModel;
@@ -49,13 +50,16 @@ export default function HarnessPage({ initialApplication = "" }: { initialApplic
     return () => window.removeEventListener("hashchange", update);
   }, []);
   function openTask(id: string) {
+    const current = applicationLocation(window.location.hash);
+    if (appId && (current.id !== appId || current.tab !== "repairs")) return;
     setTaskId(id);
+    if (appId) {
+      const params = new URLSearchParams(window.location.hash.split("?")[1]);
+      if (id) params.set("task", id); else params.delete("task");
+      window.location.hash = "applications?" + params;
+      return;
+    }
     window.location.hash = id ? `harness?task=${encodeURIComponent(id)}` : "harness";
-  }
-  function resetPreview() {
-    generation.current++; setPreview(undefined); setLoadedId(""); setError(""); setLoading(false);
-    setRepairHint(""); setExpectedBehavior("");
-    setModel("");
   }
   async function load(sourceKind = kind, sourceValue = sourceId, sourceBot = botId, resetModel = true) {
     if (starting || !sourceValue.trim() || (sourceKind === "robot_task" && !sourceBot)) return;
@@ -72,9 +76,12 @@ export default function HarnessPage({ initialApplication = "" }: { initialApplic
     } catch (value) { if (current === generation.current) setError(value instanceof Error ? value.message : String(value)); }
     finally { if (current === generation.current) setLoading(false); }
   }
+  useEffect(() => {
+    if (linkedId) { setKind(linkedKind); setSourceId(linkedId); void load(linkedKind, linkedId, initialApplication); }
+    return () => { generation.current++; };
+  }, [linkedId, linkedKind, initialApplication]);
   function restart(task: RepairTask) {
     if (task.source.kind === "code_health" || task.source.kind === "application") return;
-    setMode("repair");
     const sourceKind = task.source.kind ?? "evaluation";
     const id = sourceKind === "robot_task" ? task.source.run_id! : task.source.case_instance_id!;
     setKind(sourceKind); setSourceId(id); setBotId(task.source.bot_id ?? "");
@@ -112,50 +119,41 @@ export default function HarnessPage({ initialApplication = "" }: { initialApplic
   }
   const blocked = !!preview?.blockers.length;
   const trial = selectedInstance(preview, loadedId);
-  return <PageSection title="AI Harness 改进工作台" description="接入外部能力、提出改进需求或修复运行问题；查看候选、独立验收与实例版本。">
+  const sourceLink = kind === "robot_task"
+    ? applicationHref(appId,"records",{run:sourceId})
+    : applicationHref(appId,"evaluations",{evaluation:preview?.evaluation_id || route.get("evaluation") || "",caseId:sourceId});
+  return <PageSection title="Harness 修复">
     <Space direction="vertical" size={20} style={{ width: "100%" }}>
-      <Select aria-label="Harness 工作方式" value={mode} onChange={setMode} style={{ width: "min(100%, 360px)" }} options={[{ value: "improve", label: "接入与改进需求" }, { value: "repair", label: "修复已有失败" }]} />
-      {mode === "improve" && <ImprovementForm initialApplication={initialApplication} created={task => { openTask(task.task_id); void client.invalidateQueries({ queryKey: ["harness-history"] }); }} />}
-      {mode === "repair" && <Card title="发起修复">
-        <Space direction="vertical" size={16} style={{ width: "100%" }}>
-          <Text type="secondary">测评中心负责运行测评，机器人任务流负责查看运行过程；修复过程和历史统一保存在此处。</Text>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 16 }}>
-            <div>来源类型<Select aria-label="修复来源类型" value={kind} disabled={starting} onChange={value => { setKind(value); resetPreview(); }} options={[
-              { label: "测评 Case 实例", value: "evaluation" }, { label: "机器人任务 ID", value: "robot_task" },
-            ]} /></div>
-            {kind === "robot_task" && <div>机器人实例<Select aria-label="修复来源实例" value={botId || undefined} disabled={starting} loading={bots.isPending}
-              placeholder="选择任务所属实例" onChange={value => { setBotId(value); resetPreview(); }}
-              options={(bots.data ?? []).filter(bot => bot.runtime_kind === "gateway").map(bot => ({ value: bot.instance_id, label: bot.instance_id }))} /></div>}
-            <div>{kind === "evaluation" ? "Case 实例 ID" : "机器人任务 ID"}<Input aria-label={kind === "evaluation" ? "Case 实例 ID" : "修复来源 ID"} value={sourceId} disabled={starting}
-              placeholder={kind === "evaluation" ? "粘贴测评结果中的 case-… 实例 ID" : "输入任务流中的 run_id"}
-              onChange={value => { setSourceId(value); resetPreview(); }} onPressEnter={() => void load()} /></div>
-          </div>
-          {kind === "evaluation" && <Text type="secondary">在测评结果中复制失败项的「Case 实例 ID」，粘贴后加载。Harness 会自动获取这次执行的信息，每次只处理一个 Case。</Text>}
-          {kind === "robot_task" && <Text type="secondary">提交后自动诊断，建立冻结验证计划并运行 Agent 或离线测试；复现出问题后自动修复。归档缺失时先使用已有观测，确实缺少验证所需材料时会说明原因。</Text>}
-          <Button loading={loading} disabled={starting || !sourceId.trim() || (kind === "robot_task" && !botId)} onClick={() => void load()}>加载来源</Button>
-          {error && <Alert type="error" content={error} />}
-          {kind === "robot_task" && bots.isError && <Alert type="error" content="机器人实例列表读取失败，请刷新后重试" />}
+      {!sourceId && <Card title="选择修复来源"><Space wrap>
+        <Button href={applicationHref(appId,"records")}>从业务任务选择</Button>
+        <Button href={applicationHref(appId,"evaluations")}>从测评结果选择</Button>
+      </Space></Card>}
+      {sourceId && <Card title={kind === "evaluation" ? "修复失败用例" : "修复业务任务"} extra={<Button size="small" href={sourceLink}>查看原始记录</Button>}>
+        <Space direction="vertical" size={14} style={{ width: "100%" }}>
+          {loading && <Spin tip="正在核对来源证据…" />}
+          {error && <Alert type="error" content={error} action={<Button onClick={()=>void load()}>重新核对</Button>} />}
           {preview && <>
-            <Alert type={blocked ? "warning" : "info"} content={blocked ? preview.blockers.join("；") :
-              kind === "evaluation" ? "已根据 Case 实例 ID 加载来源；启动前会再次验证这次执行的失败结果。" : "已加载任务证据。启动后将先核对预期行为并建立冻结复现测试。"} />
+            {blocked && <Alert type="warning" content={preview.blockers.join("；")} />}
+            {kind === "robot_task" && <Text>业务任务 · {preview.run_id}</Text>}
             {!!preview.warnings?.length && <Alert type="warning" title="来源证据缺口 · 可开始诊断"
               content={preview.warnings.map(warning => warning.message).join("；")} />}
             {kind === "evaluation" && trial && <div aria-label="待修复 Case 详情" style={{ overflowWrap: "anywhere" }}>
-              <div>Case 实例 ID：{trial.case_instance_id}</div><div>所属测评：{trial.evaluation_id}</div><div>Case：{trial.case_ref}</div><div>Target：{trial.target_id} · 第 {trial.attempt} 次执行</div>
-              <div>执行结果：{({ failed: "失败", error: "执行错误", passed: "通过", skipped: "跳过" } as Record<string, string>)[trial.outcome] || trial.outcome}</div>
-              <Text type="secondary">真实模型每组至少执行 3 次，原次数更高时沿用；目标及其他已通过项继续接受回归与独立确认。</Text>
+              <Text bold>{trial.case_ref}</Text> <Tag color="red">{trial.outcome === "failed" ? "失败" : trial.outcome === "error" ? "执行错误" : trial.outcome}</Tag>
+              <div>{trial.target_id} · 第 {trial.attempt} 次执行</div>
+              <details><summary>来源标识</summary><div>Case 实例 · {trial.case_instance_id}</div><div>所属测评 · {trial.evaluation_id}</div></details>
             </div>}
-            {!!preview.history.length && <Space direction="vertical"><Text bold>关联历史修复 {preview.history.length} 条</Text>
-              {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{repairStatusLabel(item)} · {sourceLabel(item)}</Button>)}</Space>}
+            {!!preview.history.length && <details><summary>关联历史修复（{preview.history.length}）</summary><Space direction="vertical">
+              {preview.history.map(item => <Button type="text" key={item.task_id} onClick={() => openTask(item.task_id)}>{repairStatusLabel(item)} · {sourceLabel(item)}</Button>)}</Space></details>}
             {preview.evidence && <details><summary>查看任务证据</summary><pre style={{ maxHeight: 320, overflow: "auto", whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{JSON.stringify(preview.evidence, null, 2)}</pre></details>}
             <Space direction="vertical" size={12} style={{ width: "100%" }}>
               <div><Text>修复提示（可选）</Text><Input.TextArea aria-label="修复提示" value={repairHint} disabled={starting}
                 onChange={setRepairHint} autoSize={{ minRows: 3, maxRows: 8 }} placeholder="描述问题、补充背景或提供调查线索" /></div>
               {kind === "robot_task" && <div><Text>参考答案／预期行为（可选）</Text><Input.TextArea aria-label="参考答案／预期行为" value={expectedBehavior} disabled={starting}
                 onChange={setExpectedBehavior} autoSize={{ minRows: 4, maxRows: 12 }} placeholder="填写期望的答案或行为，也可以附上解释和来源线索" /></div>}
-              <Text type="secondary">参考答案作为你提供的验收期望，默认允许语义等价，不要求逐字一致。补充内容随本次修复保存；修改后需重新发起任务。真实 Agent 验证在隔离环境使用冻结资料；必要外部状态缺失时会明确受阻。</Text>
+
             </Space>
             {(!blocked || kind === "robot_task") && <>
+              <details><summary>模型与预算 · {model || "待选择"} · 最多 {attempts} 次候选 · {hours} 小时</summary>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 210px), 1fr))", gap: 16 }}>
                 <div>修复方案<ModelProfileSelect purpose="harness" value={selectedModel} onChange={setModel} worker disabled={starting} /></div>
                 <div>最多候选次数<InputNumber aria-label="最多候选次数" min={1} precision={0} value={attempts} disabled={starting} onChange={setAttempts} style={{ width: "100%" }} /></div>
@@ -165,15 +163,15 @@ export default function HarnessPage({ initialApplication = "" }: { initialApplic
                 action={<Button size="small" onClick={() => void inspection.refetch()}>重试</Button>} />}
               {!inspection.isFetching && !inspection.isError && !models.error && !!selectedModel && !models.options.some(option => option.value === selectedModel) &&
                 <Alert type="warning" content="原修复模型当前不可用，请重新选择模型。" />}
-              <Text type="secondary">真实 Agent 每个验证 Case 最多 {(2 * attempts + 1) * Math.max(3, preview.repetitions ?? 3)} 次执行（基线、候选与独立确认）；完整数量在验证计划冻结后展示，评分和回归共用总预算。</Text>
-              <Text type="secondary">从最新远端 main 创建专属分支，复测与独立审核通过后创建正式 PR，等待 CI 通过自动合并。PR 交付后自动归档并清理本地工作区。</Text>
+              <Text type="secondary">真实 Agent 每个验证 Case 最多 {(2 * attempts + 1) * Math.max(3, preview.repetitions ?? 3)} 次执行（基线、候选与独立确认）；完整数量在验证计划冻结后展示，评分和回归共用总预算。</Text></details>
+              <Text type="secondary">从冻结的 main 创建候选。独立验收通过后提交 PR，CI 通过后自动合并。</Text>
               <Button type="primary" loading={starting} disabled={blocked || loading || inspection.isFetching || inspection.isError || !!models.error || !models.options.some(option => option.value === model) || (kind === "evaluation" && (!trial || !["failed", "error"].includes(trial.outcome)))} onClick={() => void start()}>
                 开始修复并自动交付 PR</Button>
             </>}
           </>}
         </Space>
       </Card>}
-      <Card title="任务历史（全局）" extra={<Button onClick={() => void history.refetch()}>刷新历史</Button>}>
+      <Card title="本应用的修复记录" extra={<Button onClick={() => void history.refetch()}>刷新历史</Button>}>
         <Space wrap style={{ marginBottom: 16 }}><Input aria-label="搜索修复历史" placeholder="搜索修复、Case 实例、测评或任务 ID" value={search} allowClear
           onChange={value => { setSearch(value); setPage(1); }} />
           <Select aria-label="任务历史类型" value={taskKind} style={{ width: 180 }} onChange={value => { setTaskKind(value); setPage(1); }} options={[{ value: "repair", label: "全部需求与修复" }, { value: "application", label: "应用接入与改进" }]} />
@@ -192,7 +190,7 @@ export default function HarnessPage({ initialApplication = "" }: { initialApplic
           ]} />
       </Card>
     </Space>
-    <Drawer title="AI Harness 任务记录" visible={!!taskId} width="min(1000px, 100vw)" footer={null} onCancel={() => openTask("")}>
+    <Drawer title="AI Harness 任务记录" visible={!!taskId} escToExit width="min(1000px, 100vw)" footer={null} onCancel={() => openTask("")}>
       {taskId && <RepairDetail key={taskId} taskId={taskId} onRestart={restart} onSelect={openTask} />}
     </Drawer>
   </PageSection>;

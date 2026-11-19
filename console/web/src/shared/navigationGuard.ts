@@ -10,29 +10,30 @@ export function leavesBotInstance(hash: string, instanceId: string) {
   return page !== "#bots" || !!next && next !== instanceId;
 }
 
-// One guard for the currently mounted editor. Capture hash changes before page listeners
+// Every mounted editor retains its guard. Capture hash changes before page listeners
 // so back/forward, sidebar navigation and direct links all obey the same decision.
 export function useGuardedHash() {
   const [hash, setHash] = useState(window.location.hash);
   const accepted = useRef(hash);
-  const guard = useRef<NavigationGuard | null>(null);
+  const guards = useRef(new Set<NavigationGuard>());
   const confirming = useRef(false);
   const approved = useRef<string | null>(null);
   const registerGuard = useCallback<RegisterGuard>((value) => {
-    guard.current = value;
-    return () => { if (guard.current === value) guard.current = null; };
+    guards.current.add(value);
+    return () => { guards.current.delete(value); };
   }, []);
   useEffect(() => {
     const update = (event: HashChangeEvent) => {
       const next = window.location.hash;
+      const blocking = [...guards.current].filter(value => value.shouldBlock(next));
       if (approved.current === next) approved.current = null;
-      else if (confirming.current || guard.current?.shouldBlock(next)) {
+      else if (confirming.current || blocking.length) {
         event.stopImmediatePropagation();
         if (!confirming.current) accepted.current = new URL(event.oldURL).hash;
         window.history.replaceState(null, "", window.location.pathname + window.location.search + accepted.current);
-        if (!confirming.current && guard.current) {
+        if (!confirming.current && blocking.length) {
           confirming.current = true;
-          void guard.current.confirm().then((leave) => {
+          void (async () => { for (const guard of blocking) if (!await guard.confirm()) return false; return true; })().then((leave) => {
             confirming.current = false;
             if (leave) { approved.current = next; window.location.hash = next; }
           });

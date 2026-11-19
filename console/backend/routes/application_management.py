@@ -88,4 +88,7 @@ def observation(request: Request, application_id: str, path: str):
             raise HTTPException(404, "记录入口不存在")
     else:
         raise HTTPException(404, "记录入口不存在")
-    return invoke(lambda: Management(service(request)).read(application_id, operation, args))
+    result = invoke(lambda: Management(service(request)).read(application_id, operation, args))
+    if result is None and "run_id" in args:
+        raise HTTPException(404, "当前应用没有该任务记录")
+    return result

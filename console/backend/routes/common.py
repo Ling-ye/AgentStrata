@@ -21,6 +21,9 @@ def get_task_manager(request: Request) -> TaskManager:
 
 
 def get_evaluation_client(request: Request) -> EvaluationServiceClient:
+    scoped = getattr(request.state, "application_evaluation", None)
+    if scoped is not None:
+        return scoped
     client = getattr(request.app.state, "evaluations", None)
     if client is None:
         raise HTTPException(

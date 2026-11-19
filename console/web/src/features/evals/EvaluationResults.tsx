@@ -1,9 +1,10 @@
+import { useEvaluationClient } from "./evaluationApi";
 import { Expectation, expectationText } from "./Expectation";
 import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Empty, Input, Select, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import type { EvaluationRecord, EvaluationTrial } from "./model";
-import { evaluationApi, normalizeTrial } from "./evaluationApi";
+import { normalizeTrial } from "./evaluationApi";
 import { InstanceId } from "./InstanceId";
 import TracePanel from "../traces/TracePanel";
 import { factChecks, factCheckLabel } from "./trialModel";
@@ -58,6 +59,7 @@ function BoundedText({ value }: { value: string }) {
 }
 
 function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: EvaluationTrial }) {
+  const { evaluationApi, evalBase, failedCaseAction } = useEvaluationClient();
   const active = record.status === "running" || record.status === "queued";
   const query = useQuery({
     queryKey: ["evaluation-case-body", record.evaluation_id, preview.trial_id, preview.target_id, preview.attempt],
@@ -79,7 +81,8 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
   const responseText = typeof response.content === "string" ? response.content : trial.final_text;
   const status = captureLabel(asText(asObject(trial.evidence.execution).state) || trial.capture_state || "");
   return <div className="eval-trial-detail">
-    {!!trial.case_instance_id && <TracePanel key={trial.case_instance_id} endpoint={`/api/evals/case-instances/${encodeURIComponent(trial.case_instance_id)}/trace`} active={active} />}
+    {!!trial.case_instance_id && <TracePanel key={trial.case_instance_id} endpoint={`${evalBase}/case-instances/${encodeURIComponent(trial.case_instance_id)}/trace`} active={active} />}
+    {trial.case_instance_id && ["failed", "error"].includes(trial.outcome) && failedCaseAction?.(record.evaluation_id, trial.case_instance_id)}
     {!!trial.case_instance_id && <InstanceId id={trial.case_instance_id} label="Case 实例 ID" />}
     {query.isLoading && <Spin tip="正在读取输入输出…" />}
     {query.isError && <Alert type="error" content="读取本条测试详情失败，其他测试点仍可查看。" action={<Button onClick={() => void query.refetch()}>重试</Button>} />}
@@ -153,7 +156,11 @@ function TrialDetail({ record, preview }: { record: EvaluationRecord; preview: E
 export function EvaluationResults({ record }: { record: EvaluationRecord }) {
   const [outcome, setOutcome] = useState("all");
   const [search, setSearch] = useState("");
-  const [expanded, setExpanded] = useState<string[]>([]);
+  const [expanded, setExpanded] = useState<string[]>(() => {
+    const wanted = new URLSearchParams(window.location.hash.split("?")[1]).get("caseId");
+    const trial = wanted && objectList(record.result?.trials).map(normalizeTrial).find(item => item.case_instance_id === wanted);
+    return trial ? [trial.trial_id] : [];
+  });
   const rows = useMemo(() => objectList(record.result?.trials).map(normalizeTrial), [record.result]);
   const filtered = rows.filter(trial => (outcome === "all" || trial.outcome === outcome)
     && `${trial.case_instance_id} ${trial.case_id} ${trial.case_ref} ${trial.dimension} ${recordedInput(record, trial).text}`.toLowerCase().includes(search.toLowerCase()));

@@ -1,9 +1,11 @@
+import { applicationHref, applicationLocation } from "../applications/navigation";
+import { useHarnessClient } from "./useHarnessClient";
 import { DeliveryPanel } from "./DeliveryPanel";
 import { deliveryActive } from "./api";
 import { useState } from "react";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Space, Spin, Typography } from "@arco-design/web-react";
-import { ACTIVE, harnessApi, sourceLabel } from "./api";
+import { ACTIVE, sourceLabel } from "./api";
 import type { RepairTask } from "./api";
 import { RepairFlow } from "./RepairFlow";
 import { CommandLogs } from "./CommandLogs";
@@ -15,6 +17,7 @@ const { Text } = Typography;
 const jsonStyle = { whiteSpace: "pre-wrap", overflowWrap: "anywhere", maxHeight: 420, overflow: "auto" } as const;
 
 export function RepairDetail({ taskId, onRestart, onSelect, managedRun = false }: { managedRun?: boolean; taskId: string; onRestart: (task: RepairTask) => void; onSelect?: (id: string) => void }) {
+  const { harnessApi, harnessBase, id: appId } = useHarnessClient();
   const client = useQueryClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -53,6 +56,10 @@ export function RepairDetail({ taskId, onRestart, onSelect, managedRun = false }
   const currentPipeline = task.archived === false && !managedRun;
   return <TaskDetailState instanceId="harness" runId={taskId}><Space direction="vertical" size={16} style={{ width: "100%", minWidth: 0 }}>
     {(error || query.isError) && <Alert type="error" content={error || String(query.error)} />}
+    {appId && task.source.run_id && <Button href={applicationHref(appId,"records",{run:task.source.run_id})}>返回原始记录</Button>}
+    {appId && task.source.case_instance_id && task.source.evaluation_id && <Button href={applicationHref(appId,"evaluations",{
+      evaluation:task.source.evaluation_id,caseId:task.source.case_instance_id})}>返回原始记录</Button>}
+    {appId && task.candidate_accepted && applicationLocation(window.location.hash).tab !== "versions" && <Button href={applicationHref(appId, "versions", { task: taskId })}>查看本应用的版本与交付</Button>}
     <Text copyable>{task.task_id}</Text><Text>{sourceLabel(task)}</Text>
     {task.source.case_instance_id && <Text copyable>Case 实例 ID：{task.source.case_instance_id}</Text>}
     <RepairProgress key={taskId} task={task} refreshTask={() => query.refetch()} title="任务概览" summaryOnly />
@@ -77,9 +84,9 @@ export function RepairDetail({ taskId, onRestart, onSelect, managedRun = false }
       {!managedRun && !ACTIVE.includes(task.status) && task.source.kind === "code_health" &&
         <Button disabled={busy} onClick={() => onRestart(task)}>重新发起熵回收</Button>}
       {!!task.candidate_checkpoint?.changed_files.length && <a
-        href={`/api/harness/tasks/${encodeURIComponent(taskId)}/attempts/${task.candidate_checkpoint.number}/patch`} download>下载保留候选</a>}
+        href={`${harnessBase}/tasks/${encodeURIComponent(taskId)}/attempts/${task.candidate_checkpoint.number}/patch`} download>下载保留候选</a>}
       <Button onClick={() => void query.refetch()}>刷新状态</Button>
-      {task.source.test_sha256 && <a href={`/api/harness/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
+      {task.source.test_sha256 && <a href={`${harnessBase}/tasks/${encodeURIComponent(taskId)}/reproducer`} download>下载冻结复现测试</a>}</Space>
     {task.commit_state === "unconfirmed" && <Alert type="warning" content="提交回执尚未核验；继续时会检查实际提交状态。" />}
     {task.source.kind === "code_health" && <GovernanceReport taskId={taskId} active={deliveryActive(task)} />}
     {task.source.kind === "application" && <ApplicationResult key={taskId} task={task} />}

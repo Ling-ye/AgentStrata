@@ -1,15 +1,17 @@
+import { useHarnessClient } from "./useHarnessClient";
 import { useEffect, useRef, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Card, Checkbox, Input, InputNumber, Select, Space, Typography } from "@arco-design/web-react";
 import ModelProfileSelect from "../llm/ModelProfileSelect";
 import { llmApi, profileOptions } from "../llm/api";
-import { improvementApi, type StartImprovement } from "./improvements";
+import { type StartImprovement } from "./improvements";
 import type { RepairTask } from "./api";
 
 const { Text } = Typography;
 const grid = { display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 240px), 1fr))", gap: 16 };
 
 export function ImprovementForm({ created, initialApplication = "" }: { created: (task: RepairTask) => void; initialApplication?: string }) {
+  const { improvementApi, id: appId } = useHarnessClient();
   const [type, setType] = useState<"integrate" | "improve">("improve");
   const [runtime, setRuntime] = useState("");
   const [bot, setBot] = useState(initialApplication);
@@ -53,8 +55,8 @@ export function ImprovementForm({ created, initialApplication = "" }: { created:
     <Text type="secondary">选择应用、描述期望行为并明确可修改范围。Harness 生成本地候选；评测与独立验收后，可在详情中准备和启用版本。</Text>
     <div style={grid}>
       <div>需求类型<Select aria-label="需求类型" disabled={busy} value={type} onChange={setType} options={[{ value: "improve", label: "改进已有能力" }, { value: "integrate", label: "接入外部能力" }]} /></div>
-      <div>运行时<Select aria-label="按运行时选择应用" disabled={busy} value={runtime} onChange={value => { setRuntime(value); setBot(""); setCases([]); }} options={[{ value: "", label: "全部运行时" }, { value: "langgraph", label: "LangGraph" }, { value: "codex", label: "Codex" }]} /></div>
-      <div>目标应用<Select aria-label="需求目标应用" disabled={busy} value={bot || undefined} loading={applications.isPending} placeholder="选择已配置的应用" onChange={value => { setBot(value); setCases([]); }} options={choices.map(app => ({ value: app.bot_id, label: `${app.display_name} · ${app.runtime_id}` }))} /></div>
+      {!appId && <div>运行时<Select aria-label="按运行时选择应用" disabled={busy} value={runtime} onChange={value => { setRuntime(value); setBot(""); setCases([]); }} options={[{ value: "", label: "全部运行时" }, { value: "langgraph", label: "LangGraph" }, { value: "codex", label: "Codex" }]} /></div>}
+      {!appId && <div>目标应用<Select aria-label="需求目标应用" disabled={busy} value={bot || undefined} loading={applications.isPending} placeholder="选择已配置的应用" onChange={value => { setBot(value); setCases([]); }} options={choices.map(app => ({ value: app.bot_id, label: `${app.display_name} · ${app.runtime_id}` }))} /></div>}
     </div>
     {applications.isError && <Alert type="error" content={String(applications.error)} action={<Button onClick={() => void applications.refetch()}>重试</Button>} />}
     {applications.data && !choices.length && <Alert type="info" content="没有符合条件的应用。先在实例配置中创建应用并选择 Agent profile。" />}

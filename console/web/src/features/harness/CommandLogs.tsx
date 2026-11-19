@@ -1,11 +1,13 @@
+import { useHarnessClient } from "./useHarnessClient";
 import { useState } from "react";
 import { useInfiniteQuery, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Empty, Select, Space, Spin, Tag, Typography } from "@arco-design/web-react";
-import { commandSourceLabel, flowApi, visibleCommands } from "./flowModel";
+import { commandSourceLabel, visibleCommands } from "./flowModel";
 
 export function CommandLogs({ taskId, active, selection, setSelection }: {
   taskId: string; active: boolean; selection: { open: boolean; source: string }; setSelection: (value: { open: boolean; source: string }) => void;
 }) {
+  const { flowApi } = useHarnessClient();
   const client = useQueryClient();
   const [failures, setFailures] = useState(false);
   const sources = useQuery({ queryKey: ["repair-command-sources", taskId], queryFn: ({ signal }) => flowApi.commands(taskId, "", "", signal),

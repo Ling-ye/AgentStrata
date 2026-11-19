@@ -149,6 +149,10 @@ def _call(function):
 
 @router.post("/tasks")
 def create(request: Request, body: CreateRepair):
+    return start_repair_request(request, body)
+
+
+def start_repair_request(request: Request, body: CreateRepair, *, expected_bot_id=None):
     from chatcopilot.harness.models import RepairOptions
 
     _mutation_access(request)
@@ -158,7 +162,8 @@ def create(request: Request, body: CreateRepair):
     from chatcopilot.harness.models import RepairRequest
     payload = _call(lambda: RepairRequest(body.source_kind, options, body.request_id,
         body.case_instance_id, body.bot_id, body.run_id, body.feedback or RepairFeedback()))
-    return _call(lambda: _controller(request).start_request(payload))
+    scope = {"expected_bot_id": expected_bot_id} if expected_bot_id is not None else {}
+    return _call(lambda: _controller(request).start_request(payload, **scope))
 
 
 @router.post("/sources/load")

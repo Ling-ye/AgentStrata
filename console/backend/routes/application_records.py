@@ -20,7 +20,7 @@ router = APIRouter(prefix="/api/applications", tags=["applications"],
                    dependencies=[Depends(access)], route_class=PrivateRoute)
 
 
-def repository_instance(request, application_id):
+def repository_instance(request: Request, application_id: str):
     row = call(lambda: service(request).require(application_id))
     if row["source"] != "repository":
         raise HTTPException(409, "此应用来源尚未接入测评与 Harness 历史")
@@ -50,11 +50,11 @@ def harness(request: Request, application_id: str,
 @router.get("/{application_id}/builds/{message}")
 def desktop_build(request: Request, application_id: str, message: UUID):
     row = call(lambda: service(request).require(application_id))
-    if row["source"] != "studio" or row["type"] not in {"desktop", "companion"}:
+    if row["source"] != "studio" or row["type"] not in {"desktop", "companion", "web", "source"}:
         raise HTTPException(409, "此应用没有桌面构建下载入口")
     def response():
         artifact, digest = service(request).studio().artifact_reference(row["project_id"], message.hex)
-        return VerifiedBuildResponse(artifact, digest, filename="AgentStrata-" + row["project_id"][:8] + ".exe")
+        return VerifiedBuildResponse(artifact, digest, filename="AgentStrata-" + row["project_id"][:8] + artifact.suffix)
     return call(response)
 
 

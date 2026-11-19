@@ -24,6 +24,7 @@ export interface Delivery {
   auto_merge?: boolean; message?: string; error_code?: string;
 }
 export interface RepairTask {
+  candidate_accepted?: boolean;
   graph?: GraphProgress;
   delivery_graph?: GraphProgress;
   governance_summary?: { summary: string; topic?: string; inspected_count: number; inventory_count: number; inspection_complete: boolean; finding_count: number; needs_decision_count: number };
@@ -121,15 +122,14 @@ export type StartRepair = { source_kind: SourceKind; case_instance_id?: string;
 export class HarnessRequestError extends Error {
   constructor(message: string, readonly code?: string) { super(message); }
 }
-export async function harnessRequest<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api/harness${path}`, init);
+export async function harnessRequest<T>(path: string, init?: RequestInit, base = "/api/harness"): Promise<T> {
+  const response = await fetch(base + path, init);
   const value = await response.json();
   if (!response.ok) throw new HarnessRequestError(typeof value.detail === "string" ? value.detail : value.detail?.message || "Harness 暂不可用", value.detail?.code);
   return value as T;
 }
-const request = harnessRequest;
 const post = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
-export const harnessApi = {
+export const harnessClient = (request = harnessRequest) => ({
   load: (kind: SourceKind, sourceId: string, botId: string) => request<SourcePreview>("/sources/load", post({ kind, source_id: sourceId, bot_id: botId })),
   history: (page: number, search: string, status: string, signal?: AbortSignal, kind = "") => request<{ tasks: RepairTask[]; total: number }>(`/tasks?${new URLSearchParams({ page: String(page), search, status, ...(kind ? { kind } : {}) })}`, { signal }),
   get: (taskId: string, signal?: AbortSignal) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}`, { signal }),
@@ -139,7 +139,8 @@ export const harnessApi = {
   start: (body: StartRepair) => request<RepairTask>("/tasks", post(body)),
   image: (taskId: string, file: File) => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/image`, { method: "POST", body: file }),
   action: (taskId: string, action: "cancel" | "resume" | "retry-delivery" | "retry-cleanup" | "continue") => request<RepairTask>(`/tasks/${encodeURIComponent(taskId)}/${action}`, { method: "POST" }),
-};
+});
+export const harnessApi = harnessClient();
 
 export function repairStatusLabel(task: ProgressTask): string {
   if (task.archived) return "只读归档";

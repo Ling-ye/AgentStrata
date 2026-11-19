@@ -17,6 +17,7 @@ import TaskStreamSheet from "../shared/ui/TaskStreamSheet";
 
 interface Props {
   loadError: string | null;
+  fixed?: { id: string; tab: "configuration" | "runtime" };
   visible?: boolean;
 }
 
@@ -37,7 +38,7 @@ function rosterState(bot: BotInstance, status: BotStatus | undefined) {
   return { label: "已停止", color: "gray" };
 }
 
-export default function BotsPage({ loadError, visible = true }: Props) {
+export default function BotsPage({ loadError, visible = true, fixed }: Props) {
   const {
     bots,
     statuses,
@@ -47,20 +48,21 @@ export default function BotsPage({ loadError, visible = true }: Props) {
     deployedBotCount,
     reloadBots,
     refreshStatuses,
-  } = useBotsOverview(visible);
+  } = useBotsOverview(visible, fixed?.id);
   const taskStream = useEventStreamLines();
   const logStream = useEventStreamLines();
   const [provisionBot, setProvisionBot] = useState<BotInstance | null>(null);
   const [instanceInfoOpen, setInstanceInfoOpen] = useState(false);
   const [taskResultStatus, setTaskResultStatus] = useState<Task["status"] | null>(null);
   const [taskError, setTaskError] = useState<string | null>(null);
-  const [selectedBotId, setSelectedBotId] = useState(() => new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("instance") || "");
-  const [activeTab, setActiveTab] = useState(tabFromLocation);
+  const [selectedBotId, setSelectedBotId] = useState(() => fixed?.id || new URLSearchParams(window.location.hash.split("?")[1] ?? "").get("instance") || "");
+  const [activeTab, setActiveTab] = useState(() => fixed?.tab ?? tabFromLocation());
   const activeTaskId = useRef<string | null>(null);
 
   useEffect(() => { setInstanceInfoOpen(false); }, [selectedBotId]);
 
   useEffect(() => {
+    if (fixed) return;
     const navigate = () => {
       if (window.location.hash.split("?")[0] !== "#bots") return;
       const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
@@ -95,7 +97,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
   const pluginInstance = selectedBot?.origin.kind === "plugin";
 
   useEffect(() => {
-    if (!pluginInstance || activeTab !== "runtime") return;
+    if (fixed || !pluginInstance || activeTab !== "runtime") return;
     setActiveTab("tasks");
     const params = new URLSearchParams(window.location.hash.split("?")[1] ?? "");
     params.set("tab", "tasks");
@@ -237,11 +239,11 @@ export default function BotsPage({ loadError, visible = true }: Props) {
           <Empty description="未发现机器人，请检查仓库 BotSpec 或插件安装目录" style={{ marginTop: 80 }} />
         ) : (
           <div className="bot-instance-workspace obs-instance-workspace">
-            <div className="obs-instance-selector"><span>机器人实例</span><Select aria-label="选择机器人实例" value={selectedBotId} onChange={(id) => {
+            {!fixed && <div className="obs-instance-selector"><span>机器人实例</span><Select aria-label="选择机器人实例" value={selectedBotId} onChange={(id) => {
               window.location.hash = "bots?" + new URLSearchParams({ instance: id, tab: activeTab });
             }}
               options={bots.map((bot) => ({ value: bot.instance_id, label: `${bot.display_name} · ${rosterState(bot, statuses[bot.instance_id]).label}` }))} />
-              <Tag>{bots.length} 个实例</Tag></div>
+              <Tag>{bots.length} 个实例</Tag></div>}
 
             {selectedBot && (
               <section className="bot-instance-detail">
@@ -303,7 +305,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                   </div>}
                 </header>
 
-                <Tabs type="line" activeTab={activeTab} onChange={navigateTab} className="bot-instance-tabs">
+                <Tabs renderTabHeader={fixed ? () => <></> : undefined} type="line" activeTab={activeTab} onChange={navigateTab} className="bot-instance-tabs">
                   <Tabs.TabPane title="任务" key="tasks" />
                   <Tabs.TabPane title={pluginInstance ? "只读分层配置" : "分层配置"} key="configuration" />
                   {!pluginInstance && <Tabs.TabPane title="运行状态" key="runtime">
@@ -320,7 +322,7 @@ export default function BotsPage({ loadError, visible = true }: Props) {
                   visible={visible && activeTab === "configuration"}
                   infoVisible={visible && instanceInfoOpen} onInfoClose={() => setInstanceInfoOpen(false)}
                   onApplyTask={(task, onSuccess) => openApplyToolConfig(selectedBot, task, onSuccess)} />}
-                <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot} visible={visible && activeTab === "tasks"} />
+                {!fixed && <ObservationWorkbench key={selectedBot.instance_id} bot={selectedBot} visible={visible && activeTab === "tasks"} />}
               </section>
             )}
           </div>

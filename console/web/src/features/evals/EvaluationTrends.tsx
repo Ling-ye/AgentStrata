@@ -1,9 +1,10 @@
+import { useEvaluationClient } from "./evaluationApi";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useInfiniteQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Empty, Radio, Select, Space, Spin, Table, Tag, Typography } from "@arco-design/web-react";
 import type { EvaluationRecord, EvaluationSuite } from "./model";
 import { asObject } from "./trialModel";
-import { evaluationApi } from "./evaluationApi";
+
 import { dateLabel, evaluationSuiteId, EXCLUSION_LABELS, rateLabel, revisionLabel } from "./insightsModel";
 import { buildTrendPoints, groupTrendPoints, linePaths, pointModel, pointScale, pointValue, pointDuration, durationPointLabel, durationCoverage, type SplitDimension, type TrendMetric, type TrendPoint } from "./trendModel";
 
@@ -14,6 +15,7 @@ const COLORS = ["#165dff", "#00a870", "#d46b08", "#722ed1", "#d91ad9", "#08979c"
 export default function EvaluationTrends({ initialBot, bots, suites, visible, onOpen }: {
   initialBot: string; bots: string[]; suites: EvaluationSuite[]; visible: boolean; onOpen: (record: EvaluationRecord) => void;
 }) {
+  const { evaluationApi, id: appId } = useEvaluationClient();
   const [selectedBots, setSelectedBots] = useState<string[] | null>(null);
   const [days, setDays] = useState(30);
   const [anchor, setAnchor] = useState(() => Date.now());
@@ -91,7 +93,7 @@ export default function EvaluationTrends({ initialBot, bots, suites, visible, on
         { value: 7, label: "最近 7 天" }, { value: 30, label: "最近 30 天" }, { value: 90, label: "最近 90 天" },
         { value: 0, label: "全部时间" }, { value: -1, label: "自定义" },
       ]} /></div>
-      <div className="eval-trend-filter">机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></div>
+      {!appId && <div className="eval-trend-filter">机器人<Select aria-label="趋势机器人" mode="multiple" value={botIds} onChange={setSelectedBots} allowClear placeholder="全部机器人" options={options(bots)} /></div>}
       <div className="eval-trend-filter">测评集<Select aria-label="趋势测评集" value={suite} onChange={setSuite} options={[...suiteOptions].map(([value, label]) => ({ value, label }))} /></div>
       <div className="eval-trend-filter">模型<Select aria-label="趋势模型" mode="multiple" value={models} onChange={setModels} options={options(modelOptions)} allowClear placeholder="全部模型" /></div>
       <div className="eval-trend-filter">测试规模<Select aria-label="趋势测试规模" mode="multiple" value={scales} onChange={setScales} options={options(scaleOptions)} allowClear placeholder="全部规模" /></div>

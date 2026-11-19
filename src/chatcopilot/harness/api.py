@@ -66,21 +66,26 @@ class HarnessController:
         from chatcopilot.core.model_settings import resolve_binding
         return resolve_binding("harness", environment={**os.environ, **self.settings}).model
 
-    def start_request(self, request, *, launch: bool = True):
+    def start_request(self, request, *, launch: bool = True, expected_bot_id=None):
+        scope = {"expected_bot_id": expected_bot_id} if expected_bot_id is not None else {}
         if request.source_kind == "robot_task":
             return self.start_task(request.bot_id, request.run_id, request.options,
-                request_id=request.request_id, feedback=request.feedback, launch=launch)
+                request_id=request.request_id, feedback=request.feedback, launch=launch, **scope)
         return self.start_case_instance(request.case_instance_id, request.options,
-            request_id=request.request_id, feedback=request.feedback, launch=launch)
+            request_id=request.request_id, feedback=request.feedback, launch=launch, **scope)
 
     def start_improvement(self, request, options: RepairOptions, *, request_id=None, launch=True,
-                          predecessor_task_id=None):
+                          predecessor_task_id=None, repair_origin=None):
         from chatcopilot.harness.improvement_runtime import source, predecessor_checks
         def load():
             prior = predecessor_checks(self, request.bot_id, predecessor_task_id) if predecessor_task_id else {}
+            if repair_origin is not None:
+                prior["repair_origin"] = repair_origin
             return source(self.repository, request, self.evaluator, **prior,
                           predecessor_task_id=predecessor_task_id)
         identity = {"kind": "application", **asdict(request)}
+        if repair_origin is not None:
+            identity["repair_origin_digest"] = repair_origin["digest"]
         if predecessor_task_id:
             identity["predecessor_task_id"] = predecessor_task_id
         return self._start(load, identity, options, request_id=request_id, launch=launch)
@@ -198,14 +203,14 @@ class HarnessController:
 
     def start_case_instance(
         self, case_instance_id: str, options: RepairOptions, *, request_id: str | None = None,
-        launch: bool = True, feedback: RepairFeedback | None = None,
+        launch: bool = True, feedback: RepairFeedback | None = None, expected_bot_id: str | None = None,
     ) -> dict[str, Any]:
         if feedback and feedback.expected_behavior.strip():
             raise ValueError("Case 只能补充修复线索，不能覆盖原评分预期")
         return self._start(
             lambda: self.sources.load({"case_instance_id": case_instance_id}),
             {"case_instance_id": case_instance_id}, options,
-            request_id=request_id, launch=launch, feedback=feedback,
+            request_id=request_id, launch=launch, feedback=feedback, expected_bot_id=expected_bot_id,
         )
 
     def load_source(self, kind: str, source_id: str, bot_id: str = "") -> dict[str, Any]:
@@ -241,6 +246,7 @@ class HarnessController:
         request_id: str | None = None,
         launch: bool = True,
         feedback: RepairFeedback | None = None,
+        expected_bot_id: str | None = None,
     ) -> dict[str, Any]:
         return self._start(
             lambda: self.sources.load({"kind": "robot_task", "bot_id": bot_id, "run_id": run_id}),
@@ -249,6 +255,7 @@ class HarnessController:
             request_id=request_id,
             launch=launch,
             feedback=feedback,
+            expected_bot_id=expected_bot_id,
         )
 
     def _start(
@@ -260,6 +267,7 @@ class HarnessController:
         request_id: str | None,
         launch: bool,
         feedback: RepairFeedback | None = None,
+        expected_bot_id: str | None = None,
         continuation: dict[str, Any] | None = None,
         governance: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
@@ -279,12 +287,16 @@ class HarnessController:
         request_digest = _digest({**identity, "options": request_options})
         previous = self.store.by_request(request_id)
         if previous is not None:
+            if expected_bot_id is not None and previous["source"].get("bot_id") != expected_bot_id:
+                raise HarnessError("not_found", "当前应用没有该请求")
             if previous["request_digest"] != request_digest:
                 raise HarnessError("conflict", "同一请求 ID 的内容已变化")
             return self.get(previous["task_id"])
         preparation_started = time.monotonic()
         evidence = source_loader()
         source = evidence.material
+        if expected_bot_id is not None and source.get("bot_id") != expected_bot_id:
+            raise HarnessError("not_found", "冻结来源不属于当前应用")
         if source.get("kind") != "code_health" and options.timeout_seconds is None:
             raise ValueError("故障修复必须指定时间预算")
         if source.get("blockers"):
@@ -305,6 +317,8 @@ class HarnessController:
         if source.get("kind") == "application" or installed:
             from chatcopilot.harness.improvement_repository import baseline
             delivery = baseline(self.repository)
+            if source.get("repair_origin") and delivery["source_digest"] != source["repair_origin"]["source_digest"]:
+                raise HarnessError("workspace_changed", "应用修复来源与冻结的源码基线不一致")
             if installed and delivery["source_digest"] != installed["source_digest"]:
                 raise HarnessError("workspace_changed", "应用版本在来源冻结期间发生变化")
         else:
@@ -527,6 +541,7 @@ class HarnessController:
         result["source"] = {key: item for key, item in value["source"].items() if key in {
             "kind", "run_id", "evaluation_id", "case_id", "case_instance_id", "bot_id", "target_id", "case_ids", "blockers", "warnings", "test_sha256",
             "task_type", "goal", "allowed_paths", "goal_case_ids", "runtime_id"}}
+        result["candidate_accepted"] = bool(value.get("accepted_candidate"))
         result["preparation_revisions"] = [{"revision": r["revision"], "status": r["status"]} for r in value.get("preparation_revisions", [])]
         if value.get("delivery"):
             result["delivery"] = {k: v for k, v in value["delivery"].items() if k != "checks"}

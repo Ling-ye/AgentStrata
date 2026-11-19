@@ -11,7 +11,7 @@ import uuid
 
 from chatcopilot.core.private_sqlite import PrivateDatabase, private_directory, private_lock
 from chatcopilot.harness.models import TERMINAL, HarnessError
-from studio import delivery, projects, runtime
+from studio import delivery, first_plan, projects, runtime
 
 _SCHEMA = """
 CREATE TABLE projects(id TEXT PRIMARY KEY, name TEXT NOT NULL, bot TEXT NOT NULL, version TEXT NOT NULL, assets TEXT, created REAL NOT NULL);
@@ -29,6 +29,10 @@ class Studio:
         self.model_path = Path(model_path) if model_path else None
         self.db = PrivateDatabase(home / "studio.sqlite", _SCHEMA)
         with self.db.connect(write=True) as db:
+            db.execute(first_plan.TABLE)
+            db.execute("CREATE TABLE IF NOT EXISTS studio_repair_sources (id TEXT PRIMARY KEY, "
+                       "project TEXT NOT NULL REFERENCES projects(id), kind TEXT NOT NULL, source_id TEXT NOT NULL, "
+                       "digest TEXT NOT NULL, feedback TEXT NOT NULL, receipt TEXT NOT NULL)")
             db.execute("CREATE UNIQUE INDEX IF NOT EXISTS one_console_operation ON messages(project) "
                        "WHERE state IN ('thinking','console-thinking','starting','developing','verifying','packaging')")
 
@@ -44,6 +48,8 @@ class Studio:
 
     def _create(self, project_id, *, live=False, application_type="desktop", selection=None):
         with self.db.connect() as db:
+            if db.execute("SELECT 1 FROM first_plans WHERE project=?", (project_id,)).fetchone():
+                raise ValueError("此请求已绑定首版方案，请进入原应用")
             if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='studio_imports'").fetchone():
                 reserved = db.execute("SELECT 1 FROM studio_imports WHERE id=?", (project_id,)).fetchone()
                 if reserved and not (live and selection is not None):
@@ -76,8 +82,13 @@ class Studio:
 
     def projects(self):
         with self.db.connect() as db:
-            return [{**dict(row), "application_type": "qq_official" if row["bot"].startswith("qq-official-") else "desktop"}
-                    for row in db.execute("SELECT id,name,bot FROM projects ORDER BY created DESC")]
+            rows = db.execute("SELECT p.id,p.name,p.bot,f.icon,f.target,m.state AS plan_state,m.updated "
+                              "FROM projects p LEFT JOIN first_plans f ON f.project=p.id "
+                              "LEFT JOIN messages m ON m.id=f.project ORDER BY p.created DESC")
+            return [{**dict(row), "application_type": "draft" if row["plan_state"] in {
+                     "planning", "plan_failed", "plan_review", "initializing", "initialization_failed"} else
+                     "qq_official" if row["bot"].startswith("qq-official-") else
+                     row["target"] if row["target"] in {"web", "source"} else "desktop"} for row in rows]
 
     def conversation(self, project_id):
         with self.db.connect() as db:
@@ -151,6 +162,10 @@ class Studio:
             project = db.execute("SELECT version FROM projects WHERE id=?", (project_id,)).fetchone()
             if not project:
                 raise KeyError("会话不存在")
+            if db.execute("SELECT 1 FROM first_plans f JOIN messages m ON m.id=f.project "
+                          "WHERE f.project=? AND (f.approved=0 OR m.state IN ('initializing','initialization_failed'))",
+                          (project_id,)).fetchone():
+                raise ValueError("请先完成当前应用的首版方案确认")
             db.execute("INSERT INTO messages(id,project,text,state,version,updated) VALUES (?,?,?,'thinking',?,?)",
                        (message_id, project_id, text, project["version"], time.time()))
 
@@ -168,7 +183,7 @@ class Studio:
     def pending(self):
         with self.db.connect() as db:
             rows = list(db.execute("SELECT m.*,p.version AS current FROM messages m JOIN projects p ON p.id=m.project "
-                    "WHERE m.state IN ('thinking','starting','developing','verifying','packaging') ORDER BY m.rowid"))
+                    "WHERE m.state IN ('planning','initializing','thinking','starting','developing','verifying','packaging') ORDER BY m.rowid"))
         return [row["id"] for row in rows if not self.recovery_blocked(row["project"], row, row["current"])]
 
     def update(self, msg, state, reply="", **values):
@@ -186,6 +201,12 @@ class Studio:
         work = self.directory(app["id"])
         state = row["state"]
         try:
+            if state == "planning":
+                first_plan.generate(self, app, row)
+                return
+            if state == "initializing":
+                first_plan.initialize(self, app, work)
+                return
             if state == "thinking":
                 standard = app["bot"].startswith("qq-official-")
                 definition = {}
@@ -260,8 +281,11 @@ class Studio:
                 with self.db.connect() as db:
                     previous = db.execute("SELECT task FROM messages WHERE project=? AND state='ready' "
                                           "AND build=id ORDER BY rowid DESC LIMIT 1", (app["id"],)).fetchone()
+                    origin = db.execute("SELECT receipt FROM studio_repair_sources WHERE id=? AND project=?",
+                                        (msg, app["id"])).fetchone()
                 task = runtime.start_task(repo, work, app["bot"], row["goal"], msg,
-                                          **self.environment(), **({"predecessor_task_id": previous["task"]} if previous else {}))
+                                          **self.environment(), **({"predecessor_task_id": previous["task"]} if previous else {}),
+                                          **({"repair_origin": json.loads(origin["receipt"])} if origin else {}))
                 self.update(msg, "developing", row["reply"], task=task["task_id"])
                 return
             host = runtime.controller(repo, work, task_id=row["task"], **self.environment())
@@ -280,7 +304,7 @@ class Studio:
                 self.update(msg, "failed", ("验证未完成。" if state == "verifying" else "开发未完成。") + reason)
             elif state != "packaging":
                 runtime.stop_evaluation(repo, work, row["task"])
-                self.update(msg, "packaging", "改动已通过开发验收，正在生成 Windows 安装包。")
+                self.update(msg, "packaging", "改动已通过开发验收，正在生成应用产物。")
             else:
                 self.finish(row, app, repo, work, host, task)
         except Exception as exc:
@@ -290,10 +314,13 @@ class Studio:
             if getattr(exc, "code", "") == "verification_missing":
                 reason = "应用验证环境尚未就绪。请检查聊天和开发模型连接，然后重试此请求。"
             reason = reason or type(exc).__name__
-            self.update(msg, "failed", ("Windows 安装包生成失败。" if state == "packaging" else "") + reason)
+            self.update(msg, {"planning": "plan_failed", "initializing": "initialization_failed"}.get(state, "failed"),
+                        ("应用打包失败。" if state == "packaging" else "") + reason)
 
     def finish(self, row, app, repo, work, host, task):
         from chatcopilot.harness.activation_runtime import release_source
+        with self.db.connect() as db:
+            archive = db.execute("SELECT target FROM first_plans WHERE project=? AND target IN ('web','source') AND approved=1", (app["id"],)).fetchone()
         with host.lifecycle.operation(row["task"]):
             release = release_source(host, row["task"])
             final = work / "builds" / row["id"]
@@ -302,17 +329,24 @@ class Studio:
                 ident = app["bot"] if not app["assets"] else "live2d-trial-" + app["id"]
                 # Versions are side-by-side even when an older trial is installed.
                 ident += "-" + release.receipt["candidate_digest"][:10]
-                delivery.pack(repo, pending, bot_relative=release.bot_relative, release=release,
-                              assets=Path(app["assets"]) if app["assets"] else None, name=app["name"],
-                              install_id=ident, windows_build=os.environ.get("AGENTSTRATA_STUDIO_WINDOWS_BUILD"))
+                if archive:
+                    from studio.project_archive import pack
+                    pack(release, pending, app["bot"], archive["target"])
+                else:
+                    delivery.pack(repo, pending, bot_relative=release.bot_relative, release=release,
+                                  assets=Path(app["assets"]) if app["assets"] else None, name=app["name"],
+                                  install_id=ident, windows_build=os.environ.get("AGENTSTRATA_STUDIO_WINDOWS_BUILD"))
                 pending.rename(final)
             receipt = json.loads((final / "build-receipt.json").read_text())
-            if receipt["accepted_source_digest"] != release.receipt["candidate_digest"] or delivery.digest(final / "application.exe") != receipt["installer_sha256"]:
+            filename, digest_key = ("application.zip", "archive_sha256") if archive else ("application.exe", "installer_sha256")
+            if receipt["accepted_source_digest"] != release.receipt["candidate_digest"] or delivery.digest(final / filename) != receipt[digest_key]:
                 raise ValueError("安装包与本次候选不匹配")
             version = receipt["accepted_source_digest"]
             projects.source_tree(work, version, release.candidate, release.candidate_manifest)
         verified = "\n".join(item["text"] for item in task["acceptance"]["items"] if item.get("required"))
-        reply = "已验证的改动\n" + verified + "\n\n试用方法\n下载桌面安装包并完成安装，打开应用后尝试以上操作。"
+        method = {"web": "下载并解压网页包，在浏览器中打开 index.html。", "source": "解压源码包，按应用目录的启动说明使用。"}.get(
+            archive["target"] if archive else "", "下载桌面安装包并完成安装，打开应用后尝试以上操作。")
+        reply = "已验证的改动\n" + verified + "\n\n试用方法\n" + method
         with self.db.connect(write=True) as db:
             db.execute("UPDATE projects SET version=? WHERE id=?", (version, app["id"]))
             db.execute("UPDATE messages SET state='ready',reply=?,build=?,updated=? WHERE id=?",
@@ -326,10 +360,12 @@ class Studio:
             if not row:
                 raise KeyError("安装包尚未就绪")
         path = self.directory(project_id) / "builds" / message_id
-        expected = json.loads((path / "build-receipt.json").read_text())["installer_sha256"]
+        receipt = json.loads((path / "build-receipt.json").read_text())
+        filename, digest_key = ("application.zip", "archive_sha256") if "archive_sha256" in receipt else ("application.exe", "installer_sha256")
+        expected = receipt[digest_key]
         if not isinstance(expected, str) or len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
             raise ValueError("安装包摘要记录无效")
-        return path / "application.exe", expected
+        return path / filename, expected
 
     def artifact(self, project_id, message_id):
         path, expected = self.artifact_reference(project_id, message_id)

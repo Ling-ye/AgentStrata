@@ -119,9 +119,17 @@ def stop_evaluation(repo, state, task_id):
                    capture_output=True, timeout=20, check=False)
 
 
-def start_task(repo, state, bot_id, goal, request, *, predecessor_task_id=None, environment=None):
+def start_task(repo, state, bot_id, goal, request, *, predecessor_task_id=None, environment=None, repair_origin=None):
     desktop = bot_id != "live2d-desktop"
     checks = ("decision-no-tool",) if desktop else ()
+    goal_cases = ()
+    if repair_origin is not None:
+        from chatcopilot.core.source_snapshot import manifest_digest, source_manifest
+        if manifest_digest(source_manifest(repo)) != repair_origin["source_digest"]:
+            raise ValueError("修复来源和当前应用版本不一致，请重新测评")
+        if repair_origin["kind"] == "evaluation":
+            goal_cases = (repair_origin["case_id"],)
+            checks = goal_cases
     cfg, frozen = worker_profile("", environment={**os.environ, **configuration(), **(environment or {})})
     from pathlib import Path
     from chatcopilot.external_tools.codex_cli.auth_cli import status_lanes
@@ -137,12 +145,15 @@ def start_task(repo, state, bot_id, goal, request, *, predecessor_task_id=None, 
                       "integrations/open_llm_vtuber/agentstrata_vtuber/agent.py",
                       "integrations/open_llm_vtuber/agentstrata_vtuber/avatar.py"))
     suite = "agentstrata-agent-tasks-v1" if desktop else "agentstrata-application-bridges-v1"
-    return host.start_improvement(ImprovementRequest("improve", bot_id, goal, tuple(scope), suite_id=suite),
+    if goal_cases:
+        suite = repair_origin["suite_id"]
+    return host.start_improvement(ImprovementRequest("improve", bot_id, goal, tuple(scope), goal_cases, suite_id=suite),
                                   options, request_id=request,
+                                  **({"repair_origin": repair_origin} if repair_origin is not None else {}),
                                   **({"predecessor_task_id": predecessor_task_id} if predecessor_task_id else {}))
 
 
-async def discuss(home, session, request, text):
+async def discuss(home, session, request, text, *, planning=False):
     from integrations.desktop_app.bridge import chat
     cfg = json.loads((home / "guide.json").read_text())
     from chatcopilot.project import source_notice
@@ -152,6 +163,10 @@ async def discuss(home, session, request, text):
     retry = ("工作台无法读取上次答复。请只返回一个 JSON 对象。若这条请求明确要求制作或修改当前应用，"
              '返回 {"action":"develop","name":"应用名称","reply":"简短说明"}，工作台会把原文交给开发。'
              "讨论用 discuss，要求制作另一个应用用 new_project。本次输入如下。\n" + text)
+    allowed = {"discuss", "develop", "new_project", "configure"}
+    if planning:
+        allowed = {"plan"}
+        retry = "请按首版方案格式返回一个 JSON 对象，包含 action=plan、name、target、scope、acceptance 和 reply。\n" + text
     for key, prompt in ((request, text), (request + "-format", retry)):
         answer = await chat(cfg["url"], cfg["token"], "studio-owner", "studio-" + session, key, prompt)
         if original is None:
@@ -166,7 +181,7 @@ async def discuss(home, session, request, text):
             decision = json.loads(raw)
         except ValueError:
             continue
-        if (isinstance(decision, dict) and decision.get("action") in {"discuss", "develop", "new_project", "configure"}
+        if (isinstance(decision, dict) and decision.get("action") in allowed
                 and isinstance(decision.get("reply"), str)):
             if show_notice:
                 decision["reply"] += "\n\n" + suffix

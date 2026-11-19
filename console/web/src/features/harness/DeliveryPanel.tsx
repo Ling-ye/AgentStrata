@@ -1,11 +1,13 @@
+import { useHarnessClient } from "./useHarnessClient";
 import { useState } from "react";
 import { Alert, Button, Descriptions, Space, Tag, Typography } from "@arco-design/web-react";
-import { deliveryActive, deliveryLabel, harnessApi, type RepairTask } from "./api";
+import { deliveryActive, deliveryLabel, type RepairTask } from "./api";
 
 export function DeliveryPanel({ task, refresh, actionsOnly = false, readOnly = false }: {
   task: Pick<RepairTask, "task_id" | "status" | "delivery" | "cleanup" | "archive">;
   refresh: () => unknown; actionsOnly?: boolean; readOnly?: boolean;
 }) {
+  const { harnessApi } = useHarnessClient();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   if (!task.delivery) return null;

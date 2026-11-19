@@ -1,3 +1,4 @@
+import { useEvaluationClient } from "../features/evals/evaluationApi";
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -20,10 +21,7 @@ import {
 } from "@arco-design/web-react";
 
 import { api } from "../api";
-import {
-  evaluationApi,
-  evaluationExportUrl,
-} from "../features/evals/evaluationApi";
+import { evaluationExportUrl } from "../features/evals/evaluationApi";
 import {
   formatApiError,
   type EvaluationRecord,
@@ -72,9 +70,11 @@ function formatDuration(value: number | null | undefined): string {
 }
 
 export default function EvalsPage({ visible = true, initialApplication = "" }: Props) {
+  const { evaluationApi, evalBase, id: appId } = useEvaluationClient();
   const queryClient = useQueryClient();
   const detailTop = useRef<HTMLDivElement>(null);
-  const [tab, setTab] = useState("start");
+  const linkedEvaluation = appId ? new URLSearchParams(window.location.hash.split("?")[1]).get("evaluation") : null;
+  const [tab, setTab] = useState(linkedEvaluation ? "records" : "start");
   const [botId, setBotId] = useState(initialApplication);
   const [selectedEvaluation, setSelectedEvaluation] = useState<EvaluationRecord | null>(null);
   const [recordTrack, setRecordTrack] = useState("all");
@@ -83,7 +83,7 @@ export default function EvalsPage({ visible = true, initialApplication = "" }: P
   const botsQuery = useQuery({
     queryKey: ["bots"],
     queryFn: api.listBots,
-    enabled: visible,
+    enabled: visible && !appId,
   });
   const suitesQuery = useQuery({
     queryKey: ["evaluation-suites", botId],
@@ -104,13 +104,15 @@ export default function EvalsPage({ visible = true, initialApplication = "" }: P
   const suites = suitesQuery.data ?? [];
   const [archiveView, setArchiveView] = useState("current");
   const records = recordsQuery.data ?? [];
+  const [deepLink, setDeepLink] = useState(linkedEvaluation);
+  const selectedId = selectedEvaluation?.evaluation_id || deepLink;
   const latestSelected = records.find(
     (record) => record.evaluation_id === selectedEvaluation?.evaluation_id,
   ) ?? selectedEvaluation;
   const detailQuery = useQuery({
-    queryKey: ["evaluation-detail", selectedEvaluation?.evaluation_id],
-    queryFn: ({ signal }) => evaluationApi.get(selectedEvaluation!.evaluation_id, signal),
-    enabled: visible && Boolean(selectedEvaluation),
+    queryKey: ["evaluation-detail", selectedId],
+    queryFn: ({ signal }) => evaluationApi.get(selectedId!, signal),
+    enabled: visible && Boolean(selectedId),
     refetchInterval: query => ACTIVE_STATUSES.has(query.state.data?.status ?? latestSelected?.status ?? "error") ? 2000 : false,
   });
   const selectedRecord = detailQuery.data ?? latestSelected;
@@ -240,7 +242,7 @@ export default function EvalsPage({ visible = true, initialApplication = "" }: P
       description="按测评集选择题目与评分方法，查看实际结果和可比趋势。"
       extra={tab !== "trends" ? <Button size="small" onClick={() => void refresh()}>刷新</Button> : undefined}
     >
-      {tab !== "trends" && <div className="eval-history-filters eval-bot-selection">
+      {!appId && tab !== "trends" && <div className="eval-history-filters eval-bot-selection">
         <Text bold>机器人</Text>
         <Select aria-label="评测机器人" value={botId || undefined} placeholder="选择机器人" loading={botsQuery.isLoading}
           options={bots.map(bot => ({ label: bot.display_name, value: bot.instance_id }))}
@@ -288,7 +290,7 @@ export default function EvalsPage({ visible = true, initialApplication = "" }: P
         </Tabs.TabPane>
         <Tabs.TabPane key="trends" title="进步趋势">
           <Card className="eval-create-card">
-            <EvaluationTrends suites={suites} initialBot={botId} bots={bots.map(bot => bot.instance_id)} visible={visible && tab === "trends"} onOpen={setSelectedEvaluation} />
+            <EvaluationTrends suites={suites} initialBot={botId} bots={appId ? [botId] : bots.map(bot => bot.instance_id)} visible={visible && tab === "trends"} onOpen={setSelectedEvaluation} />
           </Card>
         </Tabs.TabPane>
       </Tabs>
@@ -301,7 +303,7 @@ export default function EvalsPage({ visible = true, initialApplication = "" }: P
         afterOpen={() => detailTop.current?.focus({ preventScroll: true })}
         title="评测详情"
         visible={Boolean(selectedRecord)}
-        onCancel={() => setSelectedEvaluation(null)}
+        onCancel={() => { setDeepLink(null); setSelectedEvaluation(null); }}
         footer={null}
       >
         {selectedRecord && (
@@ -373,10 +375,10 @@ export default function EvalsPage({ visible = true, initialApplication = "" }: P
                   重跑
                 </Button>
               )}
-              <Button href={evaluationExportUrl(selectedRecord.evaluation_id, "json")}>
+              <Button href={evaluationExportUrl(selectedRecord.evaluation_id, "json", evalBase)}>
                 导出 JSON
               </Button>
-              <Button href={evaluationExportUrl(selectedRecord.evaluation_id, "markdown")}>
+              <Button href={evaluationExportUrl(selectedRecord.evaluation_id, "markdown", evalBase)}>
                 导出 Markdown
               </Button>
               {!selectedRecord.archived && !ACTIVE_STATUSES.has(selectedRecord.status) && (

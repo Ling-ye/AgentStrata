@@ -58,12 +58,21 @@ class Applications:
                 paths.add(str((self.state_dir / "applications" / p["id"] / "bot.yaml").resolve()))
         for inst in self._discover():
             path = str(Path(inst.bot_spec).resolve())
+            if Path(path) == (self.root / "bots/studio-guide/bot.yaml").resolve():
+                continue
             if path in paths:
                 continue
             paths.add(path)
             source = "plugin" if inst.read_only else "repository"
             ident = ("plugin:" if inst.read_only else "repo:") + inst.instance_id
-            kind = "companion" if inst.origin.get("plugin_id") == "open-llm-vtuber" else "qq_personal" if inst.platform in {"qq", "qq_personal"} else "agent"
+            kind = {"qq": "qq_personal", "qq_personal": "qq_personal", "weixin": "weixin"}.get(inst.platform, "agent")
+            if inst.origin.get("plugin_id") == "open-llm-vtuber" or Path(path) == self.root / "bots/live2d-desktop/bot.yaml":
+                kind = "companion"
+            elif not inst.platform:
+                from console.control.yaml_io import load_yaml_mapping_or_empty
+                deploy = load_yaml_mapping_or_empty(Path(path)).get("deploy")
+                if isinstance(deploy, dict) and deploy.get("target") == "windows":
+                    kind = "desktop"
             row = self._view(ident, inst.display_name or inst.instance_id, kind, source,
                              instance=inst.instance_id, control=not inst.read_only,
                              records=True, observation=True, settings=not inst.read_only and inst.runtime_kind == "gateway")
@@ -93,9 +102,13 @@ class Applications:
             rows.append(row)
         for p in projects:
             standard = p["application_type"] == "qq_official"
-            row = self._view("studio:" + p["id"], p["name"], "qq_official" if standard else "companion" if p["bot"] == "live2d-desktop" else "desktop",
+            row = self._view("studio:" + p["id"], p["name"], "companion" if p["bot"] == "live2d-desktop" else p["application_type"],
                              "studio", project=p["id"], configure=standard, control=standard,
-                             improve=True, records=True)
+                             improve=True, records=True, settings=standard and
+                             (self.state_dir / "applications" / p["id"] / "bot.yaml").is_file(), observation=standard and
+                             (self.state_dir / "applications" / p["id"] / "runtime.env").is_file())
+            if p.get("plan_state"):
+                row.update(first_plan=True, plan_state=p["plan_state"], icon=p["icon"], last_activity=p["updated"])
             row["message"] = ("管理对话只生成配置提案；试聊与真实 QQ 往返尚未验证。"
                               if standard else "在此讨论需求、开发和验收，完成后下载桌面安装包；安装与运行另行确认。")
             if standard:

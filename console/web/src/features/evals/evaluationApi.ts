@@ -1,3 +1,5 @@
+import { useMemo } from "react";
+import { useStudioScope } from "../../shared/studioScope";
 import type { Task } from "../../types";
 import {
   EvaluationApiError,
@@ -105,19 +107,19 @@ export function normalizeTrial(value: unknown): EvaluationTrial {
   };
 }
 
-export const evaluationApi = {
-  profiles: () => requestJson<EvaluationProfile[]>("/api/evals/profiles"),
+export const evaluationClient = (base = "/api/evals") => ({
+  profiles: () => requestJson<EvaluationProfile[]>(base + "/profiles"),
 
   suites: (botId: string) =>
     requestJson<EvaluationSuite[]>(
-      `/api/evals/suites${queryString({ bot_id: botId })}`,
+      `${base}/suites${queryString({ bot_id: botId })}`,
     ),
 
   cases: async (suiteId: string, botId: string) => {
     const response = await requestJson<
       EvaluationCaseSummary[] | { cases: EvaluationCaseSummary[] }
     >(
-      `/api/evals/suites/${encodeURIComponent(suiteId)}/cases${queryString({
+      `${base}/suites/${encodeURIComponent(suiteId)}/cases${queryString({
         bot_id: botId,
       })}`,
     );
@@ -126,14 +128,14 @@ export const evaluationApi = {
 
   caseDescriptor: (suiteId: string, caseId: string, botId: string) =>
     requestJson<EvaluationCaseDescriptor>(
-      `/api/evals/suites/${encodeURIComponent(suiteId)}/cases/${encodeURIComponent(caseId)}${queryString({
+      `${base}/suites/${encodeURIComponent(suiteId)}/cases/${encodeURIComponent(caseId)}${queryString({
         bot_id: botId,
       })}`,
     ),
 
   prepareSuite: (suiteId: string, botId: string) =>
     requestJson<Task>(
-      `/api/evals/suites/${encodeURIComponent(suiteId)}/prepare${queryString({
+      `${base}/suites/${encodeURIComponent(suiteId)}/prepare${queryString({
         bot_id: botId,
       })}`,
       { method: "POST" },
@@ -142,13 +144,13 @@ export const evaluationApi = {
   coverage: async (botId: string) =>
     normalizeCoverage(
       await requestJson<EvaluationCoverage>(
-        `/api/evals/cases/coverage${queryString({ bot_id: botId })}`,
+        `${base}/cases/coverage${queryString({ bot_id: botId })}`,
       ),
     ),
 
   create: async (request: EvaluationRequest) =>
     normalizeEvaluation(
-      await requestJson<unknown>("/api/evals/evaluations", {
+      await requestJson<unknown>(base + "/evaluations", {
         method: "POST",
         body: JSON.stringify(request),
       }),
@@ -161,14 +163,14 @@ export const evaluationApi = {
   } = {}) =>
     evaluationList(
       await requestJson<unknown>(
-        `/api/evals/evaluations${queryString(filters)}`,
+        `${base}/evaluations${queryString(filters)}`,
       ),
     ),
 
   get: async (evaluationId: string, signal?: AbortSignal) =>
     normalizeEvaluation(
       await requestJson<unknown>(
-        `/api/evals/evaluations/${encodeURIComponent(evaluationId)}?include_bodies=false`,
+        `${base}/evaluations/${encodeURIComponent(evaluationId)}?include_bodies=false`,
         { signal },
       ),
     ),
@@ -178,7 +180,7 @@ export const evaluationApi = {
     if (filters.since) params.set("since", filters.since);
     if (filters.until) params.set("until", filters.until);
     for (const bot of filters.bot_ids) params.append("bot_ids", bot);
-    return evaluationList(await requestJson<unknown>(`/api/evals/evaluations?${params}`, { signal }));
+    return evaluationList(await requestJson<unknown>(`${base}/evaluations?${params}`, { signal }));
   },
 
   caseDetail: async (evaluationId: string, caseRef: string, selection: { trial_id?: string; target_id?: string; attempt?: string } = {}, signal?: AbortSignal) => {
@@ -187,7 +189,7 @@ export const evaluationApi = {
       comparison?: Record<string, unknown> | null;
       trials?: unknown[];
     }>(
-      `/api/evals/evaluations/${encodeURIComponent(evaluationId)}/cases/${encodeURIComponent(caseRef)}${queryString(selection)}`,
+      `${base}/evaluations/${encodeURIComponent(evaluationId)}/cases/${encodeURIComponent(caseRef)}${queryString(selection)}`,
       { signal },
     );
     return {
@@ -200,7 +202,7 @@ export const evaluationApi = {
   cancel: async (evaluationId: string) =>
     normalizeEvaluation(
       await requestJson<unknown>(
-        `/api/evals/evaluations/${encodeURIComponent(evaluationId)}/cancel`,
+        `${base}/evaluations/${encodeURIComponent(evaluationId)}/cancel`,
         { method: "POST" },
       ),
     ),
@@ -208,17 +210,25 @@ export const evaluationApi = {
   rerun: async (evaluationId: string) =>
     normalizeEvaluation(
       await requestJson<unknown>(
-        `/api/evals/evaluations/${encodeURIComponent(evaluationId)}/rerun`,
+        `${base}/evaluations/${encodeURIComponent(evaluationId)}/rerun`,
         { method: "POST" },
       ),
     ),
 
   remove: (evaluationId: string) =>
     requestJson<{ ok: boolean }>(
-      `/api/evals/evaluations/${encodeURIComponent(evaluationId)}`,
+      `${base}/evaluations/${encodeURIComponent(evaluationId)}`,
       { method: "DELETE" },
     ),
-};
+});
+export const evaluationApi = evaluationClient();
+
+export function useEvaluationClient() {
+  const scope = useStudioScope();
+  const evalBase = scope.apiPrefix + "/evals";
+  const api = useMemo(() => evaluationClient(evalBase), [evalBase]);
+  return { ...scope, evalBase, evaluationApi: api };
+}
 
 export function streamEvaluation(
   evaluationId: string,
@@ -266,7 +276,7 @@ export function streamEvaluation(
 
 export function evaluationExportUrl(
   evaluationId: string,
-  format: "json" | "markdown",
+  format: "json" | "markdown", base = "/api/evals",
 ): string {
-  return `/api/evals/evaluations/${encodeURIComponent(evaluationId)}/export/${format}`;
+  return `${base}/evaluations/${encodeURIComponent(evaluationId)}/export/${format}`;
 }

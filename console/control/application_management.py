@@ -10,6 +10,8 @@ from chatcopilot.gateway.rpc_validation import parse_request_params
 from chatcopilot.host.application_management import ApplicationManagement
 from console.control import gateway_observability as observations
 from console.control.native_applications import NativeApplications
+from console.control.instances import BotInstance
+from chatcopilot.core.private_sqlite import private_directory, private_file
 
 
 class Management:
@@ -18,13 +20,38 @@ class Management:
 
     def instance(self, ident):
         row = self.apps.require(ident)
-        inst = next((value for value in self.apps._discover() if value.instance_id == row["instance_id"]), None)
+        if row["source"] == "studio":
+            if row["type"] != "qq_official" or not row["capabilities"]["observation"]:
+                raise PermissionError("请先连接本应用的运行端")
+            project = row["project_id"]
+            root = private_directory(self.apps.state_dir / "applications" / project, create=False)
+            spec, env = root / "bot.yaml", root / "runtime.env"
+            private_file(spec)
+            private_file(env)
+            inst = BotInstance("qq-app-" + project, str(spec), row["name"], "qq_official", env_file=str(env),
+                               runtime_kind="gateway", origin={"kind": "studio"})
+            gateway, _ = observations._context(inst)
+            if gateway != private_directory(root / "gateway", create=False):
+                raise ValueError("应用观测目录与运行绑定不匹配")
+            return inst
+        inst = next((value for value in self.apps._discover() if value.instance_id == row["instance_id"]
+                     and value.read_only == (row["source"] == "plugin")), None)
         if inst is None:
             raise KeyError(ident)
         return inst
 
     def local(self, ident):
         row = self.apps.require(ident, "settings")
+        if row["source"] == "studio" and row["type"] == "qq_official":
+            from studio.qq_sources import resolve
+            manager, project = self.apps.manager(), row["project_id"]
+            root = private_directory(self.apps.state_dir / "applications" / project, create=False)
+            selected = resolve(manager, project)
+            spec = root / "bot.yaml"
+            if selected and selected[1]["kind"] == "installed":
+                spec = selected[0] / "bots" / ("qq-app-" + project) / "bot.yaml"
+            return ApplicationManagement(load_runtime_context(spec), root / "gateway",
+                {**os.environ, **manager.model_environment, "AGENTSTRATA_LLM_CONFIG": str(manager.model_path)})
         if row["source"] != "repository":
             raise PermissionError("此应用的配置由其客户端管理")
         inst = self.instance(ident)
@@ -78,6 +105,10 @@ class Management:
 
     def source(self, ident):
         row = self.apps.require(ident, "observation")
+        if row["source"] == "studio":
+            inst = self.instance(ident)
+            return {"instance_id": inst.instance_id, "display_name": row["name"], "runtime_kind": "gateway",
+                    "platform": "qq_official", "origin": {"kind": "studio"}}
         if row["source"] != "native":
             return self.instance(ident).to_dict()
         self.read(ident, "identity")

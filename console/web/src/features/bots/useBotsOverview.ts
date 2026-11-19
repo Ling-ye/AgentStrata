@@ -4,13 +4,13 @@ import { api } from "../../api";
 import type { BotInstance, BotInventory, BotStatus, TasksResponse } from "../../types";
 import { taskFlowAvailability } from "./taskFlowModel";
 
-export function useBotsOverview(visible = true) {
+export function useBotsOverview(visible = true, instanceId?: string) {
   const botsQuery = useQuery({
     queryKey: ["bots"],
     queryFn: api.listBots,
     enabled: visible,
   });
-  const bots = botsQuery.data ?? [];
+  const bots = useMemo(() => (botsQuery.data ?? []).filter(bot => !instanceId || bot.instance_id === instanceId), [botsQuery.data, instanceId]);
 
   const statusQueries = useQueries({
     queries: bots.map((bot) => ({

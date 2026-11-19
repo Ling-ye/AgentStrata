@@ -1,9 +1,10 @@
+import { useEvaluationClient } from "./evaluationApi";
 import ModelProfileSelect from "../llm/ModelProfileSelect";
 import { Expectation } from "./Expectation";
 import { useMemo, useState } from "react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Alert, Button, Checkbox, Empty, Input, InputNumber, Message, Select, Space, Spin, Tag, Typography } from "@arco-design/web-react";
-import { evaluationApi } from "./evaluationApi";
+
 import { buildSuiteRequest, formatApiError, type EvaluationRecord, type EvaluationSuite, type EvaluationCaseDescriptor, type EvaluationSubject } from "./model";
 
 import { SUBJECTS, SCORING_LABELS, SOURCE_LABELS, PURPOSE_LABELS, SCORER_ORIGINS, catalogGroups, suiteFormKey } from "./catalogModel";
@@ -11,6 +12,7 @@ import { SUBJECTS, SCORING_LABELS, SOURCE_LABELS, PURPOSE_LABELS, SCORER_ORIGINS
 const { Text, Paragraph } = Typography;
 
 function CasePreview({ suite, caseId, botId }: { suite: EvaluationSuite; caseId: string; botId: string }) {
+  const { evaluationApi } = useEvaluationClient();
   const query = useQuery({ queryKey: ["benchmark-case", botId, suite.suite_id, caseId],
     queryFn: () => evaluationApi.caseDescriptor(suite.suite_id, caseId, botId) });
   if (query.isPending) return <Spin />;
@@ -78,6 +80,7 @@ function SubjectCatalog({ botId, suites, active, onCreated, subject }: {
 function SuiteForm({ botId, suite, active, onCreated }: {
   botId: string; suite: EvaluationSuite; active: boolean; onCreated: (record: EvaluationRecord) => void;
 }) {
+  const { evaluationApi } = useEvaluationClient();
   const [modelProfile, setModelProfile] = useState("");
   const [search, setSearch] = useState("");
   const [category, setCategory] = useState("");

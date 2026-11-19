@@ -1,3 +1,4 @@
+import { applicationHref } from "../features/applications/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Alert, Button, Drawer, Empty, Message, Modal, Space, Spin, Tag } from "@arco-design/web-react";
@@ -13,9 +14,10 @@ import TaskStreamSheet from "../shared/ui/TaskStreamSheet";
 
 interface Props {
   visible?: boolean;
+  scope?: string;
 }
 
-export default function ServicesPage({ visible = true }: Props) {
+export default function ServicesPage({ visible = true, scope }: Props) {
   const [services, setServices] = useState<InfraService[]>([]);
   const [busy, setBusy] = useState<Record<string, boolean>>({});
   const [composeUpBusy, setComposeUpBusy] = useState(false);
@@ -31,7 +33,7 @@ export default function ServicesPage({ visible = true }: Props) {
     enabled: visible,
     refetchInterval: visible ? 15_000 : false,
   });
-  const servicesData = servicesQuery.data ?? services;
+  const servicesData = useMemo(() => (servicesQuery.data ?? services).filter(item => !scope || (scope === "shared" ? !item.instance_id : item.instance_id === scope)), [servicesQuery.data, services, scope]);
 
   useEffect(() => {
     if (!servicesQuery.data) return;
@@ -134,13 +136,13 @@ export default function ServicesPage({ visible = true }: Props) {
         description="服务状态、实例关联与运维操作"
         extra={
           <>
-            <Button
+            {!scope && <Button
               size="small"
               loading={composeUpBusy}
               onClick={() => void handleComposeUpAll()}
             >
               启动全部 Docker 服务
-            </Button>
+            </Button>}
             <Tag className="cc-status-tag" color="green">正常 {healthyCount}</Tag>
             <Tag className="cc-status-tag" color={problemCount > 0 ? "red" : "gray"}>需关注 {problemCount}</Tag>
             <Tag className="cc-tag-meta">总计 {servicesData.length}</Tag>
@@ -163,7 +165,7 @@ export default function ServicesPage({ visible = true }: Props) {
             <td>{service.service_type === "standalone" ? "平台接入" : "工具服务"}</td>
             <td><Tag color={healthTagColor(service.color)}>{infraStateLabel(service.state)}</Tag></td>
             <td>{String(service.extra?.version ?? service.extra?.image ?? service.container ?? "未记录")}</td>
-            <td>{service.instance_id ? <a href={`#bots?instance=${encodeURIComponent(service.instance_id)}&entity=${encodeURIComponent(service.service_type === "standalone" ? "channel:qq" : `mcp:${service.id}`)}`}>{service.instance_id}</a> : "共享服务"}</td>
+            <td>{service.instance_id ? <a href={scope && scope !== "shared" ? applicationHref("repo:" + scope, "channels", {entity: service.service_type === "standalone" ? "channel:qq" : "mcp:" + service.id}) : `#bots?instance=${encodeURIComponent(service.instance_id)}&entity=${encodeURIComponent(service.service_type === "standalone" ? "channel:qq" : `mcp:${service.id}`)}`}>{service.instance_id}</a> : "共享服务"}</td>
             <td>{service.uptime_s == null ? "—" : `${Math.floor(service.uptime_s / 60)} min`}</td>
             <td><Space size="small"><Button size="small" onClick={() => setSelectedService(service.id)}>管理</Button><Button size="small" onClick={() => openLogs(service)}>日志</Button></Space></td>
           </tr>)}</tbody></table></div>
