@@ -17,7 +17,7 @@ import TaskStreamSheet from "../shared/ui/TaskStreamSheet";
 
 interface Props {
   loadError: string | null;
-  fixed?: { id: string; tab: "configuration" | "runtime" };
+  fixed?: { id: string; tab: "configuration" | "runtime" | "deployment" };
   visible?: boolean;
 }
 
@@ -95,6 +95,7 @@ export default function BotsPage({ loadError, visible = true, fixed }: Props) {
   const selectedStatus = selectedBot ? statuses[selectedBot.instance_id] : undefined;
   const selectedInventory = selectedBot ? inventoryMap[selectedBot.instance_id] : undefined;
   const pluginInstance = selectedBot?.origin.kind === "plugin";
+  const deploymentOnly = fixed?.tab === "deployment";
 
   useEffect(() => {
     if (fixed || !pluginInstance || activeTab !== "runtime") return;
@@ -211,12 +212,24 @@ export default function BotsPage({ loadError, visible = true, fixed }: Props) {
     [logStream],
   );
 
+  const provisionButton = selectedBot && <Button type="primary" onClick={() => setProvisionBot(selectedBot)}>首次部署</Button>;
+  const updateButton = selectedBot && (
+    <Tooltip content="同步代码和运行配置，按需重建依赖并重启实例。">
+      <Button
+        loading={isBusy(selectedBot.instance_id)}
+        onClick={() => void handleAction(selectedBot, "update")}
+      >
+        更新并重启
+      </Button>
+    </Tooltip>
+  );
+
   return (
     <>
       <PageSection
-        title="机器人实例"
-        description="实例运行、配置与任务记录。"
-        extra={
+        title={deploymentOnly ? "本机部署" : "机器人实例"}
+        description={deploymentOnly ? undefined : "实例运行、配置与任务记录。"}
+        extra={deploymentOnly ? undefined :
           <>
             <Tag className="cc-status-tag" color="green">运行 {runningBotCount}</Tag>
             <Tag className="cc-status-tag" color="blue">已部署 {deployedBotCount}</Tag>
@@ -235,6 +248,14 @@ export default function BotsPage({ loadError, visible = true, fixed }: Props) {
 
         {loading ? (
           <Spin size={28} style={{ display: "block", marginTop: 80 }} />
+        ) : deploymentOnly && selectedBot && !pluginInstance ? (
+          <Space wrap>
+            <Tag>{selectedBot.is_deployed ? "已部署" : "待部署"}</Tag>
+            <Tag>{rosterState(selectedBot, selectedStatus).label}</Tag>
+            {selectedBot.is_deployed
+              ? updateButton : provisionButton}
+            <Button href={"#applications?" + new URLSearchParams({ application: "repo:" + selectedBot.instance_id, tab: "runtime" })}>查看运行状态</Button>
+          </Space>
         ) : bots.length === 0 ? (
           <Empty description="未发现机器人，请检查仓库 BotSpec 或插件安装目录" style={{ marginTop: 80 }} />
         ) : (
@@ -261,7 +282,7 @@ export default function BotsPage({ loadError, visible = true, fixed }: Props) {
                   </div>
                   {!pluginInstance && <div className="bot-instance-detail-actions">
                     {!selectedBot.is_deployed ? (
-                      <Button type="primary" onClick={() => setProvisionBot(selectedBot)}>首次部署</Button>
+                      provisionButton
                     ) : (
                       <Space wrap>
                         <Button
@@ -291,14 +312,7 @@ export default function BotsPage({ loadError, visible = true, fixed }: Props) {
                             </Button>
                           </Tooltip>
                         )}
-                        <Tooltip content="同步代码和运行配置，按需重建依赖并重启实例。">
-                          <Button
-                            loading={isBusy(selectedBot.instance_id)}
-                            onClick={() => void handleAction(selectedBot, "update")}
-                          >
-                            更新并重启
-                          </Button>
-                        </Tooltip>
+                        {updateButton}
                       </Space>
                     )}
                     <Button onClick={() => openLogs(selectedBot)}>服务日志</Button>

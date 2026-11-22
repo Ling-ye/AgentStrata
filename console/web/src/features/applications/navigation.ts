@@ -11,7 +11,7 @@ export function applicationHref(id: string, tab: ApplicationTab = "overview", pa
 }
 export function leavesApplication(hash: string, id: string) { return applicationLocation(hash).id !== id; }
 export function localLink(value?: string) { return value?.startsWith("#") ? value : undefined; }
-export function typeLabel(type: string) { return ({ draft: "应用草稿", web: "网页应用", source: "源码项目", weixin: "微信助手", qq_personal: "QQ 助手", agent: "Agent 应用", qq_official: "QQ 官方机器人", live2d: "桌面伙伴 · Live2D", companion: "桌面伙伴 · Live2D", desktop: "桌面应用" } as Record<string, string>)[type] ?? type; }
+export function typeLabel(type: string) { return ({ draft: "应用草稿", web: "网页应用", source: "独立服务应用", weixin: "微信助手", qq_personal: "QQ 助手", agent: "Agent 应用", qq_official: "QQ 官方机器人", live2d: "桌面伙伴 · Live2D", companion: "桌面伙伴 · Live2D", desktop: "桌面应用" } as Record<string, string>)[type] ?? type; }
 export function stateLabel(value: string) { return ({ online: "在线", offline: "离线", active: "运行中", running: "运行中", running_unverified: "进程运行，待实聊验证", stopped: "已停止", inactive: "已停止", not_created: "待配置", configured: "已配置", starting: "正在启动", stopping: "正在停止", failed: "失败", connected: "已连接", disconnected: "未连接", unknown: "未知", unverified: "尚未验证", unavailable: "不可用", unobserved: "尚未读取", not_checked: "尚未检查", activating: "正在启动", deactivating: "正在停止", runtime_unavailable: "运行状态不可用", console_thinking: "正在处理" } as Record<string, string>)[value] ?? value; }
 
 export function managementStateLabel(state: string): string {

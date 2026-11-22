@@ -39,8 +39,8 @@ export function ImprovementForm({ created, initialApplication = "" }: { created:
   const ready = selected && preview.data && !preview.isFetching && !preview.isError && availableWorker && !models.isError;
   async function start() {
     if (!ready || busy || !goal.trim() || !paths.trim()) return;
-    const body = { task_type: type, bot_id: bot, goal: goal.trim(), allowed_paths: paths.split("\n").map(value => value.trim()).filter(Boolean),
-      goal_case_ids: cases, suite_id: suite, source_envelope: external ? source : {},
+    const body = { task_type: appId ? "improve" : type, bot_id: bot, goal: goal.trim(), allowed_paths: paths.split("\n").map(value => value.trim()).filter(Boolean),
+      goal_case_ids: cases, suite_id: suite, source_envelope: !appId && external ? source : {},
       profile: worker, max_attempts: attempts, timeout_seconds: Math.round(hours * 3600) };
     const identity = JSON.stringify(body);
     if (submitted.current.body !== identity) submitted.current = { body: identity, requestId: crypto.randomUUID() };
@@ -51,10 +51,17 @@ export function ImprovementForm({ created, initialApplication = "" }: { created:
     } catch (error) { if (alive.current) setError(String(error)); }
     finally { if (alive.current) setBusy(false); }
   }
-  return <Card title="接入能力或提出改进需求"><Space direction="vertical" size={16} style={{ width: "100%" }}>
-    <Text type="secondary">选择应用、描述期望行为并明确可修改范围。Harness 生成本地候选；评测与独立验收后，可在详情中准备和启用版本。</Text>
+  const workerControls = (
     <div style={grid}>
-      <div>需求类型<Select aria-label="需求类型" disabled={busy} value={type} onChange={setType} options={[{ value: "improve", label: "改进已有能力" }, { value: "integrate", label: "接入外部能力" }]} /></div>
+      <div>开发模型<ModelProfileSelect purpose="harness" worker value={profile} onChange={setProfile} disabled={busy} /></div>
+      <div>最多候选次数<InputNumber aria-label="需求候选次数" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={busy} style={{ width: "100%" }} /></div>
+      <div>总时间预算（小时）<InputNumber aria-label="需求时间预算" min={0.01} precision={2} value={hours} onChange={setHours} disabled={busy} style={{ width: "100%" }} /></div>
+    </div>
+  );
+  return <Card title={appId ? "提出改进需求" : "接入能力或提出改进需求"}><Space direction="vertical" size={16} style={{ width: "100%" }}>
+    <Text type="secondary">描述期望行为并明确可修改范围。Harness 生成本地候选；评测与独立验收后，可在详情中准备和启用版本。</Text>
+    <div style={grid}>
+      {!appId && <div>需求类型<Select aria-label="需求类型" disabled={busy} value={type} onChange={setType} options={[{ value: "improve", label: "改进已有能力" }, { value: "integrate", label: "接入外部能力" }]} /></div>}
       {!appId && <div>运行时<Select aria-label="按运行时选择应用" disabled={busy} value={runtime} onChange={value => { setRuntime(value); setBot(""); setCases([]); }} options={[{ value: "", label: "全部运行时" }, { value: "langgraph", label: "LangGraph" }, { value: "codex", label: "Codex" }]} /></div>}
       {!appId && <div>目标应用<Select aria-label="需求目标应用" disabled={busy} value={bot || undefined} loading={applications.isPending} placeholder="选择已配置的应用" onChange={value => { setBot(value); setCases([]); }} options={choices.map(app => ({ value: app.bot_id, label: `${app.display_name} · ${app.runtime_id}` }))} /></div>}
     </div>
@@ -68,18 +75,15 @@ export function ImprovementForm({ created, initialApplication = "" }: { created:
     {preview.isFetching && <Text>正在核对应用和评测条件…</Text>}
     {preview.isError && <Alert type="error" content={String(preview.error)} action={<Button onClick={() => void preview.refetch()}>重新核对</Button>} />}
     {preview.data && !preview.isError && <Alert type="info" content={`应用执行：${preview.data.runtime_id} / ${preview.data.evidence?.run?.model ?? "见模型配置"}；保护 ${preview.data.case_ids.length} 个评测用例。每组执行 3 次，并进行候选复测与独立确认。`} />}
-    <details><summary>评测目标与外部仓库来源</summary><Space direction="vertical" size={12} style={{ width: "100%", marginTop: 12 }}>
+    <details><summary>{appId ? "高级设置" : "评测目标与外部仓库来源"}</summary><Space direction="vertical" size={12} style={{ width: "100%", marginTop: 12 }}>
       <div>评测 Suite<Input aria-label="需求评测 Suite" disabled={busy} value={suite} onChange={value => { setSuite(value); setCases([]); }} /></div>
       <div>已有目标用例（可选）<Select aria-label="已有目标用例" mode="multiple" disabled={busy || !preview.data} value={cases} onChange={setCases} options={(preview.data?.case_ids ?? []).map(value => ({ value, label: value }))} /></div>
       <Text type="secondary">不选已有目标用例时，由独立 Test 角色提出新增需求检查，基线与候选执行同一定义。</Text>
-      <Checkbox checked={external} disabled={busy} onChange={setExternal}>提供获准调查的外部仓库</Checkbox>
-      {external && <div style={grid}>{[["resource_name", "接入名称"], ["source_url", "公开仓库 HTTPS 地址"], ["approved_ref", "固定 commit SHA"], ["license_evidence", "源码许可依据"], ["integration_intent", "接入用途与范围"]].map(([key, label]) => <div key={key}>{label}<Input aria-label={label} value={source[key] ?? ""} disabled={busy} onChange={value => setSource({ ...source, [key]: value })} /></div>)}</div>}
+      {!appId && <Checkbox checked={external} disabled={busy} onChange={setExternal}>提供获准调查的外部仓库</Checkbox>}
+      {!appId && external && <div style={grid}>{[["resource_name", "接入名称"], ["source_url", "公开仓库 HTTPS 地址"], ["approved_ref", "固定 commit SHA"], ["license_evidence", "源码许可依据"], ["integration_intent", "接入用途与范围"]].map(([key, label]) => <div key={key}>{label}<Input aria-label={label} value={source[key] ?? ""} disabled={busy} onChange={value => setSource({ ...source, [key]: value })} /></div>)}</div>}
+      {appId && workerControls}
     </Space></details>
-    <div style={grid}>
-      <div>开发模型<ModelProfileSelect purpose="harness" worker value={profile} onChange={setProfile} disabled={busy} /></div>
-      <div>最多候选次数<InputNumber aria-label="需求候选次数" min={1} precision={0} value={attempts} onChange={setAttempts} disabled={busy} style={{ width: "100%" }} /></div>
-      <div>总时间预算（小时）<InputNumber aria-label="需求时间预算" min={0.01} precision={2} value={hours} onChange={setHours} disabled={busy} style={{ width: "100%" }} /></div>
-    </div>
+    {!appId && workerControls}
     {models.isError && <Alert type="error" content="开发模型配置读取失败，请在模型配置页核对连接。" />}
     {error && <Alert type="error" content={error} />}
     <Button type="primary" loading={busy} disabled={!ready || !goal.trim() || !paths.trim()} onClick={() => void start()}>创建需求任务</Button>

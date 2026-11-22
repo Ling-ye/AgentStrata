@@ -35,6 +35,7 @@ def test_draft_revision_confirmation_restart_and_web_baseline(tmp_path, monkeypa
             "name": "网页报修台",
             "scope": "报修登记",
             "acceptance": "登记后在列表可见",
+            "delivery": {"platforms": ["linux-x64"], "entry": "浏览器", "services": "无", "bindings": "无"},
             "reply": "请确认",
         }
 
@@ -71,8 +72,11 @@ def test_draft_revision_confirmation_restart_and_web_baseline(tmp_path, monkeypa
             "name": plan["name"],
             "scope": "登记、处理",
             "acceptance": "刷新后仍为完成",
+            "delivery": {**plan["delivery"], "entry": "应用首页"},
             "target": "web",
         }
+        assert http.post(url + "/first-plan/edit", json={**edit, "target": "desktop"}).status_code == 400
+        assert http.post(url + "/first-plan/edit", json={**edit, "delivery": {**edit["delivery"], "entry": ""}}).status_code >= 400
         assert http.post(url + "/first-plan/edit", json=edit).json()["revision"] == 2
         assert http.post(url + "/first-plan/confirm", json={"revision": 1}).status_code == 400
         for _ in range(2):
@@ -82,13 +86,57 @@ def test_draft_revision_confirmation_restart_and_web_baseline(tmp_path, monkeypa
         studio.step(project)
         changed = first_plan.read(studio, project)
         assert changed["state"] == "starting", changed
+        assert changed["delivery"]["entry"] == "应用首页"
         source = studio.directory(project) / "initial"
         assert (source / "integrations" / ("app-" + project) / "index.html").is_file()
         assert not (source / "bots/desktop-reader").exists()
+        from chatcopilot.botspec.runtime import load_runtime_context
+        assert load_runtime_context(source / "bots" / ("app-" + project) / "bot.yaml").spec.llm.research.binding == "chat"
         assert not starts
         studio.step(project)
         assert len(starts) == 1 and "刷新后仍为完成" in starts[0][3]
+        assert "linux-x64" in starts[0][3] and "应用首页" in starts[0][3]
         assert http.get(url).json()["type"] == "web"
+
+
+def test_later_request_keeps_service_delivery_and_previous_plan_record(tmp_path, monkeypatch):
+    import json
+    project, message = uuid4().hex, uuid4().hex
+    studio = Studio(tmp_path, ROOT)
+    first_plan.create(studio, project, "报修台", "tools", "以网页提交工单")
+    delivery = {"platforms": ["linux-x64"], "entry": "浏览器", "services": "Docker 和数据卷", "bindings": "无"}
+    async def discuss(_home, _project, _request, context, *, planning=False):
+        if planning:
+            return {"action": "plan", "name": "报修台", "target": "source", "scope": "登记工单",
+                    "acceptance": "重启后能找回", "delivery": delivery, "reply": "确认"}
+        data = json.loads(context)
+        assert data["application_type"] == "source" and data["delivery"] == delivery
+        return {"action": "develop", "name": "报修台", "reply": "继续"}
+    monkeypatch.setattr(runtime, "discuss", discuss)
+    monkeypatch.setattr(projects, "project_inputs", lambda _: {})
+    studio.step(project)
+    first_plan.review(studio, project, 1, action="confirm")
+    studio.step(project)
+    studio.update(project, "failed", "上次请求的验证环境不可用")
+    studio.submit(project, message, "继续交付当前应用")
+    studio.step(message)
+    assert studio.projects()[0]["plan_state"] == "starting"
+    assert first_plan.read(studio, project)["state"] == "failed"
+    with studio.db.connect() as db:
+        goal = db.execute("SELECT goal FROM messages WHERE id=?", (message,)).fetchone()[0]
+    assert "linux-x64" in goal
+
+
+def test_new_desktop_uses_application_prompts_and_its_own_bridge(tmp_path, monkeypatch):
+    import yaml
+    monkeypatch.setattr(projects, "project_inputs", lambda _: {})
+    bot = "inventory-tool"
+    projects.new_project(ROOT, tmp_path, bot, "库存工具")
+    app = tmp_path / "initial" / "bots" / bot
+    assert "库存工具" in (app / "prompts/identity.md").read_text()
+    assert "书名" not in (app / "prompts/response-style.md").read_text()
+    server, = yaml.safe_load((app / "mcp/servers.yaml").read_text())["servers"]
+    assert server["args"][-2] == bot
 
 
 def test_web_archive_only_contains_owned_verified_candidate_files(tmp_path):

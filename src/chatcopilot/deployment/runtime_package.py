@@ -10,12 +10,12 @@ from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_
 from chatcopilot.deployment.application_bundle import NATIVE_SCHEMA as SCHEMA
 
 
-def export_runtime(source: Path, output: Path, *, bot_relative="bots/live2d-desktop/bot.yaml") -> dict:
+def export_runtime(source: Path, output: Path, *, bot_relative="bots/live2d-desktop/bot.yaml", members=None) -> dict:
     """Freeze the source stage; the producer must bind artifacts before read_bundle accepts it."""
     from chatcopilot.deployment.application_bundle import MANIFEST
     if output.exists():
         raise ValueError("Runtime package output already exists")
-    manifest = source_manifest(source)
+    manifest = members if members is not None else source_manifest(source)
     if bot_relative not in manifest:
         raise ValueError("Runtime package application is missing")
     from chatcopilot.core.application_configuration import load_application_spec

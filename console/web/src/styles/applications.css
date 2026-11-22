@@ -14,3 +14,11 @@
   .application-records .arco-card-body, .application-records .arco-card-header { padding: 12px; }
   .application-records .arco-space-vertical { width: 100%; }
 }
+.studio-install { width: 100%; max-width: 720px; }
+.studio-install .studio-info { margin-top: 0; }
+.studio-install .studio-info p { margin: 0 0 4px; }
+.studio-install .arco-select { width: min(100%, 240px); min-width: 156px; }
+.studio-install summary { cursor: pointer; color: var(--color-text-2); margin: 8px 0; }
+.studio-install code { overflow-wrap: anywhere; }
+.studio-build-options label { display: grid; gap: 6px; }
+.studio-build-options > .arco-space { width: min(100%, 460px); padding: 8px 0; }

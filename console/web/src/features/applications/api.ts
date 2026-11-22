@@ -3,13 +3,14 @@ import type { RepairTask } from "../harness/api";
 export interface ApplicationView {
   first_plan?: boolean; plan_state?: string; icon?: string;
   id: string; name: string; type: string; source: string; instance_id?: string | null; project_id?: string | null;
-  capabilities: { configure: boolean; control: boolean; chat: boolean; improve: boolean; records: boolean; settings?: boolean; observation?: boolean };
+  capabilities: { local_deploy?: boolean; configure: boolean; control: boolean; chat: boolean; improve: boolean; records: boolean; settings?: boolean; observation?: boolean };
   links: { configuration?: string; records?: string; eval?: string; harness?: string };
   state: { process: string; channel: string; end_to_end: string }; message?: string; last_activity?: number;
 }
 export interface Configuration { name: string; instructions: string; app_id: string; app_secret?: string; secret_configured?: boolean; credentials_configured?: boolean }
 export interface DraftRequest { id: string; name: string; icon: string; requirement: string }
-export interface FirstPlan { project: string; name: string; state: string; requirement: string; target: string; scope: string; acceptance: string; revision: number; approved: number; reply: string }
+export interface PlanDelivery { platforms: InstallPlatform[]; entry: string; services: string; bindings: string }
+export interface FirstPlan { project: string; name: string; state: string; requirement: string; target: string; scope: string; acceptance: string; delivery: PlanDelivery | null; revision: number; approved: number; reply: string }
 export interface ManagementMessage { blocks_development?: boolean; read_only?: boolean; recovery_message?: string; retryable?: boolean; launched?: number | null; build?: string; id: string; text: string; state: string; reply: string; task?: string; proposal?: { name?: string; instructions?: string } }
 export interface CheckResult { checks?: { ok: boolean; message: string }[]; message?: string; state?: string }
 export class ApplicationRequestError extends Error {
@@ -22,7 +23,26 @@ async function request<T>(path = "", options?: RequestInit): Promise<T> {
   return value;
 }
 const path = (id: string) => "/" + encodeURIComponent(id);
+export type InstallPlatform = "windows-x64" | "linux-x64";
+export interface InstallerRecord {
+  id: string; platform: InstallPlatform; state: "queued" | "building" | "ready" | "failed"; error?: string;
+  origin: {kind: "commit" | "candidate"; revision?: string; task?: string}; selection?: string;
+  size?: number; sha256?: string; docker?: boolean; requirements?: string[]; components?: string[];
+  installation?: { completed_at: number; services_ready: boolean }; updated?: number;
+  acceptance?: { candidate_digest: string; verification_digest: string };
+}
+export interface InstallerCatalog {
+  platforms: InstallPlatform[]; docker: boolean; requirements: string[]; commit: string; reason: string; builds: InstallerRecord[];
+}
+export const openApplicationUrl = (id: string) => "/api/applications" + path(id) + "/open";
+export const installerUrl = (id: string, key: string, platform: InstallPlatform) =>
+  "/api/applications" + path(id) + "/installers/" + encodeURIComponent(key) + "/" + platform;
 export const applicationsApi = {
+  installers: (id: string, signal?: AbortSignal) => request<InstallerCatalog>(path(id) + "/installers", {signal}),
+  importInstallation: (id: string, key: string, platform: InstallPlatform, receipt: unknown) =>
+    request(path(id) + "/installers/" + encodeURIComponent(key) + "/" + platform + "/installation", { method: "POST", body: JSON.stringify(receipt) }),
+  buildInstaller: (id: string, platform: InstallPlatform, kind: "commit" | "candidate", revision: string) =>
+    request<{id: string}>(path(id) + "/installers", {method: "POST", body: JSON.stringify({platform, kind, revision})}),
   taskFlow: (id: string, task: string, signal?: AbortSignal) => request<{goal:string; candidate_digest?:string; origin:{id?:string;kind?:string;digest?:string;evaluation_id?:string};
     steps:Array<{id:string;title:string;status:string;phase:string}>}>(path(id)+"/project-tasks/"+encodeURIComponent(task)+"/flow",{signal}),
   commandPage: (id:string,task:string,source:string,cursor:string,signal?:AbortSignal) =>

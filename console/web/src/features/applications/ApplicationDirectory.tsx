@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Input, Modal, Select, Space, Spin, Tabs } from "@arco-design/web-react";
 import { IconApps, IconBook, IconList, IconMessage, IconRobot, IconTool } from "@arco-design/web-react/icon";
-import { applicationsApi, ApplicationRequestError, type ApplicationView, type DraftRequest } from "./api";
+import { applicationsApi, openApplicationUrl, ApplicationRequestError, type ApplicationView, type DraftRequest } from "./api";
 import { applicationHref, managementStateLabel, stateLabel, typeLabel } from "./navigation";
 import NativeConnection from "./NativeConnection";
 import Live2DImport from "./Live2DImport";
@@ -33,6 +33,12 @@ export function AppIcon({ app }: { app: Pick<ApplicationView, "icon" | "type" | 
   );
 }
 const pendingKey = "agentstrata.studio.application-draft";
+function ReleaseActions({ app }: { app: ApplicationView }) {
+  return <span className="studio-release-actions" onClick={event => event.stopPropagation()}>
+    <a href={openApplicationUrl(app.id)} target="_blank" rel="noopener noreferrer">打开应用</a>
+    <a href={applicationHref(app.id, "use")}>下载与部署</a>
+  </span>;
+}
 const initial = () => ({ name: "", requirement: "", icon: "box" });
 
 export default function ApplicationDirectory({
@@ -142,7 +148,7 @@ export default function ApplicationDirectory({
   const href = (a: ApplicationView) =>
     applicationHref(
       a.id,
-      a.first_plan && !["ready", "applied"].includes(a.plan_state || "") ? "improve" : "overview",
+      a.source === "release" ? "use" : a.first_plan && !["ready", "applied"].includes(a.plan_state || "") ? "improve" : "overview",
     );
   return (
     <main className="studio-directory">
@@ -193,13 +199,10 @@ export default function ApplicationDirectory({
           <Empty description={all.length ? "没有匹配的应用" : "还没有应用，点击创建应用开始。"} />
         ) : grid ? (
           <div className="studio-app-grid">
-            {apps.map(a => (
-              <a key={a.id} href={href(a)}>
-                <AppIcon app={a} />
-                <strong>{a.name}</strong>
-                <small>{status(a)}</small>
-              </a>
-            ))}
+            {apps.map(a => {
+              const card = <a key={a.id} href={href(a)}><AppIcon app={a} /><strong>{a.name}</strong><small>{status(a)}</small></a>;
+              return a.source === "release" ? <div className="studio-release-card" key={a.id}>{card}<ReleaseActions app={a} /></div> : card;
+            })}
           </div>
         ) : (
           <table className="studio-app-table">
@@ -225,6 +228,7 @@ export default function ApplicationDirectory({
                   </td>
                   <td>
                     <a href={href(a)}>{a.name}</a>
+                    {a.source === "release" && <ReleaseActions app={a} />}
                   </td>
                   <td>{typeLabel(a.type)}</td>
                   <td>{status(a)}</td>

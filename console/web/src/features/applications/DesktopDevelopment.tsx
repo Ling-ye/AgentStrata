@@ -8,7 +8,7 @@ import { acknowledgedDevelopment, canonicalDevelopmentText, DESKTOP_REQUIREMENT_
 const { Text, Paragraph } = Typography;
 const errorText = (error: unknown) => error instanceof Error ? error.message : String(error);
 
-export default function DesktopDevelopment({ id, onDirty, readOnly = false, versionsOnly = false, web = false }: { id: string; onDirty?: (dirty: boolean) => void; readOnly?: boolean; versionsOnly?: boolean; web?: boolean }) {
+export default function DesktopDevelopment({ id, onDirty, readOnly = false, versionsOnly = false }: { id: string; onDirty?: (dirty: boolean) => void; readOnly?: boolean; versionsOnly?: boolean }) {
   const messages = useQuery({ queryKey: ["application-management", id], queryFn: ({ signal }) => applicationsApi.messages(id, signal), refetchInterval: 3000 });
   const client = useQueryClient();
   const [text, setText] = useState("");
@@ -87,8 +87,8 @@ export default function DesktopDevelopment({ id, onDirty, readOnly = false, vers
       {message.read_only && <Text type="secondary">历史记录仅供查看，不会自动继续执行或重新打包；已保存的验收构建仍需通过校验后下载。</Text>}
       {message.task && <><Paragraph type="secondary">开发任务：{message.task}</Paragraph><ProjectTaskRecord id={id} task={message.task} active={["starting","developing","verifying","packaging"].includes(message.state)} /></>}
       {readyDesktopBuild(message) && <Space direction="vertical">
-        <Button href={applicationBuildUrl(id, message.id)}>{web ? "下载网页包（ZIP）" : "下载已验收构建"}</Button>
-        <Text type="secondary">{web ? "解压网页包后，在浏览器中打开 index.html。" : message.launched ? "曾记录到此构建运行；当前运行状态仍需另外核对。" : "尚未记录安装后的运行验证。下载后由你安装并打开应用。"}</Text>
+        <Button href={applicationBuildUrl(id, message.id)}>下载此历史构建</Button>
+        <Text type="secondary">{message.launched ? "曾记录到此构建运行；当前运行状态仍需另外核对。" : "尚未记录此构建在接收方的运行验证。"}</Text>
       </Space>}
       {!readOnly && message.state === "failed" && (message.retryable && !message.read_only ? <Button disabled={busy || active || !!pending || blocked} onClick={() => void retry(message.id)}>重试原开发请求</Button> : <Text type="secondary">此历史任务不能继续，请保留证据并提出新的需求。</Text>)}
     </div>)}</div>

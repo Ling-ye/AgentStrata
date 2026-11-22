@@ -47,6 +47,20 @@ Eval 从受管源码准备隔离执行，评分与检查仍由执行中的宿主
 [交付内容](../../src/chatcopilot/deployment/application_bundle.py)、
 [安装与运行入口](../../src/chatcopilot/deployment/application_runtime.py)。
 
+### 工作台应用安装包
+
+桌宠构建以插件锁文件的 SHA-256 定位持久输入缓存，其中分别保存 wheels、sources 和 projects。构建端也可通过 `--plugin-wheelhouse`、`--plugin-sourcehouse` 和 `--plugin-projecthouse` 指定原始材料。构建器按所选源码重新核验原始文件及补丁，Windows 独立运行接受仍由对应的验证记录决定。
+
+在具体应用的「下载与部署」选择接收方的操作系统。Windows x64 下载一个 EXE，支持 Linux x64 的应用下载一个 RUN，用 `bash 应用-Setup.run` 安装。纯网页由系统浏览器打开；原生桌面应用和本地辅助进程沿用 Windows 安装器。首次生成时确认完整的 Git 提交，或选择该应用已独立验收的 Harness 任务。构建端从独立的提交检出或已核对的冻结候选读取公开文件。旧 ZIP 可从原开发记录取回。
+
+需要独立服务时，构建机使用 Docker 构建 linux/amd64 镜像，用 NSIS 3 构建 Windows 安装器（也可复用桌面构建工具的锁定 NSIS）。Linux 上构建原生 Windows 安装包使用桌面项目锁定的 Electron 和 NSIS，安装器绑定同一份桌面启动清单。安装器内含公开源码、Compose 配置、镜像和镜像摘要。接收方预装 Docker Engine 或 Docker Desktop（Linux 容器）和支持 `up --wait` 的 Compose v2。安装器离线导入镜像，复用本应用的命名卷，通过健康检查后打开入口。重复安装保留命名卷。安装器成功后在该应用目录的 receipts 中保存与安装包 SHA-256 对应的 JSON，可在 Studio「校验与运行记录」导入。记录说明接收方当次安装和服务健康检查结果，业务操作和渠道投递另行核验。Linux 安装位置为 `${XDG_DATA_HOME:-$HOME/.local/share}/agentstrata/apps/<bot>`，Windows 为 `%LOCALAPPDATA%\AgentStrata\Apps\<bot>`。
+
+独立服务项目在 `integrations/<bot>/` 提供 `compose.yaml` 和 `install.json`。后者可指定网页入口，如 `{"entry":{"service":"app","port":8080}}`，以及给接收方的 `requirements`。每个服务声明健康检查和应用内的相对构建目录；预构建第三方镜像须固定 `name@sha256:…`，在 `image_licenses` 中按服务名指向随包的再分发依据。命名卷属于此应用，网页随机分配本机回环端口。在应用自己的首次设置中绑定其他账号与可选能力。
+
+可执行客户端可在同一清单声明 `clients`，例如 `{"clients":{"windows-x64":"client/app.exe","linux-x64":"client/app"}}`。入口路径相对应用公开目录，Linux 程序须在 Git 中保留执行位。没有独立服务时，安装器一并安装客户端和随附的本地辅助进程。有 Compose 声明时，同一个安装包先启动并核对服务，再打开客户端。带网页服务入口的可执行客户端从 `AGENTSTRATA_SERVICE_URL` 读取该次部署的本机地址。公开目录中的静态网页可直接以 HTML 为入口。
+
+QQ 与微信使用各自的 BotSpec、Gateway 和运行时。QQ 个人号需接收方自备已登录的 NapCat/OneBot v11 容器，命名为 `napcat-<bot>`，启用带 Access Token 的正向 WebSocket。Gateway 共享该容器的网络命名空间，在回环地址连接。QQ 官方渠道绑定 AppID、AppSecret，微信绑定自己的 iLink 凭据。原配置为 Codex 的 QQ 个人号和微信安装包在首次配置时可明确选择 Codex 或 LangGraph。Codex 先检查容器中普通用户的 bubblewrap 会话隔离，失败会退出；LangGraph 使用接收方绑定的聊天模型。选择保存在本应用的数据卷，重复运行沿用已选运行时。安装时填写个人模型连接。声明独立代码任务的机器人另选 Codex 开发模型，需要执行代码任务时在安装版本目录运行 `docker compose -p as-<bot> run --rm --no-deps gateway login-worker` 单独授权。可选 MCP、外部账号和个人工作区由接收方准备。账号保存在本应用数据卷，后续可在已安装版本目录用 `docker compose -p as-<bot> run --rm --no-deps gateway reconfigure` 重新设置，再用相同项目名重启 Gateway。
+
 ### 运行依赖输入清单基础
 
 `core.archive_inventory.zip_inventory` 从不可变 ZIP 字节与宿主冻结输入中的 SHA256 派生

@@ -644,6 +644,24 @@ def test_generated_test_is_frozen_and_reused_with_real_candidate_import(local_te
     assert task["source"]["feedback"] == feedback
 
 
+def test_empty_unit_suite_preserves_static_regressions(tmp_path, monkeypatch):
+    verifier = LocalVerifier(tmp_path)
+    invoked = []
+    monkeypatch.setattr(verifier, "_pytest", lambda *a, **kw: pytest.fail("No pytest cases were selected"))
+    def static(task, tree, cancel, selected):
+        invoked.append(selected)
+        return {"repository:ruff": {"outcome": "passed"}} if selected is None or "repository:ruff" in selected else {}
+    monkeypatch.setattr(verifier, "_static_checks", static)
+    task = {"task_id": "fixture", "source": {"kind": "application"}}
+    baseline = verifier.regressions(task, tmp_path, lambda: None)
+    assert baseline["case_ids"] == ["repository:ruff"]
+    assert verifier.regressions(task, tmp_path, lambda: None, baseline["case_ids"]) == baseline
+    assert verifier.regressions(task, tmp_path, lambda: None, [])["rows"] == {}
+    assert invoked == [None, ["repository:ruff"], []]
+    with pytest.raises(HarnessError, match="必要仓库检查已变化"):
+        LocalVerifier(tmp_path).regressions(task, tmp_path, lambda: None, baseline["case_ids"])
+
+
 def test_reference_answer_cannot_replace_reproduction(repository, tmp_path):
     import json
 

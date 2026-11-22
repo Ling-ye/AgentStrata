@@ -13,6 +13,7 @@ from fastapi.routing import APIRoute
 from pydantic import BaseModel, ConfigDict, Field
 
 from console.control.applications import Applications
+from studio.first_plan import DeliveryPlan
 
 
 def access(request: Request):
@@ -113,6 +114,7 @@ class PlanReview(BaseModel):
     target: Literal["web", "desktop", "source", "qq_official", ""] = ""
     scope: str = Field(default="", max_length=16000)
     acceptance: str = Field(default="", max_length=16000)
+    delivery: DeliveryPlan | None = None
 
 
 @router.post("/drafts")

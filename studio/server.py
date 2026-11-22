@@ -114,7 +114,7 @@ def application(home, framework, token, *, run_worker=True):
     @app.get("/api/projects/{project}/builds/{message}")
     def download(project: UUID, message: UUID):
         path, digest = studio.artifact_reference(project.hex, message.hex)
-        return VerifiedBuildResponse(path, digest, filename="AgentStrata-" + project.hex[:8] + ".exe")
+        return VerifiedBuildResponse(path, digest, filename="AgentStrata-" + project.hex[:8] + path.suffix)
 
     @app.post("/api/projects/{project}/builds/{message}/try")
     def trial(project: UUID, message: UUID):

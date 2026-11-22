@@ -1,14 +1,16 @@
 """Convert an audited source delivery into a native installer, without changing its source."""
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 from pathlib import Path
 import re
+import sys
 import shutil
 import subprocess
 
-from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest
+from chatcopilot.core.source_snapshot import copy_sources, git_output, manifest_digest, source_manifest
 from chatcopilot.deployment.application_bundle import MANIFEST, NATIVE_SCHEMA, export_bundle, read_bundle
 from chatcopilot.deployment.runtime_package import export_runtime
 from chatcopilot.deployment.windows_wheels import (
@@ -66,7 +68,8 @@ def build_payload(project, stage, *, bot_relative, release=None, assets=None, ho
     """The native origin describes the build. The separate receipt binds accepted source, when available."""
     payload = stage / "runtime-payload"
     if release is None:
-        record = export_runtime(project, payload, bot_relative=bot_relative)
+        members = native_inputs(source_manifest(project), Path(bot_relative).parent.name)
+        record = export_runtime(project, payload, bot_relative=bot_relative, members=members)
         receipt = None
     else:
         delivery = stage / "accepted"
@@ -159,15 +162,32 @@ def pack(project, stage, *, bot_relative, release=None, assets=None, name, insta
     descriptor = {"installId": install_id, "name": name, "botId": receipt["bot_id"],
                   "kind": "live2d" if receipt["bot_id"] == "live2d-desktop" else "application"}
     (stage / "desktop-build.json").write_text(json.dumps(descriptor, ensure_ascii=False), encoding="utf-8")
-    command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
-               windows_path(recipe / "build.ps1"), "-Stage", windows_path(stage)]
-    if windows_build:
-        command.extend(["-BuildRoot", windows_build])
-    subprocess.run(command, check=True, timeout=1800)
+    try:
+        command = ["powershell.exe", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File",
+                   windows_path(recipe / "build.ps1"), "-Stage", windows_path(stage)]
+        if windows_build:
+            command.extend(["-BuildRoot", windows_build])
+        subprocess.run(command, check=True, timeout=1800)
+    except OSError as exc:
+        if sys.platform != "linux" or exc.errno not in (errno.ENOEXEC, errno.ENOENT):
+            raise
+        tools = recipe.parent / "live2d_desktop"
+        if not (tools / "node_modules/electron-builder/package.json").is_file():
+            raise ValueError("Linux 构建端需先在 integrations/live2d_desktop 运行 npm ci") from exc
+        subprocess.run(["node", str(recipe / "package.cjs"), str(tools), str(stage), str(recipe)],
+                       check=True, timeout=1800)
+        (stage / "release/application.exe").rename(stage / "application.exe")
+        shutil.rmtree(stage / "release")
+        shutil.rmtree(stage / "host")
     exe = stage / "application.exe"
     if not exe.is_file() or exe.stat().st_size == 0:
         raise ValueError("Windows 打包程序未生成安装包")
-    receipt.update(installer_sha256=digest(exe), install_id=install_id,
+    components = ["Windows 桌面客户端", "应用源码与运行资源", "首次配置程序"]
+    if receipt.get("mcp_inputs_sha256"):
+        components.append("Windows-MCP 运行输入")
+    if receipt.get("plugin_inputs_sha256"):
+        components.append("桌宠插件运行输入")
+    receipt.update(components=components, installer_sha256=digest(exe), install_id=install_id,
                    launcher_manifest_sha256=digest(stage / "desktop-launch.json"))
     (stage / "build-receipt.json").write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
     return receipt

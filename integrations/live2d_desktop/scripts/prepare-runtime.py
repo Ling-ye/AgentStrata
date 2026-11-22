@@ -13,7 +13,7 @@ from urllib.request import urlopen
 import zipfile
 
 ROOT = Path(__file__).resolve().parents[3]
-sys.path[:0] = [str(ROOT / "src"), str(ROOT / "integrations/open_llm_vtuber")]
+sys.path[:0] = [str(ROOT), str(ROOT / "src"), str(ROOT / "integrations/open_llm_vtuber")]
 
 
 def source_wheel(build: Path, uv: str) -> tuple[Path, dict]:
@@ -66,10 +66,11 @@ def main():
     from chatcopilot.deployment.runtime_requirements import prepare_runtime_requirements
     from chatcopilot.deployment.windows_python_inputs import prepare_native_python_inputs
     from chatcopilot.deployment.windows_mcp_inputs import prepare_native_mcp_inputs
-    from chatcopilot.deployment.windows_plugin_inputs import prepare_native_plugin_inputs, stage_native_plugin_projects
+    from chatcopilot.deployment.windows_plugin_inputs import LOCK as PLUGIN_LOCK, MEMBER as PLUGIN_INPUTS, prepare_native_plugin_inputs, stage_native_plugin_projects
     from chatcopilot.deployment.windows_dependencies import MEMBER as DEPENDENCIES, build_dependency_declarations
     from chatcopilot.deployment.application_bundle import MANIFEST, read_bundle
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--source", type=Path, help="Frozen application checkout for a Studio installer")
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--build-root", type=Path, required=True)
     parser.add_argument("--uv", default=shutil.which("uv"), help="Locked uv build executable")
@@ -84,16 +85,38 @@ def main():
     parser.add_argument("--plugin-projecthouse", type=Path, help="Both original pinned backend/frontend Git TARs; patches come only from the frozen source")
     parser.add_argument("--plugin-project-lab", type=Path, help="Existing empty private lab for inert project file staging; never an installation root")
     args = parser.parse_args()
-    package = export_runtime(ROOT, args.output)
+    if args.source:
+        from chatcopilot.core.source_snapshot import source_manifest
+        from studio.delivery import native_inputs
+        frozen = native_inputs(source_manifest(args.source), "live2d-desktop")
+        # The trusted host builds the pinned frontend. It may only attest resources from identical inputs.
+        prefix = "integrations/open_llm_vtuber/agentstrata_vtuber/"
+        def inputs(manifest):
+            return {p: v for p, v in manifest.items() if p.startswith(prefix)}
+        if inputs(frozen) != inputs(source_manifest(ROOT)):
+            raise ValueError("桌宠的资源配方与构建端不同，请从对应安装版本导入经核验的载荷")
+        package = export_runtime(args.source, args.output, members=frozen)
+    else:
+        package = export_runtime(ROOT, args.output)
     python_files = prepare_native_python_inputs(args.output, package["source_manifest"], metadata=args.python_metadata)
     mcp_files = prepare_native_mcp_inputs(args.output,package["source_manifest"],package["bot_relative"],
         source_archive=args.mcp_source_archive,python_archive=args.mcp_python_archive,wheel_cache=args.mcp_wheelhouse)
+    policy = package["source_manifest"].get(PLUGIN_LOCK)
+    cache = Path.home() / ".cache/agentstrata/plugin-inputs" / policy["sha256"] if policy else None
+    def cache_input(explicit, name):
+        if explicit is not None:
+            return explicit
+        return cache / name if cache and (cache / name).is_dir() else None
     plugin_files = prepare_native_plugin_inputs(args.output,package["source_manifest"],package["bot_relative"],
-        wheel_cache=args.plugin_wheelhouse,source_cache=args.plugin_sourcehouse,project_cache=args.plugin_projecthouse)
+        wheel_cache=cache_input(args.plugin_wheelhouse, "wheels"), source_cache=cache_input(args.plugin_sourcehouse, "sources"),
+        project_cache=cache_input(args.plugin_projecthouse, "projects"))
     if args.plugin_project_lab is not None:
         staged=stage_native_plugin_projects(args.output,package['source_manifest'],package['bot_relative'],workspace=args.plugin_project_lab)
         print(json.dumps(staged,sort_keys=True))
     if plugin_files:
+        report = json.loads((args.output / PLUGIN_INPUTS).read_text())
+        if not report["wheel_closure_verified"] or not report.get("project_sources_verified"):
+            raise ValueError("Plugin original wheels and patched project sources are incomplete")
         raise ValueError("Plugin original inputs remain data; compiled frontend/assets/tools, prefix/loading/ABI and installation identity lack runtime admission. Original input audit retained; vendor builds were not started")
     args.build_root.mkdir(parents=True, exist_ok=True)
     if not args.uv:

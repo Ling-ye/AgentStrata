@@ -226,15 +226,15 @@ class LocalVerifier:
         check_cancel: Callable[[], None],
         cases: list[str] | None = None,
     ) -> dict[str, Any]:
-        folder = worktree / "tests/unit"
-        if cases is None and not list(folder.rglob("test_*.py")) and not task.get("source", {}).get("regression_tests"):
-            return {"case_ids": [], "passed_cases": [], "failed_cases": []}
-        result = self._pytest(
-            {**task, "source": {key: value for key, value in task.get("source", {}).items() if key != "test_relative_path" or task.get("delivery") or task.get("review_and_commit")}},
-            worktree, ["tests/unit"], check_cancel,
-            selected=[name for name in cases if not name.startswith("repository:")] if cases is not None else None,
-            application_regressions=task.get("source", {}).get("kind") == "application",
-        )
+        source = {key: value for key, value in task.get("source", {}).items()
+                  if key != "test_relative_path" or task.get("delivery") or task.get("review_and_commit")}
+        pytest_cases = None if cases is None else [name for name in cases if not name.startswith("repository:")]
+        result = {"collected": [], "rows": {}}
+        # Re-run named baseline cases even when their files have disappeared from the candidate.
+        if (pytest_cases or (pytest_cases is None and (source.get("regression_tests") or source.get("test_relative_path")
+                                                      or any((worktree / "tests/unit").rglob("test_*.py"))))):
+            result = self._pytest({**task, "source": source}, worktree, ["tests/unit"], check_cancel,
+                                  selected=pytest_cases, application_regressions=source.get("kind") == "application")
         static = self._static_checks(task, worktree, check_cancel,
                                      [name for name in cases if name.startswith("repository:")] if cases is not None else None)
         result["rows"].update(static)

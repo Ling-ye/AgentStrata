@@ -8,6 +8,7 @@ import socket
 import subprocess
 import sys
 import threading
+import time
 
 from fastapi import APIRouter
 from pydantic import BaseModel
@@ -53,6 +54,20 @@ class Guide:
         self._model_revision = None
         self.lock = threading.Lock()
 
+    def wait_for_gateway(self, port):
+        deadline = time.monotonic() + 30
+        while self.process.poll() is None:
+            try:
+                with socket.create_connection(("127.0.0.1", port), timeout=0.25):
+                    return
+            except OSError:
+                if time.monotonic() >= deadline:
+                    self.process.terminate()
+                    self.process.wait(timeout=30)
+                    break
+                time.sleep(0.1)
+        raise RuntimeError("工作台讨论 Gateway 未能启动，请检查全局 chat 模型绑定和本机服务。")
+
     def start(self):
         with self.lock:
             source = self.model_path
@@ -82,6 +97,7 @@ class Guide:
                 self.process = subprocess.Popen([sys.executable, "-m", "chatcopilot", "run", "--bot",
                     str(self.framework / "bots/studio-guide/bot.yaml")], cwd=self.framework, env=env,
                     stdout=log, stderr=log)
+            self.wait_for_gateway(port)
             write_private(self.state_dir / "guide.json", json.dumps({"url":f"ws://127.0.0.1:{port}", "token":token}))
 
     def stop(self):

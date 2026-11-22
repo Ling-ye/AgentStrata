@@ -29,28 +29,43 @@ async function build(tools, job, recipe) {
   if (studio) fs.copyFileSync(path.resolve(recipe,'../../studio/windows/main.cjs'), path.join(host,'main.cjs'));
   fs.copyFileSync(path.join(job,'desktop-build.json'), path.join(host,'desktop-build.json'));
   const nsisInclude = path.join(job,'app-directory.nsh');
-  fs.writeFileSync(nsisInclude, '!define /redef APP_FILENAME "' + descriptor.installId + '"\n');
+  const receiptSource = path.join(job, 'install-receipt.ps1');
+  if (!studio) fs.writeFileSync(receiptSource, '\ufeff' + fs.readFileSync(path.join(recipe, 'install-receipt.ps1'), 'utf8').replace(/^\uFEFF/, ''));
+  const recordInstall = studio ? '' : [
+    'InitPluginsDir',
+    'File "/oname=$PLUGINSDIR\\install-receipt.ps1" "' + receiptSource.replaceAll('$', '$$$$') + '"',
+    'ExecWait \'"$SYSDIR\\WindowsPowerShell\\v1.0\\powershell.exe" -NoProfile -ExecutionPolicy Bypass -File "$PLUGINSDIR\\install-receipt.ps1" -Bot "' + descriptor.botId + '" -Installer "$EXEPATH"\' $0',
+    'DetailPrint "Installation receipt exit code $0"',
+  ].join('\n');
+  fs.writeFileSync(nsisInclude, '!define /redef APP_FILENAME "' + descriptor.installId + '"\n' +
+    (recordInstall ? '!macro customInstall\n' + recordInstall + '\n!macroend\n' : ''));
   const meta = {name:descriptor.installId, productName:descriptor.name, version:'0.1.0',
     description:descriptor.name, author:'AgentStrata', main:'main.cjs', license:'AGPL-3.0-only'};
   fs.writeFileSync(path.join(host,'package.json'), JSON.stringify(meta));
-  await build({projectDir:host, targets:Platform.WINDOWS.createTarget('nsis', Arch.x64), config:{
+  const crossBuild = process.platform === 'linux';
+  const electron = fromTools('electron/package.json');
+  const electronDist = crossBuild ? await fromTools('@electron/get').downloadArtifact({
+    version:electron.version, artifactName:'electron', platform:'win32', arch:'x64',
+    checksums:fromTools('electron/checksums.json'),
+  }) : path.join(tools, 'node_modules/electron/dist');
+  await build({projectDir:host, targets:Platform.WINDOWS.createTarget(crossBuild ? 'dir' : 'nsis', Arch.x64), config:{
     appId:'org.agentstrata.desktop.' + descriptor.installId, productName:descriptor.name,
-    executableName:descriptor.installId, artifactName:'application.exe', electronVersion:fromTools('electron/package.json').version,
-    electronDist:path.join(tools,'node_modules/electron/dist'), npmRebuild:false, asar:true,
+    executableName:descriptor.installId, artifactName:'application.exe', electronVersion:electron.version,
+    electronDist, npmRebuild:false, asar:true,
     directories:{output:path.join(job,'release')}, files:['**/*'],
     extraResources:studio ? ['framework.tar.gz','framework.sha256'].map(n=>({from:path.join(job,n),to:n})).concat(
       ['start.ps1','bootstrap.sh'].map(n=>({from:path.resolve(recipe,'../../studio/windows',n),to:n}))) :
       [{from:path.join(job,'runtime-payload'),to:'runtime-payload'},
        // The reviewed application and the host recipe may come from different source versions.
        {from:recipe,to:'desktop-source/integrations/desktop_app',filter:[
-         'main.cjs','preload.cjs','setup.html','setup.js','desktop.css','build.ps1','package.cjs']},
+         'main.cjs','preload.cjs','setup.html','setup.js','desktop.css','build.ps1','package.cjs','nsis.cjs','cross-native.nsi','install-receipt.ps1']},
        {from:live,to:'desktop-source/integrations/live2d_desktop',filter:[
          'package.json','package-lock.json','src/backend.ts',...(descriptor.kind === 'application' ? ['src/contracts.ts'] : [])]},
        {from:path.join(job,'desktop-build.json'),to:'desktop-source/desktop-build.json'},
        ...(descriptor.kind === 'live2d' ? [
         {from:path.resolve(live,'scripts/bootstrap-windows.ps1'),to:'desktop-host/bootstrap-windows.ps1'},
         {from:path.resolve(recipe,'../../src/chatcopilot/windows_setup.py'),to:'desktop-host/windows_setup.py'}] : [])],
-    win:{signExecutable:false}, nsis:{oneClick:false,perMachine:false,allowToChangeInstallationDirectory:true,createDesktopShortcut:true,
+    win:crossBuild ? {signAndEditExecutable:false} : {signExecutable:false}, nsis:{oneClick:false,perMachine:false,allowToChangeInstallationDirectory:true,createDesktopShortcut:true,
       include:nsisInclude, shortcutName:descriptor.kind==='studio' || descriptor.installId==='desktop-reader' ? descriptor.name :
         descriptor.name + (descriptor.kind==='live2d' ? ' 试用 ' : ' · ') + descriptor.installId.slice(-8)},
     publish:null}});
@@ -68,6 +83,25 @@ async function build(tools, job, recipe) {
       }
     }
     collect();
+    if (crossBuild) {
+      const escape = s => s.replaceAll('$', '$$$$').replaceAll('"', '$\"');
+      const directories = new Set();
+      const remove = Object.keys(files).map(relative => {
+        let dir = path.posix.dirname(relative);
+        while (dir !== '.') { directories.add(dir); dir = path.posix.dirname(dir); }
+        return 'Delete "$INSTDIR\\' + escape(relative.replaceAll('/', '\\')) + '"';
+      });
+      for (const dir of [...directories].sort((a, b) => b.length - a.length)) {
+        remove.push('RMDir "$INSTDIR\\' + escape(dir.replaceAll('/', '\\')) + '"');
+      }
+      // Only remove files shipped with this application. Private user data lives elsewhere.
+      fs.writeFileSync(path.join(job, 'remove-files.nsh'), '\ufeff' + remove.join('\n'));
+      const template = fs.readFileSync(path.join(recipe, 'cross-native.nsi'), 'utf8');
+      fs.writeFileSync(path.join(job, 'cross-native.nsi'), '\ufeff' + template
+        .replaceAll('@ID@', descriptor.installId).replaceAll('@NAME@', () => escape(descriptor.name))
+        .replace('@INSTALL_RECEIPT@', () => recordInstall));
+      await require('./nsis.cjs').compile(job, 'cross-native.nsi');
+    }
     fs.writeFileSync(path.join(job, 'desktop-launch.json'), JSON.stringify({
       schema:'agentstrata-desktop-launch/v1', install_id:descriptor.installId,
       executable:descriptor.installId + '.exe', files

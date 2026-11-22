@@ -58,38 +58,47 @@ def new_project(framework, parent, bot_id, name, *, target="desktop"):
     manifest = native_inputs(project_inputs(framework), bot_id)
     def seed(root):
         app = root / "bots" / bot_id
-        if target in {"web", "source"}:
-            prompts = app / "prompts"
-            prompts.mkdir(parents=True)
-            (prompts / "identity.md").write_text(f"你是{name}的应用助手。\n")
-            (prompts / "response-style.md").write_text("根据当前应用的实际信息回应用户。\n")
-            (app / "agent.yaml").write_text(yaml.safe_dump({
-                "prompts": {"schema_version": 2, "identity": "prompts/identity.md", "response_style": "prompts/response-style.md"},
-                "agents": {"runtime": "langgraph"}, "llm": {"chat": {"binding": "chat"}}}))
-            (app / "bot.yaml").write_text(yaml.safe_dump({"id": bot_id, "display_name": name, "agent_profile": "agent.yaml",
-                "gateway": {"port_env": "CHATCOPILOT_GATEWAY_PORT", "state_root_env": "CHATCOPILOT_GATEWAY_STATE_ROOT",
-                            "clients": [{"id": "app-user", "role": "user", "token_env": "AGENTSTRATA_APP_GATEWAY_TOKEN"}]},
-                "workspace": {"root_env": "CHATCOPILOT_WORKSPACE_ROOT"}, "deploy": {"target": "wsl", "instance_id": bot_id}},
-                allow_unicode=True))
+        desktop = target == "desktop"
+        prompts = app / "prompts"
+        prompts.mkdir(parents=True)
+        (prompts / "identity.md").write_text(f"你是{name}的应用助手。用当前应用实际提供的操作帮助用户。\n")
+        (prompts / "response-style.md").write_text("根据当前应用的实际信息回应用户。\n")
+        client = ({"id": "desktop-owner", "role": "owner", "token_env": "AGENTSTRATA_DESKTOP_GATEWAY_TOKEN"}
+                  if desktop else {"id": "app-user", "role": "user", "token_env": "AGENTSTRATA_APP_GATEWAY_TOKEN"})
+        agent = {"prompts": {"schema_version": 2, "identity": "prompts/identity.md", "response_style": "prompts/response-style.md"},
+                 "agents": {"runtime": "langgraph"}, "llm": {"chat": {"binding": "chat"}, "research": {"binding": "chat"}}}
+        if desktop:
+            agent["tools"] = {"mcp": {"servers": "mcp/servers.yaml"}}
+            (app / "mcp").mkdir()
+            bridge = {"id": "application", "transport": "stdio", "command": "python",
+                      "args": ["${CHATCOPILOT_SOURCE_ROOT}/integrations/desktop_app/bridge.py", "mcp",
+                               "${CHATCOPILOT_SOURCE_ROOT}", bot_id, "${AGENTSTRATA_DESKTOP_DATA}"],
+                      "exposure": "main", "risk": "interactive", "tool_prefix": "app_", "retry_on_timeout": False}
+            (app / "mcp/servers.yaml").write_text(yaml.safe_dump({"servers": [bridge]}, sort_keys=False))
+        (app / "agent.yaml").write_text(yaml.safe_dump(agent, sort_keys=False))
+        (app / "bot.yaml").write_text(yaml.safe_dump({
+            "id": bot_id, "display_name": name, "agent_profile": "agent.yaml",
+            "gateway": {"port_env": "CHATCOPILOT_GATEWAY_PORT", "state_root_env": "CHATCOPILOT_GATEWAY_STATE_ROOT", "clients": [client]},
+            "workspace": {"root_env": "CHATCOPILOT_WORKSPACE_ROOT"},
+            "deploy": {"target": "windows" if desktop else "wsl", "instance_id": bot_id},
+        }, allow_unicode=True, sort_keys=False))
+        if not desktop:
             site = root / "integrations" / bot_id
             site.mkdir(parents=True)
             if target == "web":
                 (site / "index.html").write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>新应用</title><main></main></html>\n')
             else:
-                (site / "README.md").write_text("应用源码与启动说明。\n")
+                (site / "install.json").write_text(json.dumps({"entry": {"service": "app", "port": 8080}}))
+                (site / "compose.yaml").write_text(yaml.safe_dump({"services": {"app": {
+                    "build": ".", "volumes": ["data:/data"],
+                    "healthcheck": {"test": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"]}}},
+                    "volumes": {"data": {}}}))
+                (site / "Dockerfile").write_text("FROM python:3.13-slim\nWORKDIR /app\nCOPY . .\n"
+                                               'CMD ["python","-m","http.server","8080","--directory","public"]\n')
+                (site / "public").mkdir()
+                (site / "public/index.html").write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>新应用</title><main></main></html>\n')
             load_application_spec(app / "bot.yaml")
             return
-        template = framework / "bots/desktop-reader"
-        for relative in ("bot.yaml", "agent.yaml", "mcp/servers.yaml", "prompts/identity.md", "prompts/response-style.md"):
-            (app / relative).parent.mkdir(parents=True, exist_ok=True)
-            shutil.copyfile(template / relative, app / relative)
-        bot = yaml.safe_load((app / "bot.yaml").read_text())
-        bot.update(id=bot_id, display_name=name)
-        bot["deploy"]["instance_id"] = bot_id
-        (app / "bot.yaml").write_text(yaml.safe_dump(bot, allow_unicode=True, sort_keys=False))
-        mcp = app / "mcp/servers.yaml"
-        mcp.write_text(mcp.read_text().replace('"desktop-reader"', json.dumps(bot_id)))
-        (app / "prompts/identity.md").write_text(f"你是{name}的应用助手。用当前应用实际提供的操作帮助用户。\n")
         shutil.copytree(framework / "studio/seed", root / "integrations" / bot_id)
         tests = root / "tests/unit"
         tests.mkdir(parents=True)

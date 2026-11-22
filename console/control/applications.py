@@ -75,6 +75,7 @@ class Applications:
                     kind = "desktop"
             row = self._view(ident, inst.display_name or inst.instance_id, kind, source,
                              instance=inst.instance_id, control=not inst.read_only,
+                             local_deploy=not inst.read_only and bool(inst.wsl_home) and kind not in {"desktop", "companion"},
                              records=True, observation=True, settings=not inst.read_only and inst.runtime_kind == "gateway")
             q = quote(inst.instance_id, safe="")
             row["links"] = {"configuration": "#bots?instance=" + q + "&tab=configuration",
@@ -100,6 +101,9 @@ class Applications:
                 except (ValueError, OSError, RuntimeError):
                     row["state"]["process"] = "unavailable"
             rows.append(row)
+        from console.control import released_applications
+        managed = {p["id"] for p in projects}
+        rows.extend(r for r in released_applications.applications(self) if r["project_id"] not in managed)
         for p in projects:
             standard = p["application_type"] == "qq_official"
             row = self._view("studio:" + p["id"], p["name"], "companion" if p["bot"] == "live2d-desktop" else p["application_type"],

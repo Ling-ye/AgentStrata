@@ -14,7 +14,7 @@ import {
 } from "@arco-design/web-react";
 import PageSection from "../shared/ui/PageSection";
 import { NavigationGuardContext } from "../shared/navigationGuard";
-import { applicationsApi, type ApplicationView, type Configuration } from "../features/applications/api";
+import { applicationsApi, openApplicationUrl, type ApplicationView, type Configuration } from "../features/applications/api";
 import {
   applicationHref,
   applicationLocation,
@@ -30,7 +30,7 @@ import ApplicationSettings from "../features/applications/ApplicationSettings";
 import ImprovementReadiness from "../features/applications/ImprovementReadiness";
 import QQDevelopment from "../features/applications/QQDevelopment";
 import DesktopDevelopment from "../features/applications/DesktopDevelopment";
-import DesktopLaunch from "../features/applications/DesktopLaunch";
+import ApplicationInstallers from "../features/applications/ApplicationInstallers";
 import TrialChat from "../features/applications/TrialChat";
 import {
   acknowledgedDevelopment,
@@ -86,7 +86,7 @@ const menuGroups: [string, [ApplicationTab, string][]][] = [
     "应用",
     [
       ["overview", "基本信息"],
-      ["use", "使用应用"],
+      ["use", "下载与部署"],
     ],
   ],
   [
@@ -107,7 +107,7 @@ const menuGroups: [string, [ApplicationTab, string][]][] = [
   [
     "开发与交付",
     [
-      ["improve", "开发对话"],
+      ["improve", "应用改进"],
       ["versions", "版本与交付"],
     ],
   ],
@@ -236,13 +236,16 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
         <Tag>
           {value.plan_state ? managementStateLabel(value.plan_state) : stateLabel(value.state.process)}
         </Tag>
+        {value.source === "release" && <Button type="primary" href={openApplicationUrl(id)} target="_blank" rel="noopener noreferrer">打开应用</Button>}
         {planPending && tab !== "improve" && (
           <Button size="small" href={applicationHref(id, "improve")}>
             查看首版方案
           </Button>
         )}
       </header>
-      <StudioShell current={applicationHref(id, tab)} groups={groups}>
+      {value.source === "release" ? (
+        <main className="studio-directory"><ApplicationInstallers key={id} application={value} /></main>
+      ) : <StudioShell current={applicationHref(id, tab)} groups={groups}>
         <Tabs renderTabHeader={() => <></>} activeTab={tab} destroyOnHide={false} lazyload>
           <Tabs.TabPane key="overview" title="基本信息">
             <Card title="应用基本信息">
@@ -262,26 +265,14 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
               </dl>
             </Card>
           </Tabs.TabPane>
-          <Tabs.TabPane key="use" title="使用应用">
-            {value.source === "native" || value.type === "qq_personal" ? (
-              <Card title="使用应用">
-                {value.source === "native"
-                  ? "从 Windows 桌宠客户端启动应用。"
-                  : "在 QQ 中与助手交互，再到任务流查看运行过程。"}
-              </Card>
-            ) : qq ? (
-              <TrialChat id={id} onDirty={setTrialDirty} />
-            ) : managedProject && ["desktop","companion"].includes(value.type) ? (
-              <DesktopLaunch id={id} />
-            ) : (
-              <Card title="使用应用">
-                {["web","source"].includes(value.type) ? (
-                  <Button href={applicationHref(id, "versions")}>查看可下载的应用构建</Button>
-                ) : (
-                  "请从应用的客户端打开。"
-                )}
-              </Card>
-            )}
+          <Tabs.TabPane key="use" title="下载与部署">
+            <ApplicationInstallers key={id} application={value} />
+            {repo && instance && value.capabilities.local_deploy && tab === "use" &&
+              <BotsPage key={id} fixed={{ id: instance, tab: "deployment" }} loadError={null} />}
+            {qq && <Card title="本机部署"><Space wrap>
+              <Button href={applicationHref(id, "channels")}>配置官方 QQ 连接</Button>
+              <Button href={applicationHref(id, "runtime")}>运行状态与启停</Button>
+            </Space></Card>}
           </Tabs.TabPane>
           <Tabs.TabPane key="records" title="任务流">
             {value.capabilities.observation ? (
@@ -290,7 +281,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
               <Card title="连接运行端">
                 <p>当前应用还没有接入业务任务观测。</p>
                 <Button href={applicationHref(id, "runtime")}>查看运行状态</Button>
-                {qq && <Button href={applicationHref(id, "use")}>本机试聊与记录</Button>}
+                {qq && <Button href={applicationHref(id, "runtime")}>本机试聊与记录</Button>}
                 {value.source === "native" && <Button href="#connect">连接运行端</Button>}
               </Card>
             )}
@@ -319,6 +310,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
               {error && <Alert type="error" content={error} />}{" "}
               {result && <Alert type="info" content={result} />}
             </Card>
+            {qq && <TrialChat id={id} onDirty={setTrialDirty} />}
             {repo && instance && tab === "runtime" && (
               <>
                 <BotsPage key={id} fixed={{ id: instance, tab: "runtime" }} loadError={null} />
@@ -366,7 +358,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
                 </>
               ))}
           </Tabs.TabPane>
-          <Tabs.TabPane key="improve" title="开发对话">
+          <Tabs.TabPane key="improve" title="应用改进">
             <Space direction="vertical" style={{ width: "100%" }}>
               {value.first_plan && <FirstPlanPanel id={id} onDirty={setPlanDirty} />}
               {!planPending &&
@@ -381,7 +373,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
                     />
                   </ApplicationQualityScope>
                 ) : managedProject ? (
-                  <DesktopDevelopment id={id} web={value.type === "web"} onDirty={setManagementDirty} />
+                  <DesktopDevelopment id={id} onDirty={setManagementDirty} />
                 ) : qq ? (
                   <>
                     <ManagementConversation
@@ -404,7 +396,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
                   <ApplicationVersions id={id} taskId={task} />
                 </ApplicationQualityScope>
               ) : managedProject ? (
-                <DesktopDevelopment id={id} readOnly versionsOnly web={value.type === "web"} />
+                <DesktopDevelopment id={id} readOnly versionsOnly />
               ) : qq ? (
                 <QQDevelopment id={id} mode="versions" />
               ) : (
@@ -419,7 +411,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
             ) : (
               <Card title="模型与行为">
                 <Text>模型与行为由此应用的 Agent 配置管理。</Text>
-                <Button href={applicationHref(id, "improve")}>进入本应用开发对话</Button>
+                <Button href={applicationHref(id, "improve")}>进入应用改进</Button>
               </Card>
             )}
           </Tabs.TabPane>
@@ -440,7 +432,7 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
             )}
           </Tabs.TabPane>
         </Tabs>
-      </StudioShell>
+      </StudioShell>}
     </>
   );
 }

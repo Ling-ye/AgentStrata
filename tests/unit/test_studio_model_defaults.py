@@ -51,6 +51,7 @@ def guides(tmp_path, monkeypatch):
         return process
 
     monkeypatch.setattr(setup.subprocess, "Popen", spawn)
+    monkeypatch.setattr(setup.Guide, "wait_for_gateway", lambda self, port: None)
 
     def create(home=None, *, model_path=None, legacy=False):
         home = home or tmp_path / "studio"

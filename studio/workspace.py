@@ -7,6 +7,7 @@ import json
 import os
 import sqlite3
 import time
+import tempfile
 import uuid
 
 from chatcopilot.core.private_sqlite import PrivateDatabase, private_directory, private_lock
@@ -29,7 +30,7 @@ class Studio:
         self.model_path = Path(model_path) if model_path else None
         self.db = PrivateDatabase(home / "studio.sqlite", _SCHEMA)
         with self.db.connect(write=True) as db:
-            db.execute(first_plan.TABLE)
+            first_plan.ensure_schema(db)
             db.execute("CREATE TABLE IF NOT EXISTS studio_repair_sources (id TEXT PRIMARY KEY, "
                        "project TEXT NOT NULL REFERENCES projects(id), kind TEXT NOT NULL, source_id TEXT NOT NULL, "
                        "digest TEXT NOT NULL, feedback TEXT NOT NULL, receipt TEXT NOT NULL)")
@@ -84,7 +85,8 @@ class Studio:
         with self.db.connect() as db:
             rows = db.execute("SELECT p.id,p.name,p.bot,f.icon,f.target,m.state AS plan_state,m.updated "
                               "FROM projects p LEFT JOIN first_plans f ON f.project=p.id "
-                              "LEFT JOIN messages m ON m.id=f.project ORDER BY p.created DESC")
+                              "LEFT JOIN messages m ON m.id=(SELECT x.id FROM messages x WHERE x.project=f.project "
+                              "ORDER BY x.rowid DESC LIMIT 1) ORDER BY p.created DESC")
             return [{**dict(row), "application_type": "draft" if row["plan_state"] in {
                      "planning", "plan_failed", "plan_review", "initializing", "initialization_failed"} else
                      "qq_official" if row["bot"].startswith("qq-official-") else
@@ -195,7 +197,9 @@ class Studio:
     def step(self, msg):
         with self.db.connect() as db:
             row = dict(db.execute("SELECT * FROM messages WHERE id=?", (msg,)).fetchone())
-            app = dict(db.execute("SELECT * FROM projects WHERE id=?", (row["project"],)).fetchone())
+            app = dict(db.execute("SELECT p.*, f.target AS planned_target, f.delivery AS planned_delivery "
+                                  "FROM projects p LEFT JOIN first_plans f ON f.project=p.id WHERE p.id=?",
+                                  (row["project"],)).fetchone())
         if self.recovery_blocked(app["id"], row, app["version"]):
             return
         work = self.directory(app["id"])
@@ -214,7 +218,9 @@ class Studio:
                     from studio.applications import ApplicationManager
                     saved = ApplicationManager(self.state_dir, self.framework).get(app["id"])
                     definition = {key: saved.get(key, "") for key in ("name", "instructions")}
-                context = json.dumps({"saved_definition": definition, "application_type": "qq_official" if standard else "desktop", "current_application": app["name"], "already_bound": bool(app["version"]),
+                context = json.dumps({"saved_definition": definition, "application_type": "qq_official" if standard else app["planned_target"] or "desktop",
+                                      "delivery": json.loads(app["planned_delivery"]) if app["planned_delivery"] else None,
+                                      "current_application": app["name"], "already_bound": bool(app["version"]),
                                       "message": row["text"]}, ensure_ascii=False)
                 decision = asyncio.run(runtime.discuss(self.state_dir, app["id"], msg, context))
                 if decision["action"] == "configure" and not standard and not app["version"] and self.model_path is None:
@@ -241,6 +247,8 @@ class Studio:
                     self.update(msg, decision["action"], decision["reply"])
                     return
                 goal = row["text"]
+                if app["planned_delivery"]:
+                    goal += "\n已确认的交付方案\n" + app["planned_delivery"]
                 if decision.get("use_previous") is True:
                     with self.db.connect() as db:
                         previous = db.execute(
@@ -320,39 +328,60 @@ class Studio:
     def finish(self, row, app, repo, work, host, task):
         from chatcopilot.harness.activation_runtime import release_source
         with self.db.connect() as db:
-            archive = db.execute("SELECT target FROM first_plans WHERE project=? AND target IN ('web','source') AND approved=1", (app["id"],)).fetchone()
+            planned = db.execute("SELECT target,delivery FROM first_plans WHERE project=? AND target IN ('web','source') AND approved=1", (app["id"],)).fetchone()
         with host.lifecycle.operation(row["task"]):
             release = release_source(host, row["task"])
             final = work / "builds" / row["id"]
-            if not final.is_dir():
-                pending = final.with_name(row["id"] + "-" + uuid.uuid4().hex)
-                ident = app["bot"] if not app["assets"] else "live2d-trial-" + app["id"]
-                # Versions are side-by-side even when an older trial is installed.
-                ident += "-" + release.receipt["candidate_digest"][:10]
-                if archive:
-                    from studio.project_archive import pack
-                    pack(release, pending, app["bot"], archive["target"])
-                else:
-                    delivery.pack(repo, pending, bot_relative=release.bot_relative, release=release,
-                                  assets=Path(app["assets"]) if app["assets"] else None, name=app["name"],
-                                  install_id=ident, windows_build=os.environ.get("AGENTSTRATA_STUDIO_WINDOWS_BUILD"))
-                pending.rename(final)
+            receipt_file = final / "build-receipt.json"
+            existing = json.loads(receipt_file.read_text()) if final.is_dir() else {}
+            old_archive = bool(existing.get("archive_sha256") and not existing.get("installers"))
+            if old_archive and (existing.get("accepted_source_digest") != release.receipt["candidate_digest"]
+                                or delivery.digest(final / "application.zip") != existing["archive_sha256"]):
+                raise ValueError("已有归档与本次候选不匹配")
+            if not existing or old_archive:
+                with tempfile.TemporaryDirectory(dir=private_directory(final.parent)) as tmp:
+                    pending = Path(tmp) / "output"
+                    ident = app["bot"] if not app["assets"] else "live2d-trial-" + app["id"]
+                    # Versions are side-by-side even when an older trial is installed.
+                    ident += "-" + release.receipt["candidate_digest"][:10]
+                    if planned or f"integrations/{app['bot']}/install.json" in release.candidate_manifest:
+                        from studio import installer
+                        kind = planned["target"] if planned else "desktop"
+                        installer.build(release.candidate, pending, bot=app["bot"], name=app["name"], kind=kind,
+                                        origin={"kind": "candidate", "revision": release.receipt["candidate_digest"], "task": row["task"]},
+                                        manifest=release.candidate_manifest,
+                                        targets=json.loads(planned["delivery"])["platforms"] if planned and planned["delivery"] else None,
+                                        release=release)
+                    else:
+                        delivery.pack(repo, pending, bot_relative=release.bot_relative, release=release,
+                                      assets=Path(app["assets"]) if app["assets"] else None, name=app["name"],
+                                      install_id=ident, windows_build=os.environ.get("AGENTSTRATA_STUDIO_WINDOWS_BUILD"))
+                    if old_archive:
+                        # A restart can find the earlier ZIP after packaging but before marking the message ready.
+                        # Publish the new receipt last and retain the verified archive bytes.
+                        for file in pending.iterdir():
+                            if file.name != "build-receipt.json":
+                                file.replace(final / file.name)
+                        (pending / "build-receipt.json").replace(receipt_file)
+                    else:
+                        pending.rename(final)
             receipt = json.loads((final / "build-receipt.json").read_text())
-            filename, digest_key = ("application.zip", "archive_sha256") if archive else ("application.exe", "installer_sha256")
-            if receipt["accepted_source_digest"] != release.receipt["candidate_digest"] or delivery.digest(final / filename) != receipt[digest_key]:
+            from studio.installer import FILES
+            expected = receipt.get("installers") or {"windows-x64": {"sha256": receipt.get("installer_sha256")}}
+            if (receipt["accepted_source_digest"] != release.receipt["candidate_digest"] or
+                    any(delivery.digest(final / FILES[platform]) != info["sha256"] for platform, info in expected.items())):
                 raise ValueError("安装包与本次候选不匹配")
             version = receipt["accepted_source_digest"]
             projects.source_tree(work, version, release.candidate, release.candidate_manifest)
         verified = "\n".join(item["text"] for item in task["acceptance"]["items"] if item.get("required"))
-        method = {"web": "下载并解压网页包，在浏览器中打开 index.html。", "source": "解压源码包，按应用目录的启动说明使用。"}.get(
-            archive["target"] if archive else "", "下载桌面安装包并完成安装，打开应用后尝试以上操作。")
+        method = "在「下载与部署」选择目标系统，运行应用安装包，再尝试以上操作。"
         reply = "已验证的改动\n" + verified + "\n\n试用方法\n" + method
         with self.db.connect(write=True) as db:
             db.execute("UPDATE projects SET version=? WHERE id=?", (version, app["id"]))
             db.execute("UPDATE messages SET state='ready',reply=?,build=?,updated=? WHERE id=?",
                        (reply, row["id"], time.time(), row["id"]))
 
-    def artifact_reference(self, project_id, message_id):
+    def artifact_reference(self, project_id, message_id, platform=None):
         """Resolve an application-bound receipt; callers must verify the bytes they use."""
         with self.db.connect() as db:
             row = db.execute("SELECT 1 FROM messages WHERE project=? AND id=? AND build=id AND state='ready'",
@@ -362,7 +391,15 @@ class Studio:
         path = self.directory(project_id) / "builds" / message_id
         receipt = json.loads((path / "build-receipt.json").read_text())
         filename, digest_key = ("application.zip", "archive_sha256") if "archive_sha256" in receipt else ("application.exe", "installer_sha256")
-        expected = receipt[digest_key]
+        if "installers" in receipt:
+            from studio.installer import FILES
+            platform = platform or next(p for p in FILES if p in receipt["installers"])
+            filename = FILES[platform]
+            expected = receipt["installers"][platform]["sha256"]
+        else:
+            if platform not in {None, "windows-x64"}:
+                raise KeyError("此构建没有该平台的安装包")
+            expected = receipt[digest_key]
         if not isinstance(expected, str) or len(expected) != 64 or any(c not in "0123456789abcdef" for c in expected):
             raise ValueError("安装包摘要记录无效")
         return path / filename, expected

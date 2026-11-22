@@ -121,6 +121,14 @@ def stop_evaluation(repo, state, task_id):
 
 def start_task(repo, state, bot_id, goal, request, *, predecessor_task_id=None, environment=None, repair_origin=None):
     desktop = bot_id != "live2d-desktop"
+    if (repo / "integrations" / bot_id / "compose.yaml").is_file():
+        goal += (
+            "\n\n工作台负责从已验收源码生成 Windows EXE 和 Linux RUN。开发工作交付应用源码、"
+            "Dockerfile、compose.yaml 和 install.json；最终安装器由宿主构建，无需制作 ZIP 或编写平台安装脚本。"
+            "install.json 的网页入口用 entry.service 和 entry.port；可选字段为 clients、requirements、image_licenses。"
+            "Compose 使用应用内相对构建目录、服务健康检查和本项目命名卷（如 volumes: {data: {}}）。"
+            "宿主配置回环端口映射、镜像、重启策略以及卷的物理名称，以便不同接收方和应用独立安装。"
+        )
     checks = ("decision-no-tool",) if desktop else ()
     goal_cases = ()
     if repair_origin is not None:
@@ -166,7 +174,7 @@ async def discuss(home, session, request, text, *, planning=False):
     allowed = {"discuss", "develop", "new_project", "configure"}
     if planning:
         allowed = {"plan"}
-        retry = "请按首版方案格式返回一个 JSON 对象，包含 action=plan、name、target、scope、acceptance 和 reply。\n" + text
+        retry = "请按首版方案格式返回一个 JSON 对象，包含 action=plan、name、target、scope、acceptance、delivery 和 reply。delivery 须含 platforms 数组、entry、services、bindings。\n" + text
     for key, prompt in ((request, text), (request + "-format", retry)):
         answer = await chat(cfg["url"], cfg["token"], "studio-owner", "studio-" + session, key, prompt)
         if original is None:
