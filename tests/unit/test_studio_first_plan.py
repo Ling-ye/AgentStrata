@@ -89,6 +89,10 @@ def test_draft_revision_confirmation_restart_and_web_baseline(tmp_path, monkeypa
         assert changed["delivery"]["entry"] == "应用首页"
         source = studio.directory(project) / "initial"
         assert (source / "integrations" / ("app-" + project) / "index.html").is_file()
+        from chatcopilot.core.source_snapshot import source_manifest
+        from chatcopilot.deployment.packaging import read_plan
+        standalone = read_plan(source, source_manifest(source), "app-" + project)
+        assert standalone.recipe == "static" and standalone.platforms == ("linux-x64",)
         assert not (source / "bots/desktop-reader").exists()
         from chatcopilot.botspec.runtime import load_runtime_context
         assert load_runtime_context(source / "bots" / ("app-" + project) / "bot.yaml").spec.llm.research.binding == "chat"

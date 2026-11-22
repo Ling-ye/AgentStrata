@@ -7,8 +7,8 @@ import subprocess
 import tarfile
 import tempfile
 
-from chatcopilot.core.source_snapshot import source_manifest
-from studio.delivery import native_inputs, pack, windows_path
+from chatcopilot.core.source_snapshot import git_output, source_manifest
+from studio.delivery import native_inputs, windows_path
 
 
 def studio_archive(root: Path, archive: Path) -> None:
@@ -48,8 +48,10 @@ def main():
         from studio.projects import project_inputs, source_tree
         with tempfile.TemporaryDirectory() as temp:
             sample = source_tree(Path(temp), "reader", root, native_inputs(project_inputs(root), "desktop-reader"))
-            pack(sample, stage, bot_relative="bots/desktop-reader/bot.yaml", name="读书助手",
-                 install_id="desktop-reader", windows_build=args.windows_build)
+            from studio import installer
+            installer.build(sample, stage, bot="desktop-reader", name="读书助手", kind="desktop",
+                            manifest=source_manifest(sample), origin={"kind": "commit", "revision": git_output(sample, "rev-parse", "HEAD")},
+                            install_id="desktop-reader", windows_build=args.windows_build)
         return
     stage.mkdir(parents=True, exist_ok=False)
     archive = stage / "framework.tar.gz"

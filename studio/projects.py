@@ -52,7 +52,7 @@ def project_inputs(framework):
     return {p:v for p,v in official.items() if p in tracked or p in new_files or p.startswith(source_areas)}
 
 
-def new_project(framework, parent, bot_id, name, *, target="desktop"):
+def new_project(framework, parent, bot_id, name, *, target="desktop", platforms=None):
     from studio.delivery import native_inputs
 
     manifest = native_inputs(project_inputs(framework), bot_id)
@@ -85,10 +85,16 @@ def new_project(framework, parent, bot_id, name, *, target="desktop"):
         if not desktop:
             site = root / "integrations" / bot_id
             site.mkdir(parents=True)
+            from chatcopilot.deployment.packaging.plan import SCHEMA
+            declaration = {"schema": SCHEMA, "recipe": "static" if target == "web" else "service"}
+            if platforms:
+                declaration["platforms"] = platforms
+            if target != "web":
+                declaration["entry"] = {"service": "app", "port": 8080}
+            (site / "install.json").write_text(json.dumps(declaration), encoding="utf-8")
             if target == "web":
                 (site / "index.html").write_text('<!doctype html><html lang="zh-CN"><meta charset="utf-8"><title>新应用</title><main></main></html>\n')
             else:
-                (site / "install.json").write_text(json.dumps({"entry": {"service": "app", "port": 8080}}))
                 (site / "compose.yaml").write_text(yaml.safe_dump({"services": {"app": {
                     "build": ".", "volumes": ["data:/data"],
                     "healthcheck": {"test": ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/')"]}}},

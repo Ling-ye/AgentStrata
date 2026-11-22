@@ -17,7 +17,7 @@ from console.backend.routes.application_records import router
 from console.control import application_installers as catalog
 from console.control.applications import Applications
 from studio import installer
-from studio.installer import containers
+from chatcopilot.deployment.packaging import containers
 
 
 def public_site(root, bot):
@@ -63,6 +63,8 @@ def test_commit_build_via_api_is_immutable_app_bound_and_retryable(tmp_path, mon
     with TestClient(api, client=("127.0.0.1", 1), base_url="http://localhost") as http:
         info = http.get(url).json()
         assert info["commit"] == revision and info["builds"] == [] and not info["docker"]
+        plan = http.get(url.removesuffix("/installers") + "/installer-plan", params={"kind": "commit", "revision": revision})
+        assert plan.json() == {"recipe": "static", "platforms": ["windows-x64", "linux-x64"]}
         body = {"platform": "linux-x64", "kind": "commit", "revision": revision}
         assert http.post(url, json={**body, "revision": "HEAD"}).status_code == 400
         key = http.post(url, json=body).json()["id"]
@@ -104,7 +106,7 @@ def test_commit_build_via_api_is_immutable_app_bound_and_retryable(tmp_path, mon
             assert http.get(download).content == restored.content
 
         # A packager upgrade may fail; the last published bytes stay available during and after the attempt.
-        monkeypatch.setattr(installer, "recipe_digest", lambda: "new-recipe")
+        monkeypatch.setattr(installer, "recipe_digest", lambda recipe, platform: "new-recipe")
         def fail(*args, **kwargs):
             raise ValueError("missing build input")
         monkeypatch.setattr(installer, "build", fail)
@@ -199,5 +201,34 @@ def test_local_client_and_helper_use_single_install_without_docker(tmp_path):
     files = read_setup(out / "application.run")
     assert files["client-linux"].strip() == b"source/app" and "source/helper" in files
     descriptor = {"clients": {"windows-x64": "client/app.exe"}, "requirements": ["绑定账号"]}
-    assert installer.layout("desktop", "local-client", descriptor, True) == {
-        "docker": True, "platforms": ["windows-x64"], "clients": descriptor["clients"], "requirements": ["绑定账号"]}
+    prefix = "integrations/local-client/"
+    members = [prefix + name for name in ("compose.yaml", "install.json", "client/app.exe")]
+    plan = installer.preview("desktop", "local-client", members, descriptor)
+    assert plan.recipe == "service" and plan.docker and plan.platforms == ("windows-x64",)
+    assert plan.clients == descriptor["clients"] and plan.requirements == ("绑定账号",)
+
+
+def test_new_catalog_category_builds_a_declared_version_after_head_changes(tmp_path):
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    bot = "gallery"
+    page = public_site(repo, bot)
+    spec = repo / "bots" / bot
+    spec.mkdir(parents=True)
+    (spec / "bot.yaml").write_text("id: gallery\nagent_profile: agent.yaml\n")
+    (spec / "agent.yaml").write_text("agents: {runtime: langgraph}\n")
+    git_output(repo, "add", ".")
+    git_output(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qm", "web")
+    available = git_output(repo, "rev-parse", "HEAD")
+    apps = SimpleNamespace(root=repo, state_dir=tmp_path / "studio")
+    row = {"source": "repository", "instance_id": bot, "type": "exhibition", "id": "repo:gallery", "name": "展览"}
+    assert catalog.catalog(apps, row)["platforms"] == ["windows-x64", "linux-x64"]
+    page.unlink()
+    git_output(repo, "-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", "commit", "-qam", "remove entry")
+    assert catalog.catalog(apps, row)["reason"]
+    assert catalog.selection_plan(apps, row, "commit", available, None)["recipe"] == "static"
+    key, job = catalog.register(apps, row, "linux-x64", "commit", available, None)
+    job()
+    record, = catalog.catalog(apps, row)["builds"]
+    assert record["id"] == key and record["state"] == "ready"
+    assert record["package_recipe"] == "static" and record["origin"]["revision"] == available

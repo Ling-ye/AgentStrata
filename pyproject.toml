@@ -119,6 +119,7 @@ include = [
 [tool.setuptools.package-data]
 chatcopilot = [
     "botspec/*.yaml",
+    "deployment/packaging/templates/*",
     "evals/vendor/**/*.md",
     "evals/vendor/**/*.txt",
     "evals/suites/**/*.yaml",

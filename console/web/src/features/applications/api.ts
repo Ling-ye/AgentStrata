@@ -32,6 +32,7 @@ export interface InstallerRecord {
   acceptance?: { candidate_digest: string; verification_digest: string };
 }
 export interface InstallerCatalog {
+  build_platforms?: InstallPlatform[];
   platforms: InstallPlatform[]; docker: boolean; requirements: string[]; commit: string; reason: string; builds: InstallerRecord[];
 }
 export const openApplicationUrl = (id: string) => "/api/applications" + path(id) + "/open";
@@ -41,6 +42,8 @@ export const applicationsApi = {
   installers: (id: string, signal?: AbortSignal) => request<InstallerCatalog>(path(id) + "/installers", {signal}),
   importInstallation: (id: string, key: string, platform: InstallPlatform, receipt: unknown) =>
     request(path(id) + "/installers/" + encodeURIComponent(key) + "/" + platform + "/installation", { method: "POST", body: JSON.stringify(receipt) }),
+  installerPlan: (id: string, kind: "commit" | "candidate", revision: string, signal?: AbortSignal) =>
+    request<{ recipe: string; platforms: InstallPlatform[] }>(path(id) + "/installer-plan?" + new URLSearchParams({kind, revision}), {signal}),
   buildInstaller: (id: string, platform: InstallPlatform, kind: "commit" | "candidate", revision: string) =>
     request<{id: string}>(path(id) + "/installers", {method: "POST", body: JSON.stringify({platform, kind, revision})}),
   taskFlow: (id: string, task: string, signal?: AbortSignal) => request<{goal:string; candidate_digest?:string; origin:{id?:string;kind?:string;digest?:string;evaluation_id?:string};

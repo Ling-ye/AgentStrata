@@ -4,7 +4,6 @@ from __future__ import annotations
 import asyncio
 from pathlib import Path
 import json
-import os
 import sqlite3
 import time
 import tempfile
@@ -344,18 +343,13 @@ class Studio:
                     ident = app["bot"] if not app["assets"] else "live2d-trial-" + app["id"]
                     # Versions are side-by-side even when an older trial is installed.
                     ident += "-" + release.receipt["candidate_digest"][:10]
-                    if planned or f"integrations/{app['bot']}/install.json" in release.candidate_manifest:
-                        from studio import installer
-                        kind = planned["target"] if planned else "desktop"
-                        installer.build(release.candidate, pending, bot=app["bot"], name=app["name"], kind=kind,
-                                        origin={"kind": "candidate", "revision": release.receipt["candidate_digest"], "task": row["task"]},
-                                        manifest=release.candidate_manifest,
-                                        targets=json.loads(planned["delivery"])["platforms"] if planned and planned["delivery"] else None,
-                                        release=release)
-                    else:
-                        delivery.pack(repo, pending, bot_relative=release.bot_relative, release=release,
-                                      assets=Path(app["assets"]) if app["assets"] else None, name=app["name"],
-                                      install_id=ident, windows_build=os.environ.get("AGENTSTRATA_STUDIO_WINDOWS_BUILD"))
+                    from studio import installer
+                    kind = planned["target"] if planned else "companion" if app["assets"] else "desktop"
+                    platforms = json.loads(planned["delivery"])["platforms"] if planned and planned["delivery"] else None
+                    installer.build(release.candidate, pending, bot=app["bot"], name=app["name"], kind=kind,
+                                    origin={"kind": "candidate", "revision": release.receipt["candidate_digest"], "task": row["task"]},
+                                    manifest=release.candidate_manifest, targets=platforms, release=release,
+                                    assets=Path(app["assets"]) if app["assets"] else None, install_id=ident)
                     if old_archive:
                         # A restart can find the earlier ZIP after packaging but before marking the message ready.
                         # Publish the new receipt last and retain the verified archive bytes.

@@ -1,223 +1,122 @@
-"""One downloadable setup program per application version and operating system."""
+"""Studio adapters around the application-category-neutral packaging engine."""
 from __future__ import annotations
 
+from dataclasses import replace
 import hashlib
 import json
-from functools import lru_cache
-import os
-from pathlib import Path, PurePosixPath
-import re
-import shutil
-import subprocess
-import sys
-import tarfile
-import tempfile
+from pathlib import Path
+from typing import Mapping
 
-from chatcopilot.core.source_manifest import is_deployable_source_path
-from chatcopilot.core.source_snapshot import copy_sources
+from chatcopilot.deployment.packaging import FILES, LINUX, WINDOWS, PackagePlan, read_plan, resolve_plan
+from chatcopilot.deployment.packaging import builder as shared_builder
+from chatcopilot.deployment.packaging import containers
 from studio import delivery
+from .gateway_recipe import context_provider
+from .native_recipe import build as build_native
+from .nsis import compile as compile_nsis
+from .recipes import BOTS, default_recipe, platforms as default_platforms
+from .recipes import requirements as default_requirements
+
 
 RECIPES = Path(__file__).parent
-WINDOWS = "windows-x64"
-LINUX = "linux-x64"
-FILES = {WINDOWS: "application.exe", LINUX: "application.run"}
-WINDOWS_DEVICES = {"CON", "PRN", "AUX", "NUL", "CONIN$", "CONOUT$"} | {
-    f"{name}{digit}" for name in ("COM", "LPT") for digit in "123456789¹²³"}
-BOTS = {"qq_personal", "qq_official", "weixin"}
+NATIVE_SETUP = "首次打开时按提示准备本地运行环境，可能需要联网下载依赖，并绑定自己的模型账号。"
 
 
-@lru_cache(maxsize=1)
-def recipe_digest():
-    """A new packaging recipe can regenerate the same application revision after a Studio update."""
-    digest = hashlib.sha256()
+def recipe_digest(recipe, platform):
+    """Cache identity for the selected recipe and its target envelope."""
     root = RECIPES.parents[1]
-    sources = [*RECIPES.iterdir(), *(root / "integrations/desktop_app").iterdir(),
-               root / "studio/delivery.py", root / "integrations/live2d_desktop/scripts/prepare-runtime.py"]
-    for path in sorted(p for p in sources if p.is_file()):
+    shared = root / "src/chatcopilot/deployment/packaging"
+    templates = shared / "templates"
+    sources = [shared / "plan.py", shared / "source.py", RECIPES / "__init__.py", RECIPES / "recipes.py"]
+    if recipe == "native":
+        desktop = root / "integrations/desktop_app"
+        sources.extend(desktop / name for name in (
+            "build.ps1", "package.cjs", "cross-native.nsi", "nsis.cjs", "main.cjs", "preload.cjs",
+            "setup.html", "setup.js", "desktop.css",
+        ))
+        live = root / "integrations/live2d_desktop"
+        sources.extend((templates / "install-receipt.ps1", root / "studio/delivery.py", RECIPES / "native_recipe.py",
+                        live / "scripts/prepare-runtime.py", live / "scripts/bootstrap-windows.ps1",
+                        live / "package.json", live / "package-lock.json", live / "src/backend.ts", live / "src/contracts.ts"))
+        sources.extend(shared.parent.glob("windows_*.py"))
+    else:
+        sources.extend((shared / "builder.py", shared / "formats.py"))
+        if platform == WINDOWS:
+            sources.extend(templates / name for name in ("windows.nsi", "install.ps1", "install-receipt.ps1"))
+            sources.extend((RECIPES / "nsis.py", root / "integrations/desktop_app/nsis.cjs",
+                            root / "integrations/live2d_desktop/package-lock.json"))
+            if recipe in {"service", "gateway"}:
+                sources.append(templates / "open-client.ps1")
+        else:
+            sources.append(templates / "install.sh")
+        if recipe in {"service", "gateway"}:
+            sources.append(shared / "containers.py")
+        if recipe == "gateway":
+            sources.extend((RECIPES / "gateway_recipe.py", RECIPES / "gateway.py", RECIPES / "gateway.Dockerfile",
+                            root / "studio/delivery.py"))
+    digest = hashlib.sha256()
+    for path in sorted(sources):
         digest.update(path.relative_to(root).as_posix().encode() + b"\0" + hashlib.sha256(path.read_bytes()).digest())
     return digest.hexdigest()
 
 
 def platforms(kind):
-    return [WINDOWS] if kind in {"desktop", "companion"} else [WINDOWS, LINUX]
+    return list(default_platforms(kind))
 
 
 def requirements(kind, bot):
-    sandbox = "首次配置可明确选择 Codex 或 LangGraph。Codex 需要 Docker 支持普通用户的 bubblewrap 会话隔离；LangGraph 需要兼容的聊天模型连接。"
-    if kind == "qq_personal":
-        return [f"自备已登录的 NapCat（OneBot v11 正向 WebSocket），容器名 napcat-{bot}，在其回环地址启用服务。",
-                "首次安装时绑定自己的 QQ、Owner 账号和模型账号。", sandbox]
-    if kind == "weixin":
-        return ["首次安装时绑定自己的微信 iLink 账号和模型账号。", sandbox]
-    if kind == "qq_official":
-        return ["首次安装时填写自己的 QQ AppID、AppSecret 和模型账号。"]
-    return []
+    return list(default_requirements(kind, bot))
 
 
-def layout(kind, bot, spec, compose):
-    """Development targets seed a default; the frozen app declares its actual startup and services."""
-    if not isinstance(spec, dict) or set(spec) - {"entry", "clients", "requirements", "image_licenses"}:
-        raise ValueError("install.json 含有未支持的字段")
-    clients = spec.get("clients", {})
-    if not isinstance(clients, dict) or set(clients) - FILES.keys():
-        raise ValueError("客户端入口请按支持的操作系统声明")
-    for target, value in clients.items():
-        if (not isinstance(value, str) or not value.isprintable() or "\\" in value
-                or PurePosixPath(value).as_posix() != value or PurePosixPath(value).is_absolute()
-                or not PurePosixPath(value).parts or ".." in PurePosixPath(value).parts
-                or target == WINDOWS and Path(value).suffix.lower() not in {".exe", ".html", ".htm"}):
-            raise ValueError("客户端必须指向本应用公开目录中的可启动文件")
-    needs = spec.get("requirements", [])
-    if not isinstance(needs, list) or not all(isinstance(n, str) and n.strip() for n in needs):
-        raise ValueError("请逐项说明接收方需要准备的组件或账号")
-    if kind in {"desktop", "companion"} and not compose and not clients:
-        needs = ["首次打开时按提示准备本地运行环境，可能需要联网下载依赖，并绑定自己的模型账号。", *needs]
-    return {"platforms": [p for p in FILES if p in clients] if clients else platforms(kind),
-            "docker": kind in BOTS or compose or kind == "source" and not clients,
-            "clients": clients, "requirements": requirements(kind, bot) + needs}
+def _defaults(kind, bot):
+    return {"default_recipe": default_recipe(kind), "default_platforms": default_platforms(kind),
+            "default_requirements": default_requirements(kind, bot)}
 
 
-def copy_public(source, manifest, prefix, dest):
-    entries = {}
-    names = set()
-    for name, row in manifest.items():
-        if not name.startswith(prefix):
-            continue
-        relative = name[len(prefix):]
-        parts = relative.split("/")
-        if (not is_deployable_source_path(name) or any(
-                not p or p in {".", ".."} or p.endswith((" ", ".")) or p.partition(".")[0].upper() in WINDOWS_DEVICES
-                or re.search(r'[<>:"/\\|?*\x00-\x1f]', p) for p in parts)
-                or relative.casefold() in names):
-            raise ValueError("应用资源中有无法安全安装的跨平台文件名")
-        names.add(relative.casefold())
-        entries[relative] = row
-    copy_sources(source / prefix.rstrip("/"), dest, entries)
+def _studio_plan(kind, plan):
+    if kind == "companion" and plan.recipe != "native":
+        raise ValueError("桌宠的 Windows 运行载荷须经过原生交付验证")
+    return replace(plan, requirements=(NATIVE_SETUP, *plan.requirements)) if plan.recipe == "native" else plan
 
 
-def windows_installer(stage, payload_hash, bot, docker):
-    script = (RECIPES / "windows.nsi").read_text().replace("@SHA@", payload_hash).replace("@BOT@", bot)
-    script = script.replace("@DOCKER@", "-DockerRequired" if docker else "")
-    (stage / "setup.nsi").write_text(script, encoding="utf-8-sig")
-    if shutil.which("makensis"):
-        command = ["makensis", "-V2", "setup.nsi"]
-    elif shutil.which("node") and (RECIPES.parents[1] / "integrations/live2d_desktop/node_modules/app-builder-lib").is_dir():
-        command = ["node", str(RECIPES.parents[1] / "integrations/desktop_app/nsis.cjs")]
+def preview(kind: str, bot: str, members: Mapping, spec: Mapping | None = None) -> PackagePlan:
+    """Resolve the exact strategy used by build without reading mutable source files."""
+    return _studio_plan(kind, resolve_plan(bot, members, spec, **_defaults(kind, bot)))
+
+
+def source_plan(kind, bot, source, manifest):
+    return _studio_plan(kind, read_plan(source, manifest, bot, **_defaults(kind, bot)))
+
+
+def build(source, dest, *, bot, kind, name, manifest, origin, targets=None, release=None, assets=None,
+          install_id=None, windows_build=None):
+    """Keep the established Studio API while dispatching through shared packaging recipes."""
+    plan = source_plan(kind, bot, source, manifest)
+    selected = plan.select_targets(targets)
+    fingerprints = {platform: recipe_digest(plan.recipe, platform) for platform in selected}
+    if plan.recipe == "native":
+        if release and (origin.get("kind") != "candidate" or origin["revision"] != release.receipt["candidate_digest"]):
+            raise ValueError("独立接受摘要与安装包来源不匹配")
+        if selected != (WINDOWS,):
+            raise ValueError("原生桌面应用只支持 Windows x64")
+        receipt = build_native(source, dest, bot=bot, kind=kind, name=name, origin=origin, release=release,
+                               assets=assets, install_id=install_id, windows_build=windows_build)
+        receipt.update(schema=shared_builder.BUILD_RECEIPT_SCHEMA, recipe=plan.recipe,
+                       application=bot, origin=origin, docker=False, requirements=list(plan.requirements),
+                       installers={WINDOWS: {"sha256": delivery.digest(dest / FILES[WINDOWS]),
+                                             "size": (dest / FILES[WINDOWS]).stat().st_size}})
     else:
-        raise ValueError("Windows 安装包构建端需要 NSIS 3，或 integrations/live2d_desktop 的锁定 Node 构建工具")
-    subprocess.run(command, cwd=stage, check=True, timeout=900)
-
-
-def build(source, dest, *, bot, kind, name, manifest, origin, targets, release=None, assets=None):
-    """source is an immutable Git checkout or a checked, independently accepted candidate."""
-    if not re.fullmatch(r"[a-z][a-z0-9-]{0,79}", bot):
-        raise ValueError("应用标识或安装平台无效")
-    if not name.strip() or not name.isprintable():
-        raise ValueError("应用名称无效")
-    base = origin["revision"]
-    prefix = f"integrations/{bot}/"
-    descriptor = prefix + "install.json"
-    spec = {}
-    if descriptor in manifest:
-        raw = (source / descriptor).read_bytes()
-        if hashlib.sha256(raw).hexdigest() != manifest[descriptor]["sha256"]:
-            raise ValueError("安装清单与已选源码的摘要不符")
-        spec = json.loads(raw)
-    plan = layout(kind, bot, spec, prefix + "compose.yaml" in manifest)
-    targets = plan["platforms"] if targets is None else targets
-    if not targets or not set(targets) <= set(plan["platforms"]):
-        raise ValueError("所选版本不支持这个安装平台")
-    needs, needs_docker, clients = plan["requirements"], plan["docker"], plan["clients"]
-    native = kind == "companion" or kind == "desktop" and not clients and not needs_docker
-    if native:
-        install_id = bot + "-" + base[:10]
-        with tempfile.TemporaryDirectory(prefix="studio-native-assets-") as tmp:
-            if kind == "companion" and assets is None:
-                from chatcopilot.deployment.windows_dependencies import compiler_path
-                root = RECIPES.parents[1]
-                assets = Path(tmp) / "payload"
-                preparation = subprocess.run([sys.executable, str(root / "integrations/live2d_desktop/scripts/prepare-runtime.py"),
-                                "--source", str(source), "--output", str(assets), "--build-root", str(Path(tmp) / "work"),
-                                "--uv", str(compiler_path())], stderr=subprocess.PIPE, text=True, timeout=1800)
-                if preparation.returncode:
-                    if "runtime-inputs" in preparation.stderr or "MCP source policy" in preparation.stderr:
-                        raise ValueError("构建端缺少桌宠锁定的 Windows-MCP 原始输入。请准备源码、Python 归档及完整 wheel 缓存，或导入与所选版本匹配的 Windows 运行载荷。")
-                    if "patched project sources are incomplete" in preparation.stderr:
-                        raise ValueError("桌宠缺少当前锁文件对应的插件 wheel、配套源码或上游项目归档。")
-                    if "lack runtime admission" in preparation.stderr:
-                        raise ValueError("桌宠插件的原始输入已核对，Windows 前端资源、运行环境与安装身份仍需独立验收。请导入已核验的匹配载荷。")
-                    raise ValueError("桌宠 Windows 资源准备失败。请核对原生构建输入，或在「接入已有应用」导入匹配的已核验载荷。")
-            receipt = delivery.pack(source, dest, bot_relative=f"bots/{bot}/bot.yaml", release=release,
-                                    assets=assets, name=name, install_id=install_id,
-                                    windows_build=os.environ.get("AGENTSTRATA_STUDIO_WINDOWS_BUILD"))
-        components = receipt["components"]
-    else:
-        from studio.installer import containers
-        dest.mkdir(parents=True, exist_ok=False)
-        receipt = {}
-        with tempfile.TemporaryDirectory(dir=dest) as tmp:
-            stage = Path(tmp)
-            payload = stage / "payload"
-            payload.mkdir(mode=0o700)
-            if needs_docker:
-                config = containers.prepare(source, manifest, bot, kind, stage, payload, base, spec)
-            elif clients:
-                copy_public(source, manifest, prefix, payload / "source")
-                config = {}
-            elif kind == "web":
-                copy_public(source, manifest, f"integrations/{bot}/", payload / "site")
-                if not (payload / "site/index.html").is_file():
-                    raise ValueError("已选源码缺少应用入口 index.html")
-                config = {"entry": "site/index.html"}
-            else:
-                raise ValueError("此应用缺少安装入口")
-            if clients:
-                installed = {}
-                for platform in targets:
-                    target = "source/" + clients[platform]
-                    path = payload / target
-                    if not path.is_file() or (platform == LINUX and path.suffix.lower() not in {".htm", ".html"}
-                                              and not path.stat().st_mode & 0o111):
-                        raise ValueError("所选源码中的客户端入口缺失或不可执行")
-                    installed[platform] = target
-                config["clients"] = installed
-                if LINUX in installed:
-                    (payload / "client-linux").write_text(installed[LINUX] + "\n")
-            if needs_docker and config.get("entry") and WINDOWS in targets:
-                (payload / "open-client.ps1").write_text((RECIPES / "open-client.ps1").read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
-            for legal in ("LICENSE", "COPYRIGHT", "THIRD_PARTY_NOTICES.md", "THIRD_PARTY_LICENSES.txt"):
-                if legal in manifest:
-                    copy_sources(source, payload, {legal: manifest[legal]})
-            components = [*config.get("images", {})]
-            if needs_docker:
-                components.append("Docker Compose 部署配置")
-            if clients:
-                components.extend(f"{platform} 客户端 · {entry}" for platform, entry in installed.items())
-            elif kind == "web" and not needs_docker:
-                components.append("网页及静态资源 · site/index.html")
-            config.update(application=bot, name=name, origin=origin, docker=needs_docker, requirements=needs)
-            (payload / "install.json").write_text(json.dumps(config, ensure_ascii=False), encoding="utf-8")
-            archive = stage / "payload.tgz"
-            with tarfile.open(archive, "w:gz", compresslevel=1) as tar:
-                for file in sorted(payload.iterdir()):
-                    tar.add(file, arcname=file.name)
-            checksum = delivery.digest(archive)
-            if WINDOWS in targets:
-                for script in (RECIPES / "install.ps1", RECIPES.parents[1] / "integrations/desktop_app/install-receipt.ps1"):
-                    (stage / script.name).write_text(script.read_text(encoding="utf-8-sig"), encoding="utf-8-sig")
-                windows_installer(stage, checksum, bot, needs_docker)
-                (stage / FILES[WINDOWS]).rename(dest / FILES[WINDOWS])
-            if LINUX in targets:
-                header = (RECIPES / "install.sh").read_text().replace("@SHA@", checksum).replace("@BOT@", bot)
-                header = header.replace("@DOCKER@", "1" if needs_docker else "0")
-                with (dest / FILES[LINUX]).open("xb") as output, archive.open("rb") as data:
-                    output.write(header.encode())
-                    shutil.copyfileobj(data, output)
-                (dest / FILES[LINUX]).chmod(0o700)
-    receipt.update(application=bot, origin=origin, docker=needs_docker, requirements=needs, components=components,
-                   installers={p: {"sha256": delivery.digest(dest / FILES[p]), "size": (dest / FILES[p]).stat().st_size}
-                               for p in targets})
-    if release:
-        receipt["accepted_source_digest"] = release.receipt["candidate_digest"]
+        provider = context_provider(kind) if plan.recipe == "gateway" else None
+        receipt = shared_builder.build(source, dest, bot=bot, name=name, manifest=manifest, origin=origin, plan=plan,
+                                       targets=selected, context_provider=provider, docker_runner=containers.docker,
+                                       nsis=compile_nsis,
+                                       accepted_source_digest=release.receipt["candidate_digest"] if release else None)
+    if any(recipe_digest(plan.recipe, platform) != before for platform, before in fingerprints.items()):
+        raise ValueError("构建期间宿主打包配方已变化，请使用同一来源重试")
+    receipt["recipe_fingerprints"] = fingerprints
     (dest / "build-receipt.json").write_text(json.dumps(receipt, sort_keys=True), encoding="utf-8")
     return receipt
+
+
+__all__ = ["BOTS", "FILES", "LINUX", "WINDOWS", "build", "platforms", "preview",
+           "recipe_digest", "requirements"]

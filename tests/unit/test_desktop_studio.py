@@ -228,6 +228,10 @@ def test_followup_uses_last_accepted_source_and_reports_verified_behavior(tmp_pa
     candidate.mkdir()
     subprocess.run(["git", "init", "-q", str(candidate)], check=True)
     (candidate / "reading.txt").write_text("第一版书单")
+    app_id = "app-" + project
+    bot_path = candidate / "bots" / app_id / "bot.yaml"
+    bot_path.parent.mkdir(parents=True)
+    bot_path.write_text("id: " + app_id + "\n")
     manifest = source_manifest(candidate)
     version = manifest_digest(manifest)
     with studio.db.connect(write=True) as db:
@@ -238,7 +242,7 @@ def test_followup_uses_last_accepted_source_and_reports_verified_behavior(tmp_pa
             "acceptance":{"items":[{"required":True, "text":"可以添加书名"}]}}
     host = SimpleNamespace(get=lambda _id: task, lifecycle=SimpleNamespace(operation=lambda _id: nullcontext()))
     release = SimpleNamespace(receipt={"candidate_digest":version}, candidate=candidate,
-                              candidate_manifest=manifest, bot_relative="bots/sample/bot.yaml")
+                              candidate_manifest=manifest, bot_relative=f"bots/{app_id}/bot.yaml")
     def controller(_repo, _state, *, task_id):
         assert task_id == "controlled-first"
         return host
@@ -248,8 +252,8 @@ def test_followup_uses_last_accepted_source_and_reports_verified_behavior(tmp_pa
         stage.mkdir(parents=True)
         file = stage / "application.exe"
         file.write_bytes(b"controlled artifact")
-        (stage / "build-receipt.json").write_text(json.dumps(
-            {"accepted_source_digest":version, "installer_sha256":delivery.digest(file)}))
+        assert _opts["install_id"] == app_id + "-" + version[:10]
+        return {"accepted_source_digest": version, "installer_sha256": delivery.digest(file), "components": []}
     monkeypatch.setattr(delivery, "pack", pack)
     studio.step(first)
     ready = studio.conversation(project)[0]

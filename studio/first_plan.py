@@ -211,7 +211,8 @@ def initialize(studio, app, work: Path):
         bot, version, state = "qq-official-" + project, "", "applied"
         reply = "已保存 QQ 应用配置并准备公开源码。可在「下载与部署」生成安装包，在应用配置中连接 QQ 官方机器人。"
     else:
-        projects.new_project(studio.framework, work, bot, plan["name"], target=plan["target"])
+        projects.new_project(studio.framework, work, bot, plan["name"], target=plan["target"],
+                             platforms=plan["delivery"]["platforms"] if plan["delivery"] else None)
         if plan["target"] == "web":
             goal += (
                 f"\n交付浏览器应用，在 integrations/{bot}/index.html 及相邻静态资源实现已确认范围。"

@@ -97,6 +97,14 @@ def installers(request: Request, application_id: str):
     return call(lambda: application_installers.catalog(apps, apps.require(application_id)))
 
 
+@router.get("/{application_id}/installer-plan")
+def installer_plan(request: Request, application_id: str, kind: Literal["commit", "candidate"], revision: str):
+    from console.control import application_installers
+    apps = service(request)
+    return _call(lambda: call(lambda: application_installers.selection_plan(
+        apps, apps.require(application_id), kind, revision, lambda: _controller(request))))
+
+
 @router.post("/{application_id}/installers", status_code=202)
 def build_installer(request: Request, application_id: str, body: InstallerBuild, background: BackgroundTasks):
     from console.control import application_installers

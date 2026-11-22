@@ -19,28 +19,41 @@ export default function ApplicationInstallers({ application }: { application: Ap
   const [platform, setPlatform] = useState<InstallPlatform>();
   const [source, setSource] = useState<"commit" | "candidate">("commit");
   const [revision, setRevision] = useState<string>();
+  const [requestedPlatform, setRequestedPlatform] = useState<InstallPlatform>();
   const [selected, setSelected] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
   const gate = useRef(false);
   const receiptInput = useRef<HTMLInputElement>(null);
   const data = query.data;
+  const value = (revision ?? (source === "commit" ? data?.commit ?? "" : "")).trim();
+  const valid = source === "commit" ? /^[0-9a-f]{40}$/.test(value) : /^repair-[0-9a-f]{32}$/.test(value);
+  const historical = source === "candidate" || value !== data?.commit;
+  const selectedPlan = useQuery({
+    queryKey: ["installer-plan", id, source, value],
+    queryFn: ({signal}) => applicationsApi.installerPlan(id, source, value, signal),
+    enabled: !!data?.commit && application.source !== "release" && historical && valid,
+    retry: false,
+  });
   if (!data) return query.isError ? <Alert type="error" content={String(query.error)} action={<Button onClick={() => void query.refetch()}>重试</Button>} /> : <Spin />;
   const target = platform ?? preferredPlatform(data.platforms, navigator.userAgent);
   const records = data.builds.filter(b => b.platform === target);
   const ready = records.filter(b => b.state === "ready");
   const current = ready.find(b => b.id === selected) ?? ready[0];
   const last = records[0];
-  const value = (revision ?? (source === "commit" ? data.commit : "")).trim();
-  const valid = source === "commit" ? /^[0-9a-f]{40}$/.test(value) : /^repair-[0-9a-f]{32}$/.test(value);
+  const buildOptions = historical ? selectedPlan.data?.platforms ?? [] : data.build_platforms ?? [];
+  const preferred = requestedPlatform ?? target;
+  const buildTarget = buildOptions.includes(preferred) ? preferred : preferredPlatform(buildOptions, navigator.userAgent);
+  const buildingSelection = data.builds.some(b => b.state === "building" && b.platform === buildTarget && b.origin.kind === source && b.selection === value);
   const active = !!last && ["building", "queued"].includes(last.state);
   async function generate() {
-    if (gate.current || !target || !valid) return;
+    if (gate.current || !buildTarget || !valid) return;
     gate.current = true;
     setBusy(true);
     setError("");
     try {
-      const result = await applicationsApi.buildInstaller(id, target, source, value);
+      const result = await applicationsApi.buildInstaller(id, buildTarget, source, value);
+      setPlatform(buildTarget);
       setSelected(result.id);
       await query.refetch();
     } catch (failure) { setError(String(failure)); }
@@ -100,7 +113,7 @@ export default function ApplicationInstallers({ application }: { application: Ap
         ["native", "plugin"].includes(application.source) || application.type === "companion" ? "#connect" : applicationHref(id, "improve")}>查看接入入口</Button>} />}
       {active && <Alert type="info" content={last.state === "queued" ? "等待构建。刷新或重新提交同一来源可以继续。" : "正在生成安装包，离开页面后仍会继续。"} />}
       {last?.state === "failed" && <Alert type="warning" content={last.error} />}
-      {application.source !== "release" && !data.reason && target && <details open={!current || undefined} className="studio-build-options">
+      {application.source !== "release" && data.commit && <details open={!current || undefined} className="studio-build-options">
         <summary>生成安装包</summary>
         <Space direction="vertical">
           <label>构建来源<Select aria-label="构建来源" value={source} options={[
@@ -109,8 +122,12 @@ export default function ApplicationInstallers({ application }: { application: Ap
           <label>{source === "commit" ? "Git 提交 SHA" : "Harness 任务编号"}
             <Input value={revision ?? (source === "commit" ? data.commit : "")} onChange={setRevision}
               placeholder={source === "commit" ? "完整的 40 位提交 SHA" : "repair-…"} /></label>
-          <Button type={current ? "secondary" : "primary"} disabled={!valid || last?.state === "building"} loading={busy}
-            onClick={() => void generate()}>为 {names[target]} 生成安装包</Button>
+          {historical && valid && selectedPlan.isFetching && <Spin />}
+          {historical && valid && selectedPlan.isError && <Alert type="error" content={String(selectedPlan.error)} />}
+          {historical && buildOptions.length > 1 && <label>目标平台<Select aria-label="目标平台" value={buildTarget}
+            options={buildOptions.map(value => ({value, label: names[value]}))} onChange={setRequestedPlatform} /></label>}
+          <Button type={current ? "secondary" : "primary"} disabled={!valid || !buildTarget || (!historical && !!data.reason) || buildingSelection || busy} loading={busy}
+            onClick={() => void generate()}>{buildTarget ? "为 " + names[buildTarget] + " 生成安装包" : "生成安装包"}</Button>
         </Space>
       </details>}
       {error && <Alert type="error" content={error} />}

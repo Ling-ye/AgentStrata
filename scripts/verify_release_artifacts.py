@@ -45,6 +45,12 @@ _MARKDOWN_REFERENCE_TARGET_RE = re.compile(
 REQUIRED_PACKAGE_RESOURCES = frozenset(
     {
         "botspec/mcp_catalog.yaml",
+        "deployment/packaging/templates/install-receipt.ps1",
+        "deployment/packaging/templates/install.ps1",
+        "deployment/packaging/templates/install.sh",
+        "deployment/packaging/templates/open-client.ps1",
+        "deployment/packaging/templates/windows.nsi",
+
         "evals/suites/agentstrata-agent-tasks-v1/README.md",
         "evals/suites/agentstrata-agent-tasks-v1/cases.yaml",
         "evals/suites/agentstrata-agent-tasks-v1/fixtures/order-card.png",

@@ -16,6 +16,15 @@ from chatcopilot.deployment.application_runtime import install_bundle, prepare_r
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="agentstrata app")
     commands = parser.add_subparsers(dest="command", required=True)
+    package = commands.add_parser("package", help="Build native installers for a declared application at a Git commit")
+    package.add_argument("--source", type=Path, required=True, help="Local Git repository")
+    package.add_argument("--revision", required=True, help="Full commit SHA")
+    package.add_argument("--application", required=True, help="Application directory name under integrations/")
+    package.add_argument("--app-dir", help="Application directory inside the revision, e.g. . or apps/notes (default: integrations/<id>)")
+    package.add_argument("--name", help="Display name (defaults to the application ID)")
+    package.add_argument("--output", type=Path, required=True, help="New directory for installers and the build receipt")
+    from chatcopilot.deployment.packaging.plan import FILES
+    package.add_argument("--platform", choices=tuple(FILES), action="append", help="Target platform; repeat to select several")
     inspect = commands.add_parser("inspect", help="Verify an independent application bundle")
     inspect.add_argument("bundle", type=Path)
     install = commands.add_parser("install", help="Install a new application source copy without overwriting an existing one")
@@ -50,7 +59,11 @@ def main(argv=None) -> int:
         action.add_argument("--harness-root", type=Path)
     args = parser.parse_args(argv)
     try:
-        if args.command == "inspect":
+        if args.command == "package":
+            from chatcopilot.deployment.packaging.command import package_commit
+            value = package_commit(args.source, args.revision, args.application, args.name or args.application,
+                                   args.output, args.platform, application_dir=args.app_dir)
+        elif args.command == "inspect":
             record = read_bundle(args.bundle)
             value = {key: record[key] for key in ("schema", "bot_id", "bot_relative", "source_digest", "accepted_candidate", "origin") if key in record}
             value["source_files"] = len(record["source_manifest"])

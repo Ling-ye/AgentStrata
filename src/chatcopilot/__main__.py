@@ -73,6 +73,7 @@ def main(argv: list[str] | None = None) -> int:
 def _print_help() -> None:
     print(
         "AgentStrata commands:\n"
+        "  agentstrata app package --source <repo> --revision <commit> --application <id> --output <directory>\n"
         "  agentstrata app inspect <bundle>\n"
         "  agentstrata app install <bundle> --root <directory>\n"
         "  agentstrata app setup --root <directory> --with-console\n"

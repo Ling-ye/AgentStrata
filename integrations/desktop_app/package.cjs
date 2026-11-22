@@ -29,8 +29,9 @@ async function build(tools, job, recipe) {
   if (studio) fs.copyFileSync(path.resolve(recipe,'../../studio/windows/main.cjs'), path.join(host,'main.cjs'));
   fs.copyFileSync(path.join(job,'desktop-build.json'), path.join(host,'desktop-build.json'));
   const nsisInclude = path.join(job,'app-directory.nsh');
+  const receiptTemplate = path.resolve(recipe, '../../src/chatcopilot/deployment/packaging/templates/install-receipt.ps1');
   const receiptSource = path.join(job, 'install-receipt.ps1');
-  if (!studio) fs.writeFileSync(receiptSource, '\ufeff' + fs.readFileSync(path.join(recipe, 'install-receipt.ps1'), 'utf8').replace(/^\uFEFF/, ''));
+  if (!studio) fs.writeFileSync(receiptSource, '\ufeff' + fs.readFileSync(receiptTemplate, 'utf8').replace(/^\uFEFF/, ''));
   const recordInstall = studio ? '' : [
     'InitPluginsDir',
     'File "/oname=$PLUGINSDIR\\install-receipt.ps1" "' + receiptSource.replaceAll('$', '$$$$') + '"',
@@ -58,10 +59,11 @@ async function build(tools, job, recipe) {
       [{from:path.join(job,'runtime-payload'),to:'runtime-payload'},
        // The reviewed application and the host recipe may come from different source versions.
        {from:recipe,to:'desktop-source/integrations/desktop_app',filter:[
-         'main.cjs','preload.cjs','setup.html','setup.js','desktop.css','build.ps1','package.cjs','nsis.cjs','cross-native.nsi','install-receipt.ps1']},
+         'main.cjs','preload.cjs','setup.html','setup.js','desktop.css','build.ps1','package.cjs','nsis.cjs','cross-native.nsi']},
        {from:live,to:'desktop-source/integrations/live2d_desktop',filter:[
          'package.json','package-lock.json','src/backend.ts',...(descriptor.kind === 'application' ? ['src/contracts.ts'] : [])]},
        {from:path.join(job,'desktop-build.json'),to:'desktop-source/desktop-build.json'},
+       {from:receiptTemplate,to:'desktop-source/src/chatcopilot/deployment/packaging/templates/install-receipt.ps1'},
        ...(descriptor.kind === 'live2d' ? [
         {from:path.resolve(live,'scripts/bootstrap-windows.ps1'),to:'desktop-host/bootstrap-windows.ps1'},
         {from:path.resolve(recipe,'../../src/chatcopilot/windows_setup.py'),to:'desktop-host/windows_setup.py'}] : [])],

@@ -61,6 +61,41 @@ Eval 从受管源码准备隔离执行，评分与检查仍由执行中的宿主
 
 QQ 与微信使用各自的 BotSpec、Gateway 和运行时。QQ 个人号需接收方自备已登录的 NapCat/OneBot v11 容器，命名为 `napcat-<bot>`，启用带 Access Token 的正向 WebSocket。Gateway 共享该容器的网络命名空间，在回环地址连接。QQ 官方渠道绑定 AppID、AppSecret，微信绑定自己的 iLink 凭据。原配置为 Codex 的 QQ 个人号和微信安装包在首次配置时可明确选择 Codex 或 LangGraph。Codex 先检查容器中普通用户的 bubblewrap 会话隔离，失败会退出；LangGraph 使用接收方绑定的聊天模型。选择保存在本应用的数据卷，重复运行沿用已选运行时。安装时填写个人模型连接。声明独立代码任务的机器人另选 Codex 开发模型，需要执行代码任务时在安装版本目录运行 `docker compose -p as-<bot> run --rm --no-deps gateway login-worker` 单独授权。可选 MCP、外部账号和个人工作区由接收方准备。账号保存在本应用数据卷，后续可在已安装版本目录用 `docker compose -p as-<bot> run --rm --no-deps gateway reconfigure` 重新设置，再用相同项目名重启 Gateway。
 
+
+#### 给新应用出包
+
+在 Linux 或 WSL 构建机安装 AgentStrata 后，可以直接从本地仓库的完整提交生成接收方安装包。例如，一个已有网页项目把 `index.html` 放在仓库根目录，可以运行：
+
+```bash
+agentstrata app package --source "$PWD" --revision "$(git rev-parse HEAD)" \
+  --application field-notes --name "现场记录" --app-dir . \
+  --platform linux-x64 --output ../field-notes-release
+```
+
+输出目录须是新目录。成功后其中包含 `application.run` 和 `build-receipt.json`；再加上 `--platform windows-x64` 可同时生成 `application.exe`。省略平台参数时构建计划声明的所有平台。Windows 封装需要构建机提供 NSIS 3 的 `makensis`，服务型应用还需 Docker Engine。Studio 继续支持仓库已有的 NSIS 工具链。
+
+Studio 默认从 `integrations/<应用标识>/` 读取公开输入。命令行的 `--app-dir` 也接受提交中的其他相对目录。新声明可注明 `"schema": "agentstrata-install/v1"`、`recipe` 和 `platforms`；已有无 schema 声明继续可用。Studio 新建网页或服务时将确认的平台写入源码声明，独立构建可复用同一选择。原生 Electron 和托管 Gateway 的专用装配由 Studio 提供。
+
+| 应用怎样启动 | 应用目录中的必要输入 | 配方 |
+| --- | --- | --- |
+| 浏览器打开静态页面 | `index.html` 及页面资源 | `static` |
+| 接收方运行一个已有客户端 | `install.json` 的 `clients` 按平台指定可执行文件或 HTML；Linux 程序在 Git 中保留执行位 | `client` |
+| 需要常驻服务，或客户端连接独立后端 | `compose.yaml` 和 `install.json`。网页入口使用 `entry.service` 和 `entry.port`；混合应用可同时声明 `clients` | `service` |
+
+例如，给一套有网页入口的服务限定两个交付平台，可在应用目录写入以下 `install.json`：
+
+```json
+{
+  "schema": "agentstrata-install/v1",
+  "recipe": "service",
+  "platforms": ["windows-x64", "linux-x64"],
+  "entry": {"service": "web", "port": 8080},
+  "requirements": ["接收方预装 Docker 和 Compose"]
+}
+```
+
+两种格式共享公开载荷。构建回执记录实际配方、来源、各平台文件大小及 SHA-256；服务回执另含随包镜像的完整 ID。同一静态载荷采用固定的归档顺序、时间和权限，NSIS 内嵌文件的时间也固定，可用相同版本的工具链复核重复构建。Dockerfile 引用浮动基础镜像或在构建中下载依赖时，镜像内容可能随时间变化。历史版本继续按其原回执校验下载。
+
 ### 运行依赖输入清单基础
 
 `core.archive_inventory.zip_inventory` 从不可变 ZIP 字节与宿主冻结输入中的 SHA256 派生

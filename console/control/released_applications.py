@@ -7,15 +7,15 @@ from pathlib import Path
 import re
 import shutil
 import subprocess
-import tarfile
 import tempfile
 
 import yaml
 
 from chatcopilot.core.install_artifacts import write_private
 from chatcopilot.core.private_sqlite import private_directory, private_file, private_lock
+from chatcopilot.deployment.packaging.formats import read_linux_declarations
 from studio import installer
-from studio.installer.containers import identifier
+from chatcopilot.deployment.packaging.containers import identifier
 
 
 def _id(value):
@@ -58,7 +58,9 @@ def catalog(apps, row):
             builds.append({"id": "project-" + record["build"], "platform": platform, "state": "ready",
                            "origin": receipt["origin"], "docker": receipt["docker"], "components": receipt["components"],
                            "requirements": receipt["requirements"], "updated": record["updated"], **info,
-                           "installation": record["installations"].get(platform), "acceptance": record["accepted"]})
+                           "installation": record["installations"].get(platform), "acceptance": record["accepted"],
+                           "package_recipe": receipt.get("recipe"), "receipt_schema": receipt.get("schema"),
+                           "images": receipt.get("images", {}), "source_directory": receipt.get("source_directory")})
     available = {item["platform"] for item in builds}
     return {"builds": builds, "platforms": [platform for platform in installer.FILES if platform in available],
             "docker": True, "requirements": versions[0]["receipt"]["requirements"], "commit": "", "reason": ""}
@@ -74,20 +76,7 @@ def artifact(apps, row, key, platform):
 
 
 def _web_entry(file, receipt):
-    # Only read the two declarations from the SHA-verified installer. No extraction or execution.
-    declarations = {}
-    with file.open("rb") as stream:
-        for line in iter(lambda: stream.readline(65536), b""):
-            if line == b"__APPLICATION_PAYLOAD__\n":
-                break
-            if not line.endswith(b"\n"):
-                raise ValueError("无法读取安装包载荷")
-        with tarfile.open(fileobj=stream, mode="r|gz") as archive:
-            for member in archive:
-                if member.name in {"compose.yaml", "install.json"} and member.isfile():
-                    declarations[member.name] = archive.extractfile(member).read()
-                if len(declarations) == 2:
-                    break
+    declarations = read_linux_declarations(file)
     settings = json.loads(declarations["install.json"])
     if settings["application"] != receipt["application"] or settings["origin"] != receipt["origin"]:
         raise ValueError("包内应用与已验收构建不匹配")

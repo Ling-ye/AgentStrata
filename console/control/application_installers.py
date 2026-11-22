@@ -10,7 +10,7 @@ import time
 
 from chatcopilot.core.install_artifacts import write_private
 from chatcopilot.core.private_sqlite import private_directory, private_lock
-from chatcopilot.core.source_snapshot import git_output, source_manifest
+from chatcopilot.core.source_snapshot import git_output
 from chatcopilot.harness.activation_runtime import release_source
 from chatcopilot.harness.models import HarnessError
 from console.control import project_evaluation, project_repair
@@ -40,12 +40,23 @@ def public_id(ident, key):
     return hashlib.sha256(ident.encode()).hexdigest()[:16] + "-" + key
 
 
-def supported(kind):
-    return kind in installer.BOTS | {"source", "desktop", "companion", "web", "agent"}
+def commit_plan(repo, bot, kind, revision):
+    prefix = f"integrations/{bot}/"
+    entries = git_output(repo, "--no-replace-objects", "ls-tree", "-rz", revision, "--", prefix, f"bots/{bot}/bot.yaml")
+    members = {}
+    for entry in entries.split("\0"):
+        if entry:
+            header, path = entry.split("\t", 1)
+            mode = header.split()[0]
+            if mode in {"100644", "100755"}:
+                members[path] = {"executable": mode == "100755"}
+    descriptor = prefix + "install.json"
+    spec = json.loads(git_output(repo, "--no-replace-objects", "show", f"{revision}:{descriptor}")) if descriptor in members else None
+    return installer.preview(kind, bot, members, spec)
 
 
 def project_receipts(apps, row):
-    if row["source"] != "studio" or row["type"] not in {"source", "web", "desktop", "companion"}:
+    if row["source"] != "studio":
         return []
     studio = apps.studio()
     with studio.db.connect() as db:
@@ -66,7 +77,9 @@ def project_receipts(apps, row):
                                     "origin": {"kind": "candidate", "revision": receipt.get("accepted_source_digest"),
                                                "task": msg["task"]}, "updated": msg["updated"], "size": path.stat().st_size,
                                     "sha256": item["sha256"], "components": receipt.get("components", []),
-                                    "docker": receipt.get("docker", False), "requirements": receipt.get("requirements", [])})
+                                    "docker": receipt.get("docker", False), "requirements": receipt.get("requirements", []),
+                                    "package_recipe": receipt.get("recipe"), "receipt_schema": receipt.get("schema"),
+                                    "images": receipt.get("images", {}), "source_directory": receipt.get("source_directory")})
         except (OSError, ValueError, KeyError):
             continue
     return records
@@ -109,26 +122,18 @@ def catalog(apps, row):
                 record["installation"] = json.loads(path.read_text())
     kind = row["type"]
     reason, commit, bot = "", "", row.get("instance_id") or ""
-    plan = installer.layout(kind, bot, {}, False)
-    if not supported(kind):
-        plan["platforms"] = []
+    plan = None
     try:
         repo, bot, _ = owned_source(apps, row)
-        if not supported(kind):
-            raise ValueError("当前源码缺少此应用的安装入口")
         if Path(git_output(repo, "rev-parse", "--show-toplevel")) != repo:
             raise ValueError("当前源码尚未绑定独立 Git 仓库")
         commit = git_output(repo, "rev-parse", "--verify", "HEAD^{commit}")
-        declaration, compose = (f"integrations/{bot}/{name}" for name in ("install.json", "compose.yaml"))
-        entries = git_output(repo, "ls-tree", "--name-only", "-r", commit, "--", declaration, compose).splitlines()
-        spec = json.loads(git_output(repo, "show", f"{commit}:{declaration}")) if declaration in entries else {}
-        if kind == "agent" and declaration not in entries:
-            raise ValueError("请先为此应用声明客户端或独立服务的安装入口")
-        plan = installer.layout(kind, bot, spec, compose in entries)
+        plan = commit_plan(repo, bot, kind, commit)
     except (ValueError, OSError) as exc:
         reason = str(exc) if not str(exc).startswith("Git source") else "请先准备此应用的 Git 源码基线"
-    return {"platforms": list(dict.fromkeys([*plan["platforms"], *(r["platform"] for r in records if r["state"] == "ready")])),
-            "docker": plan["docker"], "requirements": plan["requirements"], "commit": commit, "reason": reason,
+    return {"platforms": list(dict.fromkeys([*(plan.platforms if plan else ()), *(r["platform"] for r in records if r.get("platform") in installer.FILES)])),
+            "build_platforms": list(plan.platforms) if plan else [],
+            "docker": plan.docker if plan else False, "requirements": list(plan.requirements) if plan else [], "commit": commit, "reason": reason,
             "builds": sorted(records, key=lambda r: r["updated"], reverse=True)}
 
 
@@ -139,7 +144,7 @@ def attach_release(source, destination, project, build):
     if not all(isinstance(v, str) and re.fullmatch(r"[0-9a-f]{32}", v) for v in (project, build)):
         raise ValueError("请选择有效的 Studio 项目和构建")
     row = source.require("studio:" + project)
-    if row["source"] != "studio" or row["type"] != "source":
+    if row["source"] != "studio":
         raise ValueError("请选择已验收的 Studio 独立服务项目")
     if any(p["id"] == project for p in destination._projects()):
         raise ValueError("目标工作台已拥有这个开发项目")
@@ -171,34 +176,56 @@ def task_controller(apps, row, task, repository_host):
 
 
 @contextmanager
-def frozen(repo, bot, selection, work, controller):
+def verified_candidate(host, bot, task):
+    with host.lifecycle.operation(task):
+        release = release_source(host, task)
+        if release.bot_id != bot or release.bot_relative != f"bots/{bot}/bot.yaml":
+            raise ValueError("候选不属于当前应用")
+        yield release
+
+
+@contextmanager
+def frozen(repo, bot, selection, work, controller, *, recipe=None):
     kind, value = selection
     if kind == "candidate":
-        host = controller(value)
-        with host.lifecycle.operation(value):
-            release = release_source(host, value)
-            if release.bot_id != bot or release.bot_relative != f"bots/{bot}/bot.yaml":
-                raise ValueError("候选不属于当前应用")
+        with verified_candidate(controller(value), bot, value) as release:
             yield (release.candidate, release.candidate_manifest, release,
                    {"kind": kind, "task": value, "revision": release.receipt["candidate_digest"]})
         return
-    if git_output(repo, "cat-file", "-t", value) != "commit":
-        raise ValueError("请指定完整的本地 Git 提交")
-    # Checkout in a disposable clone; no changes, hooks or filters from the author's working tree.
+    from chatcopilot.deployment.packaging.source import LEGAL_FILES, checkout_commit
     snapshot = work / "snapshot"
-    git_output(repo, "clone", "--quiet", "--shared", "--no-checkout", "--", str(repo), str(snapshot))
-    git_output(snapshot, "-c", "core.hooksPath=/dev/null", "checkout", "--quiet", "--detach", value)
-    manifest = source_manifest(snapshot)
+    paths = (f"integrations/{bot}/", f"bots/{bot}/", *LEGAL_FILES) if recipe in {"static", "service", "client"} else ()
+    manifest = checkout_commit(repo, value, snapshot, paths=paths)
     yield snapshot, manifest, None, {"kind": kind, "revision": value}
 
 
-def register(apps, row, platform, kind, value, repository_host):
+def validate_selection(kind, value):
     if not re.fullmatch(r"[a-f0-9]{40}" if kind == "commit" else r"repair-[a-f0-9]{32}", value):
         raise ValueError("请填写完整 Git 提交 SHA 或已验收的 Harness 任务编号")
+
+
+
+def selection_plan(apps, row, kind, value, repository_host):
+    validate_selection(kind, value)
+    repo, bot, _ = owned_source(apps, row)
+    if kind == "commit":
+        if git_output(repo, "--no-replace-objects", "cat-file", "-t", value) != "commit":
+            raise ValueError("请指定本应用仓库的完整提交")
+        plan = commit_plan(repo, bot, row["type"], value)
+    else:
+        host = task_controller(apps, row, value, repository_host)
+        with verified_candidate(host, bot, value) as release:
+            plan = installer.source_plan(row["type"], bot, release.candidate, release.candidate_manifest)
+    return {"recipe": plan.recipe, "platforms": list(plan.platforms)}
+
+
+def register(apps, row, platform, kind, value, repository_host):
+    validate_selection(kind, value)
     repo, bot, assets = owned_source(apps, row)
     app_kind = row["type"]
-    if not supported(app_kind) or platform not in installer.FILES:
+    if platform not in installer.FILES:
         raise ValueError("请先接入这个应用的平台构建输入")
+    selected_recipe = None
     if kind == "candidate":
         for record in project_receipts(apps, row):
             if record["platform"] == platform and record["origin"].get("task") == value:
@@ -208,6 +235,11 @@ def register(apps, row, platform, kind, value, repository_host):
         task_controller(apps, row, value, repository_host)
     elif Path(git_output(repo, "rev-parse", "--show-toplevel")) != repo or git_output(repo, "cat-file", "-t", value) != "commit":
         raise ValueError("此应用的开发仓库中没有指定提交")
+    else:
+        plan = commit_plan(repo, bot, app_kind, value)
+        if platform not in plan.platforms:
+            raise ValueError("所选版本不支持这个安装平台")
+        selected_recipe = plan.recipe
     key = hashlib.sha256(f"{platform}/{kind}/{value}".encode()).hexdigest()
     private_directory(apps.state_dir)
     private_directory(apps.state_dir / "installers")
@@ -221,7 +253,8 @@ def register(apps, row, platform, kind, value, repository_host):
                 artifact = published_file(directory, ready)
                 if not artifact.is_file() or delivery.digest(artifact) != ready["sha256"]:
                     ready = None
-                elif ready.get("recipe") == installer.recipe_digest():
+                elif (ready.get("package_recipe") and (selected_recipe is None or ready["package_recipe"] == selected_recipe)
+                      and ready.get("recipe") == installer.recipe_digest(ready["package_recipe"], platform)):
                     return public_id(row["id"], key), None
             row_state = {"id": key, "platform": platform, "selection": value, "state": "queued",
                          "origin": {"kind": kind, "revision": value}, "updated": time.time()}
@@ -245,7 +278,7 @@ def register(apps, row, platform, kind, value, repository_host):
                         work = Path(temp)
                         def controller(task):
                             return task_controller(apps, row, task, repository_host)
-                        with frozen(repo, bot, (kind, value), work, controller) as (source, manifest, release, origin):
+                        with frozen(repo, bot, (kind, value), work, controller, recipe=selected_recipe) as (source, manifest, release, origin):
                             from chatcopilot.core.application_configuration import load_application_spec
                             if load_application_spec(source / "bots" / bot / "bot.yaml").raw.get("id") != bot:
                                 raise ValueError("所选源码不包含本应用的声明")
@@ -255,7 +288,9 @@ def register(apps, row, platform, kind, value, repository_host):
                         file = published_file(directory, {"object": True, "platform": platform, **info})
                         (work / "output" / installer.FILES[platform]).replace(file)
                         previous = row_state.pop("published", None)
-                        save(state="ready", origin=origin, object=True, docker=result["docker"], recipe=installer.recipe_digest(),
+                        save(state="ready", origin=origin, object=True, docker=result["docker"], recipe=result["recipe_fingerprints"][platform],
+                             package_recipe=result["recipe"], receipt_schema=result["schema"], images=result.get("images", {}),
+                             source_directory=result.get("source_directory"),
                              requirements=result["requirements"], components=result["components"], **info)
                         if previous:
                             old_file = published_file(directory, previous)
