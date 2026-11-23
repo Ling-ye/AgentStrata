@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#f7f4ed">
   <title>AgentStrata — 通过对话创建、运行和改进 Agent 应用</title>
-  <meta name="description" content="AgentStrata 是面向应用的开源 Agent 引擎和工作台。通过对话配置应用，复用渠道、工具、控制台、测评与 Harness，了解 QQ 官方机器人 MVP 和 Live2D。">
+  <meta name="description" content="在本机工作台创建和管理 Agent 应用，接入 QQ 或 Windows 桌面伙伴，查看任务记录、测评结果并为其他电脑准备安装包。">
   <meta property="og:type" content="website">
   <meta property="og:locale" content="zh_CN">
   <meta property="og:title" content="AgentStrata — 通过对话创建、运行和改进 Agent 应用">
@@ -40,15 +40,13 @@
   <main id="main">
     <section class="hero container" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <p class="eyebrow"><span class="status-dot" aria-hidden="true"></span> OPEN SOURCE · BUILT FOR YOUR APPS</p>
         <h1 id="hero-title">用对话，<br>创建你的<br><span class="serif-accent">Agent 应用。</span></h1>
-        <p class="hero-description">通过对话创建、运行和改进<br>Agent 应用的工作台。</p>
-        <p class="hero-detail">AgentStrata 是面向应用的 Agent 引擎和工作台。<br class="desktop-break">复用渠道、工具、控制台、测评和 Harness，<br class="desktop-break">从一个能用的应用开始。</p>
+        <p class="hero-description">在工作台描述需求，<br>在 QQ、桌面或浏览器里使用。</p>
+        <p class="hero-detail">给应用选好模型和工具，查看每次请求的执行记录。需要改进时，把失败用例交给 Harness 修复，再用 Eval 检查效果。</p>
         <div class="hero-actions">
-          <a class="button" href="#start">查看使用入口 <span aria-hidden="true">→</span></a>
+          <a class="button" href="#start">部署与使用 <span aria-hidden="true">→</span></a>
           <a class="text-link" href="https://github.com/Ling-ye/AgentStrata">查看 GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <p class="hero-note">开源 · 本机运行 · 当前提供源码 MVP</p>
       </div>
 
       <div class="hero-media" id="demo">
@@ -85,16 +83,16 @@
           <div class="product-card-body"><span class="edition">Windows 11 x64 · 开发者预览</span><h3>AgentStrata Companion</h3><p class="product-subtitle">桌面伙伴</p><p>让能对话、能使用工具的角色待在桌面上。用文字或语音交流，在角色界面中获得 Agent 的回应。</p><a class="text-link" href="products/companion.html">认识桌面伙伴 <span aria-hidden="true">→</span></a></div>
         </article>
         <article class="product-card">
-          <a class="product-visual bot-visual" href="products/bot.html" aria-label="了解 AgentStrata Bot QQ 助手"><div class="bot-preview"><span class="preview-label">使用流程示意 · 非真实 QQ 对话</span><p class="preview-user">我想做一个 QQ 项目答疑助手。</p><p class="preview-agent">说明用途，确认配置，连接你的官方机器人。</p><div class="preview-flow"><span>配置</span><span>检查</span><span>试聊</span><span>运行</span></div></div></a>
-          <div class="product-card-body"><span class="edition">QQ 官方机器人 · 源码 MVP</span><h3>AgentStrata Bot</h3><p class="product-subtitle">QQ 助手</p><p>把你的 Agent 带到 QQ 群和私聊。在 Studio 中描述用途，配置官方机器人，并检查、启动和管理应用。</p><a class="text-link" href="products/bot.html">认识 QQ 助手 <span aria-hidden="true">→</span></a></div>
+          <a class="product-visual bot-visual" href="products/bot.html" aria-label="了解 AgentStrata Bot QQ 助手"><div class="bot-preview"><span class="preview-label">使用流程示意 · 非真实 QQ 对话</span><p class="preview-user">我想做一个 QQ 项目答疑助手。</p><p class="preview-agent">说明用途，确认配置，连接你的官方机器人。</p><div class="preview-flow"><span>配置</span><span>检查</span><span>启动</span><span>QQ 实聊</span></div></div></a>
+          <div class="product-card-body"><span class="edition">QQ 官方渠道 / NapCat</span><h3>AgentStrata Bot</h3><p class="product-subtitle">QQ 助手</p><p>用官方凭据创建机器人，或通过 NapCat 登录 QQ 账号。用户在 QQ 中交流，你在工作台查登录状态和每次回复。</p><a class="text-link" href="products/bot.html">认识 QQ 助手 <span aria-hidden="true">→</span></a></div>
         </article>
       </div>
-      <div class="engine-note"><div><h3>想创建自己的应用？从 Studio 开始。</h3><p>它是创建和管理应用的工作台。产品提供具体体验，AgentStrata 提供共同引擎；渠道、插件和工具是它们内部的组件。</p></div><a class="text-link" href="#start">查看工作台入口 <span aria-hidden="true">→</span></a></div>
+      <div class="engine-note"><div><h3>在 Studio 创建自己的应用</h3><p>写下希望应用为谁做什么，核对首版方案的运行平台、启动入口和验收条件，再确认配置或开始开发。</p></div><a class="text-link" href="#start">查看工作台入口 <span aria-hidden="true">→</span></a></div>
     </section>
 
     <section class="improve-section" aria-labelledby="improve-title">
       <div class="container">
-        <div class="improve-heading"><div><p class="eyebrow">02 / UNDERSTAND & IMPROVE</p><h2 id="improve-title">让能力持续进步，<br>也让过程清楚可见。</h2></div><p>配置类修改直接确认应用。需要改代码时，复用已有 Harness、Eval 和 Console，检查候选版本，再决定是否启用。通用应用的一体化改进入口仍在完善。</p></div>
+        <div class="improve-heading"><div><p class="eyebrow">02 / UNDERSTAND & IMPROVE</p><h2 id="improve-title">让能力持续进步，<br>也让过程清楚可见。</h2></div><p>从应用的「任务流」找到具体问题，或从「测评」打开失败用例。发起 Harness 修复后，在同一应用查看候选、验收结果与版本记录。</p></div>
         <div class="console-showcase">
           <div class="console-image"><img src="assets/console-runtime.webp" alt="AgentStrata Console 的任务运行视图，展示 Channel、Gateway、Application、Agent 四层流程和执行详情" width="1680" height="1850" loading="lazy"><span>Console · 任务运行视图</span></div>
           <div class="improve-points">
@@ -109,37 +107,44 @@
     </section>
 
     <section class="section container start-section" id="start" aria-labelledby="start-title">
-      <div class="start-heading"><p class="eyebrow">03 / YOUR FIRST STEP</p><h2 id="start-title">从你的第一个应用开始。</h2><p>工作台和 QQ 官方机器人 MVP 已进入 main 源码。当前尚无公开 Release 安装包；先按构建指南准备工作台，再在界面中完成应用配置。</p></div>
+      <div class="start-heading">
+        <h2 id="start-title">打开你的工作台</h2>
+        <p>已从源码部署 Console，可以在部署机器上打开 <code>http://localhost:8910</code>。使用 Windows 安装版的用户，从开始菜单打开「AgentStrata 开发工作台」。</p>
+      </div>
       <div class="start-grid">
         <article class="start-primary">
-          <div class="start-card-top"><span class="tag">源码 MVP</span><span>Windows 11 + WSL2</span></div>
-          <h3>用 Studio 创建 AgentStrata Bot</h3>
-          <p>工作台面向 Windows 11 x64，使用 WSL2。安装入口会引导准备环境；当前需要从源码构建安装包。</p>
+          <h3>从「我的应用」开始</h3>
           <ol class="setup-steps">
-            <li><strong>连接模型</strong><span>填写模型 API，或选择已支持的 Codex 连接。标准应用配置和运行不要求开发账号。</span></li>
-            <li><strong>说明用途</strong><span>选择「创建 QQ 助手」，对话生成提案，核对后应用配置。</span></li>
-            <li><strong>连接并试聊</strong><span>填写官方机器人凭据，检查并启动，在 QQ 中确认收到回复。</span></li>
+            <li><strong>选一个应用</strong><span>点开已有实例看运行状态。要做新应用，先到「平台管理」连接聊天模型，再从「创建应用」描述用途。</span></li>
+            <li><strong>在客户端试一次</strong><span>用 QQ 发一条消息，或在桌面伙伴输入一句话。回到「任务流」可以查看已采集的模型、工具和投递记录。</span></li>
+            <li><strong>装到另一台电脑</strong><span>从应用的「下载与部署」选接收方系统，查看运行要求和可用安装包。</span></li>
           </ol>
-          <p>QQ 平台账号、机器人资格、测试范围和公开上线仍需按平台要求准备。请勿将 Secret 填入聊天。</p>
-          <a class="button" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md">查看构建与使用指南 <span aria-hidden="true">↗</span></a>
-          <a class="source-download" href="https://github.com/Ling-ye/AgentStrata/archive/refs/heads/main.zip">下载最新源码 ZIP <span aria-hidden="true">↓</span></a>
+          <a class="button" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md#使用统一工作台">工作台使用指南 <span aria-hidden="true">↗</span></a>
         </article>
         <div class="start-secondary">
-          <article><p class="eyebrow">WINDOWS 11 x64</p><h3>体验 AgentStrata Companion</h3><p>原生桌面客户端代码已提供；当前尚无公开 Release 安装包。开发者可按构建说明准备安装包，再按指南配置模型与启动角色。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/integrations/live2d_desktop/README.md">构建说明 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md#windows-桌面客户端">使用指南 <span aria-hidden="true">↗</span></a></div></article>
-          <article><p class="eyebrow">DEVELOPERS</p><h3>接入应用，或参与改进</h3><p>阅读架构与开发文档，从明确的接入目标、复现场景或一个小改进开始。</p><div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/README.md">文档中心 <span aria-hidden="true">↗</span></a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md">贡献指南 <span aria-hidden="true">↗</span></a></div></article>
+          <article>
+            <h3>首次部署工作台</h3>
+            <p>Linux / WSL2 源码部署会安装 Console 与评测服务。Windows 11 x64 安装版会准备独立的 Ubuntu 24.04 环境和项目库。</p>
+            <div class="inline-links"><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#运维控制台">Linux / WSL2 部署 ↗</a><a class="text-link" href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md#从源码构建">构建 Windows 安装包 ↗</a></div>
+          </article>
+          <article>
+            <h3>先运行一个助手</h3>
+            <p>QQ 官方机器人使用 AppID 和 AppSecret，NapCat 使用 QQ 账号扫码。桌面伙伴可在 Windows 客户端直接启动。</p>
+            <div class="inline-links"><a class="text-link" href="products/bot.html#start">选择 QQ 接入方式 →</a><a class="text-link" href="products/companion.html#start">启动桌面伙伴 →</a></div>
+          </article>
         </div>
       </div>
-      <p class="deployment-note"><span aria-hidden="true">ⓘ</span> 本站是产品介绍与使用入口，不提供托管聊天，也不收集 API Key。应用在你的电脑上运行，关机或休眠会影响服务。QQ 官方机器人与 NapCat / OneBot 是不同接入方式。</p>
+      <p class="deployment-note">网页提供项目源码和操作指南。请在自己的工作台或客户端配置凭据。应用运行期间，宿主机需要保持开机并连接所需的服务。<a href="https://github.com/Ling-ye/AgentStrata/archive/refs/heads/main.zip">下载项目源码 ZIP</a></p>
     </section>
 
     <section class="container faq-section" aria-labelledby="faq-title">
       <div><p class="eyebrow">GOOD TO KNOW</p><h2 id="faq-title">开始之前，<br>你可能想知道。</h2></div>
       <div class="faq-list">
         <details><summary>可以直接在这个网页里和 Agent 聊天吗？<span aria-hidden="true">+</span></summary><p>这里提供产品视频、源码与文档入口。对话、语音和工具调用由你部署的 AgentStrata 应用运行。按上方指南完成安装、模型配置及应用连接后，再通过对应客户端使用。</p></details>
-        <details><summary>需要什么环境和模型？<span aria-hidden="true">+</span></summary><p>开发工作台面向 Windows 11 x64，使用 WSL2；独立 Live2D 客户端在 Windows 原生运行。标准 QQ 应用可用模型 API 配置运行，不要求 Codex 开发账号；需要写代码的任务目前仍要求配置开发模型并登录 Codex 开发账号。各连接的支持范围以工作台指南为准。</p></details>
+        <details><summary>需要什么环境和模型？<span aria-hidden="true">+</span></summary><p>工作台可从 Linux / WSL2 源码部署，也可从 Windows 安装器准备 WSL2 环境。原生桌面伙伴直接在 Windows 11 x64 上运行。标准 QQ 应用需要聊天模型。写代码的开发任务还需要配置开发模型并授权 Codex 开发账号。</p></details>
         <details><summary>QQ 官方机器人现在支持到哪一步？<span aria-hidden="true">+</span></summary><p>源码 MVP 支持同页配置、检查、启停，以及 WebSocket 群内 @ / 单聊被动文本回复。配置检查、进程运行、平台连接和真实消息往返分别判断。当前不包含媒体、主动消息、Webhook 或云托管；公开上线还需满足 QQ 平台要求。原有 <a href="https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/qq.md">NapCat / OneBot 指南</a>作为另一条接入路径保留。</p></details>
         <details><summary>开源意味着所有使用都免费吗？<span aria-hidden="true">+</span></summary><p>AgentStrata 自有代码与文档采用 AGPL-3.0-only。模型 API、算力及其他外部服务可能产生费用。第三方 SDK、模型和客户端资产保留各自许可，使用和再分发前请查看<a href="https://github.com/Ling-ye/AgentStrata/blob/main/THIRD_PARTY_NOTICES.md">第三方声明</a>。</p></details>
-        <details><summary>演示中的能力都经过实时验证了吗？<span aria-hidden="true">+</span></summary><p>保留的 V7 视频演示已有 Live2D 工具接入与公开源码导入，开发、验收和打包部分为步骤说明，并非现场生成。它早于本次 QQ 官方工作台 MVP，不作为新功能端到端验收证据。详见<a href="demo.html">演示文字说明</a>。</p></details>
+        <details><summary>演示中的能力都经过实时验证了吗？<span aria-hidden="true">+</span></summary><p>保留的 V7 视频演示已有 Live2D 工具接入与公开源码导入，开发、验收和打包部分为步骤说明，并非现场生成。QQ 渠道的实际投递需在对应 QQ 客户端确认。详见<a href="demo.html">演示文字说明</a>。</p></details>
       </div>
     </section>
 

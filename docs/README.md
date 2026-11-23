@@ -35,6 +35,9 @@ M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求
 
 | 目标 | 下一步 |
 | --- | --- |
+| 打开已部署的本机工作台，或首次安装管理服务 | [打开 Studio](guides/desktop-studio.md)、[安装与检查 Console](guides/instances.md#运维控制台) |
+| 在 QQ 收到第一条回复 | [QQ 官方机器人](guides/desktop-studio.md#创建-qq-官方机器人) / [首次部署 NapCat](guides/deployment.md) / [已有账号登录与排查](guides/qq.md#qq--napcat) |
+| 为另一台电脑准备应用 | [在工作台选择安装包](guides/desktop-studio.md#把应用交给另一台电脑) / [安装要求和回执](reference/delivery.md#工作台应用安装包) |
 | 理解目标架构与现有差距 | [主计划](../specs/application-harness-framework/spec.md)、[当前架构](reference/architecture.md) |
 | 按阶段开发应用接入与优化能力 | [阶段范围与完成条件](../specs/application-harness-framework/spec.md#分阶段开发) |
 | 定制自有 Agent 能力、上下文或 LangGraph 策略 | [自有实现入口](reference/agent.md#自有实现与优化边界)、[能力优化路线](../specs/application-harness-framework/spec.md#自有-agent-能力优化路线) |
@@ -45,8 +48,6 @@ M6 提供[Console 改进工作台](guides/harness.md#通过-console-提交需求
 | 修复失败与启动自身治理 | [Harness 指南](guides/harness.md) |
 | 核对 Live2D 与 QQ 桥接的配置、权限和回执 | [外部桥接基线](reference/runtime.md#外部桥接基线) |
 | 建立桥接评测基线、对照代码候选 | [桥接测评](guides/evaluation.md#live2d-与-qq-桥接基线) / [版本对照](guides/evaluation.md#代码基线与候选对照) |
-| 运行机器人应用 | [首次部署](guides/deployment.md) / [实例运维](guides/instances.md) |
-| 在网页里配置、运行应用或开发独立桌面应用 | [本机应用工作台](guides/desktop-studio.md) |
 | 使用已有 Live2D 客户端或生成器 | [Live2D 指南](guides/live2d.md) |
 
 ## Harness 与 Evaluation

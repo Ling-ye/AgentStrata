@@ -20,15 +20,19 @@ AgentStrata 是面向应用的 Agent 引擎和工作台，让用户通过对话�
 
 你可以把 Agent 连接到 Live2D、QQ / NapCat，或其他提供 API、工具接口和消息渠道的项目，为应用配置独立的模型、人格、工具与记忆。Harness 根据需求开发适配、能力模块和运行策略，通过 Eval 与独立验收验证改进，再在授权范围内启用到指定实例。Codex 通过公开接口作为可选执行器接入，当前也是 Harness 的开发 worker。
 
-**外部应用提出能力需求，自有 Agent 据此改进：每次改动有目标，效果有对照，运行版本有来源。**
+## 快速开始
 
-| 想参与什么 | 从这里开始 |
+**已有工作台**　通过 Linux/WSL2 部署了 Console 的用户，在本机浏览器打开 `http://localhost:8910`，进入「我的应用」。安装了 Windows 版 Studio 的用户，从开始菜单打开「AgentStrata 开发工作台」。安装版使用自己的 WSL 用户和项目库。打开已有项目时，请沿用创建它的入口。
+
+| 想做什么 | 第一步 |
 | --- | --- |
-| **接入自己的应用** | [交流接入目标](https://github.com/Ling-ye/AgentStrata/discussions/categories/q-a)，再选择 Channel、Gateway 客户端或工具接口 |
-| **改进 Agent 能力** | [查看 Agent 任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aagent)，贡献工具发现、上下文或运行策略改进 |
-| **贡献复现与评测** | [查看验证任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aeval)，提供场景、复现与可复核结果 |
+| 从源码部署工作台 | 在启用了用户级 systemd 的 Linux/WSL2 上准备 Git、Node 22 和 npm。在源码根目录运行 `bash deploy/wsl/deploy_console.sh --skip-bots` 安装 Console 和 Evaluation，再用 `bash deploy/wsl/deploy_console.sh --status` 检查服务。[实例运维](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#运维控制台) |
+| 创建一个 QQ 官方机器人 | 在「平台管理」配置聊天模型，然后从「我的应用 → 创建应用」说明用途。确认方案后填入官方 AppID 和 AppSecret，启动并用获准的 QQ 账号试聊。[Studio 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/desktop-studio.md#创建-qq-官方机器人) |
+| 用 QQ 账号接入 NapCat | 新实例从 `bash deploy/wsl/quickstart.sh --dry-run` 预览，去掉 `--dry-run` 后按向导扫码。已有实例在「运行状态」查看 NapCat 登录，在 QQ 私聊或群内 @ 后，到「任务流」查看本次回复。[首次部署](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md) · [QQ 运维](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/qq.md#qq--napcat) |
+| 使用 Windows 桌面伙伴 | 安装或解压带运行载荷的 Windows 11 x64 桌面包，打开 `AgentStrata Live2D Native.exe`，准备本机应用、连接模型并启动桌宠。[桌面客户端](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md#windows-桌面客户端) |
+| 把应用交给另一台电脑 | 打开该应用的「下载与部署」，选择接收方系统，查看运行要求。没有现成包时，可从支持的 Git 提交或已验收候选生成安装包。[应用安装包](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/delivery.md#工作台应用安装包) |
 
-第一次贡献可从[未认领的新手任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-linked%3Apr)和[首次 PR 步骤](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md#第一次提交-pr)开始。欢迎中文或英文交流。
+应用运行后，可以从「任务流」找到某次实际请求，从「测评」比较效果。需要改代码时，在「应用改进」说明目标，或从失败记录发起 Harness 修复。开发账号与应用聊天模型分别配置。[评测指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md) · [Harness 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md) · [启用已验收版本](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#启用与撤回已验收版本)
 
 ## 项目特色
 
@@ -194,7 +198,7 @@ Console 将实例、运行任务、改进过程和评测证据集中呈现。以
 
 </details>
 
-## 快速开始
+## 从源码理解项目
 
 ### 准备源码环境
 
@@ -208,21 +212,6 @@ uv run agentstrata --help
 ```
 
 以上准备开发环境。模型连接、凭据、平台账号和运行组件按使用路径配置；秘密放在环境变量或私有环境文件中，不写入仓库。
-
-### 选择一条路径
-
-| 你的目标 | 入口 |
-| --- | --- |
-| **先运行一个 QQ 助手** | 执行 `bash deploy/wsl/quickstart.sh`；可用 `--dry-run` 预览。详见[首次部署](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/deployment.md)。 |
-| **连接 Live2D 或制作角色** | 按 [Live2D 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/live2d.md)配置模型连接和插件；角色制作见[角色预设指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/character-presets.md)。 |
-| **使用 Console 管理应用与任务** | 按[实例与 Console 运维](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md)准备服务；控制台默认地址为 `http://localhost:8910`。 |
-| **衡量 Agent 或模型能力** | 按[评测指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/evaluation.md)选择对象、题目、数据与评分配置。 |
-| **发起接入或改进需求** | 按 [Harness 指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/harness.md#提交接入或改进需求)配置开发 worker 和 Eval，选择目标及修改范围。 |
-| **启用通过验收的候选** | 按[版本启用指南](https://github.com/Ling-ye/AgentStrata/blob/main/docs/guides/instances.md#启用与撤回已验收版本)核对实例、回执和运行条件。 |
-
-Console 是管理入口，应用运行与评测服务各自拥有生命周期。选配 Live2D 客户端使用独立 Python 环境；Windows 桌面壳通过 WSL 后端工作。各组件的安装条件、模型调用费用与第三方服务要求以对应指南为准。
-
-## 从源码理解项目
 
 | 目录 | 主要职责 |
 | --- | --- |
@@ -251,6 +240,14 @@ AgentStrata 优先复用成熟基础设施，自行实现四层运行系统、�
 [OpenClaw](https://github.com/openclaw/openclaw) 与 [Deep Agents / better-harness](https://github.com/langchain-ai/deepagents)提供宿主、执行循环和评测驱动改进的设计参考。实际依赖、固定源码版本及采用边界见[架构说明](https://github.com/Ling-ye/AgentStrata/blob/main/docs/reference/architecture.md)与[源码复用依据](https://github.com/Ling-ye/AgentStrata/blob/main/specs/application-harness-framework/spec.md#开源复用与版本依据)。
 
 ## 参与开发
+
+| 想参与什么 | 从这里开始 |
+| --- | --- |
+| **接入自己的应用** | [交流接入目标](https://github.com/Ling-ye/AgentStrata/discussions/categories/q-a)，再选择 Channel、Gateway 客户端或工具接口 |
+| **改进 Agent 能力** | [查看 Agent 任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aagent)，贡献工具发现、上下文或运行策略改进 |
+| **贡献复现与评测** | [查看验证任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3Aarea%3Aeval)，提供场景、复现与可复核结果 |
+
+第一次贡献可从[未认领的新手任务](https://github.com/Ling-ye/AgentStrata/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22%20no%3Aassignee%20-linked%3Apr)和[首次 PR 步骤](https://github.com/Ling-ye/AgentStrata/blob/main/CONTRIBUTING.md#第一次提交-pr)开始。欢迎中文或英文交流。
 
 欢迎贡献应用桥接、Agent 能力、评测用例、Harness 改进和工作台体验。一个清楚的需求、一条有代表性的失败路径，或一组可复现的基线与候选证据，都可以成为贡献的起点。
 

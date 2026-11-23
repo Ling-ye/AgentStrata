@@ -1,14 +1,8 @@
 # 首次部署
 
-首次部署 QQ 机器人使用 deploy/wsl/quickstart.sh。下面按前提、执行、需要人工操作和恢复组织。
+本指南用于在 Linux/WSL2 上用 QQ 账号和 NapCat（OneBot）部署新的机器人。首次安装运行终端向导 `deploy/wsl/quickstart.sh`，已安装的实例按[实例运维](instances.md)管理，QQ 离线时先查看[账号登录状态](qq.md#qq--napcat)。
 
-本文是 AgentStrata 首次安装的唯一事实源。面向新用户的推荐入口是终端向导；安装完成后的
-更新、启停、日志、QQ gateway、Console 和 Evaluation 操作统一见
-[`operations.md`](instances.md)，只有正常入口无法恢复时才使用
-[`../docs/guides/wsl-troubleshooting.md`](wsl-troubleshooting.md) 的异常排障步骤。
-
-AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部署。Console 是可选管理面，
-不是 QQ 首次部署的依赖。
+持有 QQ 官方平台 AppID 和 AppSecret 的用户可在 [Studio 创建官方机器人](desktop-studio.md#创建-qq-官方机器人)。单独安装工作台见[运维控制台](instances.md#运维控制台)，Windows 原生桌宠见[桌面客户端](live2d.md#windows-桌面客户端)。WSL 本身无法正常启动或恢复时见[WSL 排障](wsl-troubleshooting.md)。
 
 对外提供服务前，在实例环境中设置 `CHATCOPILOT_SOURCE_URL` 并核对它与部署版本对应；
 配置、源码范围与验收要求见[许可与对应源码](../reference/publication.md#许可与对应源码)。
@@ -38,14 +32,19 @@ AgentStrata 的生产运行面是 Linux 或 WSL2，不支持 Windows 原生部�
 需要提前准备：
 
 - Git 和可访问公开下载源的网络。
-- 一个支持 OpenAI-compatible API 的模型 Base URL、模型 ID 和 API Key。
+- 一份已配置模型连接、模型方案和本实例用途绑定的统一模型文件。使用 API 时，准备实际端点、模型 ID 和凭据引用。
 - 一个用于登录 NapCat 的 QQ 账号，以及 Owner 的稳定数字 QQ 号。
-- 可选的稳定数字 QQ 群号；不填则仅按 Owner 用户准入。
 - 执行系统包安装时可使用 `sudo`。向导会先显示精确变更，再请求确认。
 
 向导使用固定校验和的用户级 Python，不覆盖系统 Python，不修改 shell profile，也不默认
 安装 Console、桌面、测试、飞书或第三方 MCP/Skill 依赖。QQ 推荐路径不安装 Node 或
 cc-connect；只有单独部署可选 Console 前端时才需要 Node 工具链。内置安装与启动已移除 cc-connect 和 Feishu legacy 一键桥接，ACP 协议实现仍可供外部客户端集成。
+
+### 先绑定机器人使用的模型
+
+终端向导会询问统一模型文件的位置，默认使用 `~/.config/agentstrata/llm.json`。已有文件可以继续使用。首次手工配置时，可参考[模型文件示例](../../deploy/wsl/llm.example.json)填写连接和实际模型，把 API Key 保存在连接引用的私有环境文件中。
+
+在配置的 `bindings` 中，把 `bot.my-assistant-qq.chat` 和 `bot.my-assistant-qq.research` 指向要使用的模型方案，两项可以共用一个方案。自定义 Bot ID 时替换用途名里的 `my-assistant-qq`。仅填通用 `chat`、`research` 会在生成运行环境时提示缺少实例绑定。[模型配置与凭据引用](../reference/configuration.md#llm)
 
 ## 三条命令开始
 
@@ -60,8 +59,7 @@ bash deploy/wsl/quickstart.sh
 1. 只读检查发行版、架构、磁盘、网络、systemd、用户 bus 和 Docker。
 2. 展示待下载的运行时、系统包、Docker 仓库与目标路径；任何特权变更都先确认。
 3. 创建不含搜索、MCP、人格、Codex 和代码任务的通用 QQ/LangGraph starter。
-4. 在终端采集 LLM、机器人 QQ、Owner 和可选群号；API Key 使用隐藏输入，Gateway token
-   与 OneBot token 分别由本机生成，二者不能复用，秘密不会出现在命令行参数、JSON 或部署摘要中。
+4. 在终端填写统一模型文件位置、机器人 QQ 和 Owner QQ。向导使用文件中已有的模型绑定，本机分别生成 Gateway token 与 OneBot token。
 5. 启动 NapCat bootstrap，并只在当前交互式终端显示一次本地 WebUI 登录链接。
 6. 等待你在浏览器扫码并回到终端确认，然后执行 token 同步和经过认证的 OneBot 状态检查。
 7. 只调用一次统一实例更新入口，最后输出有界的检查结果与修复命令。
@@ -91,7 +89,7 @@ bash deploy/wsl/quickstart.sh --resume
 ```
 
 向导不维护第二份流程状态文件。`--resume` 会检查 BotSpec、私有 env、Docker、NapCat 和
-systemd 的当前状态；空的秘密输入表示保留现有值。它只接受由引导流程管理的 QQ/LangGraph
+systemd 的当前状态；已有字段留空时沿用原值。它只接受由引导流程管理的 QQ/LangGraph
 starter，遇到 Codex、`dev.code_tasks` 或其他高级配置会拒绝覆盖。
 
 如果 Docker 已由操作者或 Docker Desktop WSL 集成提供，但当前不可用，可禁止自动安装：
@@ -165,7 +163,7 @@ NapCat 是用户独立维护的外部 OneBot provider。每个 Bot 的 systemd u
 
 空/弱 token、非回环 URL、未登录 NapCat、认证动作失败或配置不完整都会在 Agent 部署前
 失败关闭。QQ/NapCat 日常启停和修复命令见
-[`operations.md#qq--napcat`](qq.md#qq--napcat)。
+[QQ 与 NapCat 运维](qq.md#qq--napcat)。
 
 ## 如何理解“ready”
 
@@ -182,7 +180,7 @@ qq_external_send=not_tested
 qq_inbound_agent_roundtrip=not_tested
 ```
 
-最后请自行向机器人发送普通私聊，或在获准群内明确 @ 机器人，确认真实的
+最后请自行向机器人发送普通私聊，或在机器人已加入的群内明确 @ 机器人，确认真实的
 “QQ 用户 -> 外部 NapCat/OneBot -> AgentStrata Gateway -> Agent/模型 -> QQ 回复”链路。自动化、本地
 合成 QQ flow、只读平台探针或机器人主动发送都不能替代独立账号的入站往返证据。
 
@@ -227,7 +225,7 @@ BotSpec、示例和文档不得包含真实 API Key、平台 token、账号/群�
 
 `lingye-copilot-qq` 是展示 Codex、搜索、MCP、私有 Wiki 和隔离代码任务的高级内置实例，
 不是新手向导的默认机器人。高级 BotSpec、Codex main/worker 认证、共享 Docker 服务、Console
-与 Evaluation 的安装和维护见 [`operations.md`](instances.md)；不要把高级实例的
+与 Evaluation 的安装和维护见 [实例运维](instances.md)；不要把高级实例的
 `local.env.example` 复制到 starter。
 
 可选 Console 与终端命令消费同一份 BotSpec provisioning plan 和安全 env writer。Console
@@ -238,4 +236,4 @@ bash deploy/wsl/quickstart.sh --bot-id <id> --resume
 ```
 
 部署入口内部只调用一次 `update_instance.sh`；不要在其后再手工调用 register/start。安装后的
-更新、状态和日志统一回到 [`operations.md`](instances.md)。
+更新、状态和日志统一回到 [实例运维](instances.md)。

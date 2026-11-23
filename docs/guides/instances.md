@@ -13,6 +13,7 @@
 
 ```bash
 cd <path-to-AgentStrata>
+source .venv/bin/activate  # 使用下面的 Python CLI 前，进入部署好的项目环境
 ```
 
 先确认目标实例再执行写操作：
@@ -33,7 +34,7 @@ Gateway 与外部 OneBot provider 的本地状态：
 
 ```bash
 python -m chatcopilot bot doctor --bot bots/<id>/bot.yaml --json
-bash console/scripts/ctl.sh status <id>
+systemctl --user is-active chatcopilot@<id>.service
 bash deploy/wsl/qq_gateway.sh status --instance <id>
 ```
 
@@ -160,7 +161,7 @@ APP_ROOT="$HOME/AgentStrata-assistant"
 当前入口不升级依赖、不执行数据库迁移。凭据、人格/记忆、会话和工作区留在原实例，配置引用应可由
 冻结源码确认；私密 MCP 环境文件使用原位置的绝对引用。运行环境、安装登记或外部配置发生变化时可能阻断
 切换或恢复，需先核对实际状态。普通 `update_instance.sh` 和插件重装在存在受管版本时会提示先撤回。
-Console 改进工作台留待 M6；当前完整操作入口为 CLI 和同一 `HarnessController`。
+在工作台打开目标应用的「版本与交付」查看验收和启用记录，需从命令行操作时使用本节对应命令。
 
 ### 迁移内联 Agent 配置
 
@@ -188,7 +189,6 @@ bash console/systemd/register.sh --enable <id>
 bash console/scripts/ctl.sh start <id>
 bash console/scripts/ctl.sh stop <id>
 bash console/scripts/ctl.sh restart <id>
-bash console/scripts/ctl.sh status <id>
 ```
 
 直接检查 systemd：
@@ -196,7 +196,7 @@ bash console/scripts/ctl.sh status <id>
 ```bash
 systemctl --user is-active chatcopilot@<id>.service
 systemctl --user status chatcopilot@<id>.service --no-pager -l
-journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
+journalctl --user -u chatcopilot@<id>.service -n 120 --no-pager
 ```
 
 只有 BotSpec 启用 `dev.code_tasks` 时才有独立 worker；通用 starter 的该项为
@@ -204,7 +204,7 @@ journalctl --user -u chatcopilot@<id>.service -n 120 --no-page
 
 ```bash
 systemctl --user status chatcopilot-code-worker@<id>.service --no-pager -l
-journalctl --user -u chatcopilot-code-worker@<id>.service -n 120 --no-page
+journalctl --user -u chatcopilot-code-worker@<id>.service -n 120 --no-pager
 ```
 
 ### 聊天内 Owner 运维指令
@@ -248,30 +248,21 @@ systemd 操作仍是独立控制入口，竞态会表现为最终调度或状态
 
 ## 运维控制台
 
-控制台默认地址为 `http://localhost:8910`。`deploy_console.sh --status`
-同时验证 Console HTTP 和独立 Evaluation service。`--restart-only` 只重启
-Console。`--update-only` 原子获取 Evaluation maintenance lease；service 在同一
-创建锁内证明空闲并持久化 marker，之后直到 Console 与 Evaluation 都重启并通过
-健康检查前拒绝新建 Evaluation。活动记录、未知 lifecycle、遗留 claim、身份不明
-worker 或 service 不可达都会在构建和重启前失败关闭。
+在 Linux/WSL2 的源码根目录操作，当前用户需要可用的 systemd 用户服务。首次从源码构建网页需准备 Node 22 和 npm。
 
-不带参数的 `bash deploy/wsl/deploy_console.sh` 是日常全量机器更新入口：它先安装或修复
-Console，再按 `bots/*/bot.yaml` 的 `deploy.instance_id` 更新并重启全部机器人。实例按稳定
-路径顺序执行；某个实例失败时继续其余实例，最后汇总失败并返回非零。仅修复 Console 时
-显式加 `--skip-bots`；页面“更新控制台”继续使用 `--update-only`，不会隐式重启机器人。
+| 本次操作 | 在源码根目录执行 |
+| --- | --- |
+| 首次安装或修复 Console 与 Evaluation | `bash deploy/wsl/deploy_console.sh --skip-bots` |
+| 检查两项服务、Evaluation 的 Unix socket 和 Console HTTP 接口 | `bash deploy/wsl/deploy_console.sh --status` |
+| 更新已部署的 Console 与 Evaluation | `bash deploy/wsl/deploy_console.sh --update-only` |
+| 仅重启 Console 进程 | `bash deploy/wsl/deploy_console.sh --restart-only` |
+| 同时更新工作台和所有仓库机器人 | `bash deploy/wsl/deploy_console.sh` |
 
-控制台页面中的“更新控制台”只通过 `systemd-run --user` 创建独立 transient
-unit，再由该 unit 执行同一个 `deploy_console.sh --update-only`。`setsid` 和
-`nohup` 不会脱离 `chatcopilot-console.service` 的 cgroup，因此不作为降级路径。
-若 transient unit 无法创建，接口会在更新脚本运行和 maintenance lease 获取前返回
-明确错误；此时在 WSL 终端手工执行下面的 `--update-only` 命令。
+健康检查通过后，在本机浏览器打开 `http://localhost:8910`。从「我的应用」选实例，「运行状态」查看进程及服务，「任务流」查看具体请求。创建应用、配置模型和选择安装包见[工作台使用指南](desktop-studio.md#使用统一工作台)。
 
-```bash
-bash deploy/wsl/deploy_console.sh
-bash deploy/wsl/deploy_console.sh --status
-bash deploy/wsl/deploy_console.sh --update-only
-bash deploy/wsl/deploy_console.sh --restart-only
-```
+无参数部署会按 `bots/*/bot.yaml` 中的 `deploy.instance_id` 依次更新并重启机器人。某个实例失败后会继续处理其余实例，最后汇总失败并返回非零。单个实例的更新见[配置与体检](#配置与体检)。
+
+`--update-only` 先获取 Evaluation 维护租约。服务在创建锁内确认空闲，更新期间暂停新建评测，直到两项服务重启并通过健康检查。活动评测、状态未知或服务不可达时会在构建前停止。页面「更新控制台」使用 `systemd-run --user` 建立独立任务来执行同一命令。若创建失败，可在 WSL 终端执行表中的更新命令。
 
 ```bash
 systemctl --user status chatcopilot-console --no-pager -l

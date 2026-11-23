@@ -314,6 +314,12 @@ function ApplicationWorkspace({ id, tab, hash }: { id: string; tab: ApplicationT
             {repo && instance && tab === "runtime" && (
               <>
                 <BotsPage key={id} fixed={{ id: instance, tab: "runtime" }} loadError={null} />
+                {value.type === "qq_personal" && (
+                  <Paragraph>
+                    在下方「服务管理」找到 NapCat，点击「管理」检查 QQ 登录。账号在线后，用获准账号私聊或在群里 @ 机器人，再到
+                    <a href={applicationHref(id, "records")}>任务流</a>查看这次回复的执行记录。
+                  </Paragraph>
+                )}
                 <ServicesPage scope={instance} />
               </>
             )}

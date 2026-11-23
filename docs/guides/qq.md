@@ -18,10 +18,13 @@ Agent 完成不代表 QQ 已收到；`provider_acknowledged` 只证明 provider 
 
 ## QQ / NapCat
 
-OneBot `3001` 和 WebUI `6099` 只允许绑定回环地址。WebUI 管理
-token 只用于登录管理面板，不是 `QQ_ACCESS_TOKEN`。首次部署和扫码只使用
-[`deployment.md`](deployment.md) 的 `quickstart.sh`；下面的 bootstrap 命令仅用于
-已安装实例的 NapCat 登录修复。
+首次在 Linux/WSL2 上部署使用[终端向导](deployment.md)。已有实例先看账号和进程各自的状态。
+
+1. 在「我的应用」打开目标 QQ 助手的「运行状态」。找到「服务管理」中的 NapCat，点击「管理 → 检查登录状态」。若账号离线，用「打开 NapCat 管理页」按提示扫码或在手机上确认。管理页要求 Token 时，点击「获取并复制 Token」，仅在本机 NapCat 页面使用。
+2. 在源码根目录运行 `bash deploy/wsl/qq_gateway.sh status --instance <id>`，将 `<id>` 换为该实例的实际 ID。只读检查会核对 OneBot 认证、账号在线状态和登录身份。若报告容器配置不符，按下文对应项处理。
+3. 用获准的账号私聊，或在机器人所在群中明确 @ 它。以 QQ 客户端收到回复确认收发，再到工作台「任务流」打开该次请求查看执行记录。
+
+OneBot 和 WebUI 默认分别使用回环端口 `3001` 和 `6099`。WebUI 管理 token 用于登录面板，`QQ_ACCESS_TOKEN` 用于 OneBot 连接。
 
 修复回环容器并重新登录：
 
@@ -46,8 +49,17 @@ bash deploy/wsl/qq_gateway.sh restart --instance <id>
 bash deploy/wsl/qq_gateway.sh logs --instance <id>
 ```
 
-如果 `start/restart` 提示旧容器需要重建，应在可信交互终端确认，或在回环 Console 的
-NapCat 卡片点击“重建并启动”。对应 CLI 的显式确认命令为：
+如果容器配置检查报告差异，先核对目标实例。只有重启策略不符合项目要求时，可单独更新这一项，再检查登录和容器状态。
+
+```bash
+bot_id=my-assistant-qq  # 改成自己的实例 ID
+docker inspect --format '{{.HostConfig.RestartPolicy.Name}}' "napcat-$bot_id"
+# 确认需要调整后执行
+docker container update --restart unless-stopped "napcat-$bot_id"
+bash deploy/wsl/qq_gateway.sh status --instance "$bot_id"
+```
+
+如果其他配置差异需要重建，可以在交互式终端确认，或在 NapCat 服务详情选择「重建容器」或「重建并启动」。显式确认的 CLI 命令如下。
 
 ```bash
 bash deploy/wsl/qq_gateway.sh recreate --instance <id> --confirm-recreate <id>
