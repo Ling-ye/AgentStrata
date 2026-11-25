@@ -63,7 +63,8 @@ test('IPC requires exact granted main frame and role; origin checks do not accep
   assert.equal(allowed(caller, grant, ['settings']), false);
 });
 test('the native backend reads application-scoped prepared components', async () => {
-  assert.equal((await new NativeBackend(config, 'payload', async () => JSON.stringify({bot_id:'fixture',plugins:installed})).list()).length, 1);
+  const backend=new NativeBackend(config, 'payload', async () => JSON.stringify({bot_id:'fixture',plugins:installed}));
+  assert.deepEqual((await backend.list()).map(value=>value.id), ['open-llm-vtuber','live2d-generator']);
 });
 test('native media origins with trailing slashes retain strict scheme, host and port checks', () => {
   assert.equal(sameHttpOrigin('http://localhost:12493/', 'http://localhost:12493'), true);
@@ -88,8 +89,11 @@ test('native CLI receives separated argv and secrets only over stdin', async () 
   await backend.start('open-llm-vtuber');
   await backend.stop();
   assert.equal(calls.length,1,'desktop shutdown must not signal another launch through app stop');
-  await assert.rejects(backend.apply(id,2));
-  await assert.rejects(backend.start('live2d-generator'));
+  await backend.apply(id,2);
+  assert.deepEqual(calls.at(-1).args,['-m','chatcopilot','app','character-apply','--root',config.root,'--save']);
+  assert.deepEqual(JSON.parse(calls.at(-1).input),{id,version:2});
+  await backend.restore(id);
+  assert.deepEqual(JSON.parse(calls.at(-1).input),{id});
 });
 test('a failed desktop launch never stops another supervisor for the installation', async () => {
   const calls=[];

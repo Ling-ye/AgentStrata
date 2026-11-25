@@ -5,10 +5,24 @@ prompts:
 tools:
   packs:
     - memory.chat
+    - web.fetch
   mcp:
     servers: mcp/servers.yaml
 agents:
   runtime: langgraph
+  unified_search:
+    enabled: true
+    providers:
+      - id: tavily
+        kind: tavily
+        enabled: true
+        endpoint: https://api.tavily.com/search
+        credential_env: TAVILY_API_KEY
+      - id: brave
+        kind: brave
+        enabled: true
+        endpoint: https://api.search.brave.com/res/v1/web/search
+        credential_env: BRAVE_API_KEY
 llm:
   chat:
     binding: chat

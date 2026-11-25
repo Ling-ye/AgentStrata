@@ -3,3 +3,8 @@ plugins:
     options:
       port: 12495
       gateway_port: 18893
+  - id: live2d-generator
+    options:
+      port: 12496
+      voice_port: 12497
+      voice: true

@@ -38,7 +38,7 @@ def identity(pid: int) -> dict | None:
         return None
 
 
-def owns_listener(pid: int, port: int) -> bool:
+def _listener_pids(port: int) -> set[int]:
     class Row(ctypes.Structure):
         _fields_ = [(field, wintypes.DWORD) for field in
                     ("state", "address", "port", "remote_address", "remote_port", "pid")]
@@ -47,12 +47,15 @@ def owns_listener(pid: int, port: int) -> bool:
     api.GetExtendedTcpTable(None, ctypes.byref(size), False, socket.AF_INET, 5, 0)
     buffer = ctypes.create_string_buffer(size.value)
     if api.GetExtendedTcpTable(buffer, ctypes.byref(size), False, socket.AF_INET, 5, 0):
-        return False
+        return set()
     count = ctypes.cast(buffer, ctypes.POINTER(wintypes.DWORD))[0]
     rows = ctypes.cast(ctypes.addressof(buffer) + 4, ctypes.POINTER(Row))
-    return any(row.pid == pid and row.state == 2 and socket.ntohs(row.port & 0xffff) == port
-               and row.address == int.from_bytes(socket.inet_aton("127.0.0.1"), "little")
-               for row in rows[:count])
+    return {row.pid for row in rows[:count] if row.state == 2 and socket.ntohs(row.port & 0xffff) == port
+            and row.address == int.from_bytes(socket.inet_aton("127.0.0.1"), "little")}
+
+
+def owns_listener(pid: int, port: int) -> bool:
+    return pid in _listener_pids(port)
 
 
 class ProcessJob:
@@ -91,6 +94,11 @@ class ProcessJob:
                 thread.Close()
             for handle in inherited:
                 handle.Close()
+
+    def owns_listener(self, port: int) -> bool:
+        # Windows virtual-environment launchers can delegate to a child interpreter.
+        members = win32job.QueryInformationJobObject(self.handle, win32job.JobObjectBasicProcessIdList)
+        return bool(_listener_pids(port).intersection(members))
 
     def close(self):
         self.handle.Close()

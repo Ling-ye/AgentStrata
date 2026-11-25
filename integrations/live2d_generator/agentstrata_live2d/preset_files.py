@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 
 from .character_types import MODEL_SUFFIXES, PRESET_FILES, PRESET_FORMAT, character_id, profile, revision_number
-from .repository import extract_zip, image_info, private_directory, relative_file, validate_bundle, write_json
+from .repository import extract_zip, image_info, private_directory, relative_file, restrict, validate_bundle, write_json
 from .types import GenerationError, MAX_UPLOAD
 
 
@@ -62,7 +62,7 @@ def copy_file(source: Path, destination: Path) -> None:
     private_directory(destination.parent)
     with source.open("rb") as incoming, destination.open("xb") as outgoing:
         shutil.copyfileobj(incoming, outgoing)
-    destination.chmod(0o600)
+    restrict(destination)
 
 
 def copy_tree(source: Path, destination: Path) -> None:
@@ -104,7 +104,9 @@ def validate_preset(root: Path) -> dict:
     character_id(manifest["id"])
     revision_number(manifest["version"])
     verify_inventory(root, manifest["files"], omit={"preset.json"})
-    profile(read_json(root / "profile.json"))
+    details = profile(read_json(root / "profile.json"))
+    if details["voice"]["provider"] == "gpt_sovits":
+        raise GenerationError("训练语音需要使用本机角色工程备份")
     image_info(root / "preview.png")
     with tempfile.TemporaryDirectory(prefix="as-preset-model-") as temporary:
         unpack_model(root / "avatar.zip", Path(temporary) / "model")
@@ -121,6 +123,8 @@ def export_preset(revision: Path, destination: Path, identifier: str, version: i
     if destination.exists() or destination.is_symlink():
         raise GenerationError("导出目标已存在，拒绝覆盖")
     details = profile(read_json(revision / "profile.json"))
+    if details["voice"]["provider"] == "gpt_sovits":
+        raise GenerationError("训练语音需要使用本机角色工程备份")
     if not all(details[key].strip() for key in ("identity", "author", "license", "source")):
         raise GenerationError("导出预设前请填写身份、作者、许可与来源，并保存新版本")
     private_directory(destination.parent)
@@ -142,7 +146,7 @@ def export_preset(revision: Path, destination: Path, identifier: str, version: i
                     shutil.copyfileobj(source, target)
         if temporary_zip.stat().st_size > MAX_UPLOAD:
             raise GenerationError("角色预设超过 48 MiB")
-        temporary_zip.chmod(0o600)
+        restrict(temporary_zip)
         temporary_zip.rename(destination)
     return {"path": str(destination), "id": identifier, "version": version,
             "sha256": digest(destination), "size": destination.stat().st_size}

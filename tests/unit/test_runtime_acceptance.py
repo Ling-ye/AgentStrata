@@ -119,7 +119,8 @@ def package(tmp_path):
     inputs = {"bots/demo/bot.yaml":b"id: demo\n", "bots/demo/components.yaml":b"plugins: [demo]\n",
         "bots/demo/mcp/servers.yaml":b"servers: []\n", "pyproject.toml":b"[project]\nname='demo'\n",
         "integrations/live2d_desktop/windows-mcp.lock.json":b'{"python":"3.14.7"}',
-        "integrations/open_llm_vtuber/adapter.py":b"raise RuntimeError('inert source never executed')\n"}
+        "integrations/open_llm_vtuber/adapter.py":b"raise RuntimeError('inert source never executed')\n",
+        "integrations/live2d_generator/agentstrata_live2d/resources/gpt-sovits.lock.json":b'{"revision":"fixture"}'}
     for name, raw in inputs.items():
         path = payload / "source" / name
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -138,7 +139,10 @@ def test_source_compiler_retains_plugin_mcp_blockers_and_never_issues_acceptance
     assert {"application", "host", "launcher", "mcp", "tools", "plugin-components", "mcp:windows-mcp"} == set(scopes)
     assert "mcp-python-archive-not-pinned" in scopes["mcp:windows-mcp"]["blockers"]
     assert "exact-host-wheel-set-absent" in scopes["host"]["blockers"]
-    assert manifest["integrations/open_llm_vtuber/adapter.py"]["sha256"] in scopes["plugin-components"]["inputs"].values()
+    plugin_inputs = scopes["plugin-components"]["inputs"]
+    for name in ("integrations/open_llm_vtuber/adapter.py",
+                 "integrations/live2d_generator/agentstrata_live2d/resources/gpt-sovits.lock.json"):
+        assert plugin_inputs[name] == manifest[name]["sha256"]
     requirements.verify_runtime_requirements(payload, manifest, "bots/demo/bot.yaml", "demo")
     receipt, _declaration, binding = documents()
     with pytest.raises(InstallError, match="incomplete"):

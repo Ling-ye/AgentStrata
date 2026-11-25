@@ -8,7 +8,7 @@
 
 每个角色使用稳定 UUID，显示名可以修改，同名不会自动合并。开始生成前先保存草稿及
 原始输入，成功后将模型、提示词、参考图、分层素材复制为独立版本。即使生成失败，
-已接收的原稿也随角色备份保存。任务目录中的配置和日志
+已接收的原稿也随角色备份保存。本机训练音色的参考文件、试听和已校验的推理权重由角色版本引用，工程备份会带上相关语音资产。任务目录中的配置和日志
 不收录；清理任务不影响已经保存的角色。保存阶段失败有独立提示，可稍后手动收录任务。
 
 “保存草稿”只保存编辑内容；“保存新版本”保留当前选中版本的模型及创作资料，并使用
@@ -76,11 +76,11 @@ config="$plugin_root/live2d-generator/config/generator.json"
 
 新角色导入模型时用 `--profile` 替代 `--id`。模型 ZIP 须有 `preview.png`；CLI 可以用
 `--preview` 提供独立预览。生成已有角色用 `generate --character-id CHARACTER_ID`。
-首版仅支持 Edge TTS 音色 ID，不导入语音服务地址、密钥、参考音频或训练权重。
+声音字段可以引用 Edge TTS 音色 ID 或本机训练资产的摘要。需要保留训练权重、试听及参考片段时，使用角色工程备份。
 
 ## 成品预设与客户端应用
 
-成品预设为 `agentstrata-character-preset-v1` ZIP，固定包含 `preset.json`、`profile.json`、
+使用 Edge TTS 的成品预设为 `agentstrata-character-preset-v1` ZIP，固定包含 `preset.json`、`profile.json`、
 `avatar.zip` 和 `preview.png`。内部模型沿用原有模型包格式；外层摘要覆盖全部成品文件。
 导出前填写身份、作者、许可、来源并保存版本。版本导出可复现，不包含原稿、提示词、
 任务配置或日志；人设正文是你主动选择分享的内容，请检查后再分发。

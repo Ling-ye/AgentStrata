@@ -4,7 +4,9 @@ from __future__ import annotations
 from contextlib import asynccontextmanager
 import base64
 from importlib.resources import files
+import ipaddress
 import json
+import os
 from pathlib import Path
 import secrets
 import tempfile
@@ -19,6 +21,7 @@ from .types import GenerationError, GenerationRequest, INPUT_SUFFIXES, MAX_UPLOA
 
 def create_app(runtime: JobRuntime) -> FastAPI:
     token = secrets.token_urlsafe(32)
+    mcp_auth = os.environ.get("AGENTSTRATA_CHARACTER_MCP_AUTH", "")
     port = runtime.config.port
     hosts = {f"localhost:{port}", f"127.0.0.1:{port}"}
     origins = {"http://" + host for host in hosts}
@@ -26,22 +29,28 @@ def create_app(runtime: JobRuntime) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app):
         with runtime:
+            from chatcopilot.core.release_runtime import loaded
+            loaded(__file__)
             yield
 
     app = FastAPI(title="Live2D Studio", docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan)
 
     @app.middleware("http")
     async def local_access(request: Request, call_next):
-        if request.headers.get("host") not in hosts or (
+        peer = request.client
+        if (mcp_auth and (peer is None or not ipaddress.ip_address(peer.host).is_loopback)) or request.headers.get("host") not in hosts or (
                 request.headers.get("origin") and request.headers["origin"] not in origins):
             return JSONResponse({"error": "仅支持本机同源访问"}, status_code=403)
+        if request.url.path.startswith("/agentstrata/mcp") and (not mcp_auth or not secrets.compare_digest(
+                request.headers.get("authorization", ""), mcp_auth)):
+            return JSONResponse({"error": "角色工具只接受本机授权"}, status_code=403)
         if request.url.path.startswith("/api/") and not secrets.compare_digest(
                 request.headers.get("x-generator-token", ""), token):
             return JSONResponse({"error": "工作台会话失效，请刷新页面"}, status_code=403)
         response = await call_next(request)
         response.headers.update({"Cache-Control": "no-store", "X-Content-Type-Options": "nosniff",
             "X-Frame-Options": "DENY", "Cross-Origin-Resource-Policy": "same-origin",
-            "Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; object-src 'none'; frame-ancestors 'none'"})
+            "Content-Security-Policy": "default-src 'self'; img-src 'self' blob: data:; media-src 'self' blob:; object-src 'none'; frame-ancestors 'none'"})
         return response
 
     @app.exception_handler(GenerationError)
@@ -78,7 +87,8 @@ def create_app(runtime: JobRuntime) -> FastAPI:
 
     @app.get("/api/status")
     def status():
-        return {"capabilities": runtime.config.capabilities(), "jobs": runtime.list(), "legal": source_notice()}
+        return {"capabilities": runtime.config.capabilities(), "jobs": runtime.list(), "legal": source_notice(),
+                "training": bool(os.environ.get("AGENTSTRATA_GPT_SOVITS_CONFIG"))}
 
     @app.post("/api/jobs")
     async def submit(request: Request):
@@ -118,7 +128,11 @@ def create_app(runtime: JobRuntime) -> FastAPI:
         return runtime.get(identifier)
 
     @app.post("/api/jobs/{identifier}/retry")
-    def retry(identifier: str):
+    async def retry(identifier: str, request: Request):
+        from .character_web import body
+        if request.headers.get("content-type") == "application/json":
+            update = await body(request, {"sources"})
+            return runtime.retry(identifier, sources=update.get("sources"))
         return runtime.retry(identifier)
 
     @app.post("/api/jobs/{identifier}/cancel")
@@ -133,4 +147,7 @@ def create_app(runtime: JobRuntime) -> FastAPI:
 
     from .character_web import register
     register(app, runtime)
+    if mcp_auth:
+        from .character_mcp import register as register_mcp
+        register_mcp(app, runtime)
     return app

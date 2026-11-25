@@ -19,14 +19,14 @@ class GenerationService:
         self.repository, self.image, self.layers, self.rig = repository, image, layers, rig
         self.timeout = timeout
 
-    def submit(self, request: GenerationRequest, source: Path | None) -> str:
+    def submit(self, request: GenerationRequest, source: Path | None, *, identifier: str | None = None) -> str:
         if source is None and not (request.prompt or request.information):
             raise GenerationError("请提供提示词、角色资料或图片/分层素材")
         if source is not None and source.suffix.lower() not in INPUT_SUFFIXES:
             raise GenerationError("支持 PNG、JPEG、WebP、PSD 或 PNG 图层 ZIP")
         if source is not None and source.suffix.lower() in {".psd", ".zip"} and request.redraw:
             raise GenerationError("分层素材不能使用重新绘制")
-        return self.repository.create(asdict(request), source)
+        return self.repository.create(asdict(request), source, identifier=identifier)
 
     def run(self, identifier: str, cancelled: Callable[[], bool] = lambda: False) -> dict:
         repo, root = self.repository, self.repository.path(identifier)
@@ -50,15 +50,30 @@ class GenerationService:
         try:
             inputs = list(root.glob("input.*"))
             source = inputs[0] if inputs else None
-            if source is None or request.redraw:
-                stage("illustration")
-                self.image.generate(request.image_prompt(), source, root / "illustration.png")
-                source = root / "illustration.png"
+            from .preset_files import digest
+            checkpoints = state.setdefault("checkpoints", {})
+            for filename, expected in checkpoints.items():
+                if filename not in {"illustration.png", "layers.psd"} or digest(root / filename) != expected:
+                    raise GenerationError("生成阶段的校验摘要不匹配")
+            illustration = root / "illustration.png"
+            layers = root / "layers.psd"
+            if "layers.psd" in checkpoints:
+                source = layers
+            elif source is None or request.redraw:
+                if "illustration.png" not in checkpoints:
+                    stage("illustration")
+                    self.image.generate(request.image_prompt(), source, illustration)
+                    image_info(illustration)
+                    checkpoints["illustration.png"] = digest(illustration)
+                    repo.save(identifier, state)
+                source = illustration
             if source.suffix.lower() not in {".psd", ".zip"}:
                 stage("decomposition")
                 image_info(source)
-                self.layers.decompose(source, root / "layers.psd", check)
-                source = root / "layers.psd"
+                self.layers.decompose(source, layers, check)
+                checkpoints["layers.psd"] = digest(layers)
+                repo.save(identifier, state)
+                source = layers
             stage("rigging")
             result = self.rig.build(source, root / "model", root / "layers")
             stage("validation")
@@ -72,7 +87,7 @@ class GenerationService:
             stage("packaging")
             make_archive(root / "model", root / "model.zip")
             check()
-            state.update(status="completed", stage="completed", result=manifest)
+            state.update(status="completed", stage="completed", result=manifest, model_sha256=digest(root / "model.zip"))
         except Cancelled as exc:
             state.update(status="cancelled", error=str(exc))
         except GenerationError as exc:

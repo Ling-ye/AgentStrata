@@ -111,12 +111,18 @@ function Fetch-Verified($Pin, [string]$Path) {
   }
   Move-Item -LiteralPath $Pending -Destination $Path -Force
 }
-function Prepare-Environment([string]$PythonVersion, [string]$Environment, [string]$Requirements, [string]$Name) {
+function Prepare-Environment([string]$PythonVersion, [string]$Environment, [string]$Requirements, [string]$Name, [string]$BuildInputs = '') {
   $Python = Join-Path $Environment 'Scripts\python.exe'
   if (!(Test-Path -LiteralPath $Python)) {
     Run-Native $Uv @('venv','--clear','--no-config','--python',$PythonVersion,'--managed-python',$Environment) ($Name + '-venv')
   }
-  $ArgsList = @('pip','sync','--no-config','--python',$Python,'--require-hashes','--only-binary',':all:')
+  $ArgsList = @('pip','sync','--no-config','--python',$Python,'--require-hashes')
+  if ($BuildInputs) {
+    Run-Native $Uv @('pip','install','--no-config','--python',$Python,'--require-hashes','-r',$BuildInputs) ($Name + '-build-dependencies')
+    $ArgsList += @('--no-build-isolation')
+  } else {
+    $ArgsList += @('--only-binary',':all:')
+  }
   $Wheels = Join-Path $BundleRoot 'wheels'
   if ($HostWheelsReady -and $Name -in @('bootstrap','application')) {
     $ArgsList += @('--offline','--no-index','--find-links',$HostWheelDirectory)
@@ -177,6 +183,15 @@ $Ffmpeg = Join-Path $Extracted $Lock.ffmpeg.directory
 $FfmpegDestination = Join-Path $Plugin 'runtime\tools\ffmpeg'
 New-Item -ItemType Directory -Path $FfmpegDestination -Force | Out-Null
 Copy-Item (Join-Path $Ffmpeg '*') $FfmpegDestination -Recurse -Force
+if (Select-String -LiteralPath $Components -SimpleMatch 'id: live2d-generator' -Quiet) {
+  $Studio = Join-Path $InstallRoot '.agentstrata-data\plugins\live2d-generator'
+  $StudioSource = Join-Path $Source 'integrations\live2d_generator\agentstrata_live2d\resources'
+  $StudioPython = Prepare-Environment $Lock.vtuber_python (Join-Path $Studio 'runtime\venv') `
+    (Join-Path $StudioSource 'windows-generator.lock') 'character-studio' (Join-Path $StudioSource 'build.lock')
+  $VoicePin = Get-Content -LiteralPath (Join-Path $StudioSource 'gpt-sovits.lock.json') -Encoding utf8 -Raw | ConvertFrom-Json
+  $VoicePython = Prepare-Environment $VoicePin.python (Join-Path $Studio 'runtime\voice-venv') `
+    (Join-Path $StudioSource 'windows-voice.lock') 'character-voice' (Join-Path $StudioSource 'build.lock')
+}
 }
 $env:PYTHONPATH = Join-Path $InstallRoot 'src'
 if ($TrialProvisioner) {

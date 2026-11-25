@@ -76,6 +76,7 @@ Studio 项目可显式连接其源码版本和独立验证环境对应的测评�
 统一目录是来源视图，不是第二份 BotSpec 注册表。仓库实例使用 `repo:<instance-id>`，
 组件安装使用 `plugin:<instance-id>`，Studio 项目使用 `studio:<project-id>`。显示名称可改，
 身份不能由名称推断；按规范化配置路径去重，Studio 生成的 QQ 配置保留 Studio 生命周期归属。
+目录归档按稳定应用 ID 保存在当前工作台的私有数据目录。默认列表显示日常应用，「已归档」仍可打开原地址、安装包和业务记录。归档和恢复只改变目录位置，服务生命周期仍由原来源管理。
 列表只表示已发现应用，不表示进程、渠道或端到端验证成功。
 
 首期能力按来源开放：
@@ -120,7 +121,8 @@ QQ 配置需求和提示词开发在发送前按应用、用途保存原请求�
 
 | 端点 | 方法 | 用途 |
 | --- | --- | --- |
-| `/api/applications` | GET / POST | 聚合目录 / 创建 QQ 或桌面应用 |
+| `/api/applications` | GET / POST | 聚合目录，使用 `?archived=true` 查询归档 / 创建 QQ 或桌面应用 |
+| `/api/applications/{id}/archive` | PUT | 按 `archived` 布尔值归档或恢复 |
 | `/api/applications/{id}` | GET | 来源、能力和应用详情 |
 | `/api/applications/{id}/configuration` | GET / POST | 支持的应用配置 |
 | `/api/applications/{id}/check`、`start`、`stop` | POST | 交给来源管理器执行确定性操作 |

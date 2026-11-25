@@ -1,8 +1,7 @@
 """Explicit asset handoff to the VTuber client; never imports AgentRuntime."""
 from __future__ import annotations
 
-from contextlib import contextmanager
-import fcntl
+from contextlib import ExitStack, contextmanager
 import hashlib
 import json
 import os
@@ -15,11 +14,13 @@ from uuid import uuid4
 
 import yaml
 
-from .repository import extract_zip, private_directory, relative_file, validate_bundle, write_bytes, write_json
+from .repository import (exclusive_file, extract_zip, private_directory, relative_file, validate_bundle, write_bytes,
+                         write_json)
 from .types import GenerationError, job_id
 
 CONFIG_FILES = ("data/live2d/model_dict.json", "config/adapter.json", "config/upstream.yaml")
 CHARACTER_CONFIG_FILES = (*CONFIG_FILES, "config/identity.md", "config/response-style.md")
+NATIVE_CHARACTER_CONFIG = (*CONFIG_FILES, "application/user-prompts.json")
 DEFAULT_RESPONSE_STYLE = "用自然、清晰的语言交流，语气与当前身份和对话情境一致。"
 
 
@@ -35,6 +36,45 @@ def _application(root: Path):
     return installed
 
 
+def _config_path(root: Path, relative: str) -> Path:
+    if relative == "application/user-prompts.json":
+        installed = _application(root)
+        if os.name != "nt" or installed is None:
+            raise GenerationError("找不到角色对应的 Windows 安装")
+        return relative_file(installed.root, ".agentstrata-data/gateway/user-prompts.json")
+    return relative_file(root, relative)
+
+
+def _configuration(root: Path, relative: str) -> bytes | None:
+    path = _config_path(root, relative)
+    if relative == "application/user-prompts.json" and not path.exists():
+        return None
+    return path.read_bytes()
+
+
+def _set_configuration(root: Path, relative: str, value: bytes | None) -> None:
+    path = _config_path(root, relative)
+    if value is None:
+        path.unlink(missing_ok=True)
+    else:
+        write_bytes(path, value)
+
+
+def _config_hash(value: bytes | None) -> str | None:
+    return hashlib.sha256(value).hexdigest() if value is not None else None
+
+
+def _native_prompts(root: Path, identity: str, style: str) -> bytes:
+    from chatcopilot.core.application_settings import ApplicationSettings
+    from chatcopilot.core.settings import load_local_env_values
+
+    installed = _application(root)
+    environment = load_local_env_values(installed.control / "runtime.env", expand_home=True)
+    values = ApplicationSettings.validate("prompts", {"identity": identity, "response_style": style})
+    return json.dumps({"instance_id": environment.get("CHATCOPILOT_INSTANCE_ID") or installed.bot_id,
+                       "values": values}, ensure_ascii=False).encode()
+
+
 def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> dict:
     if root.resolve() != root or not root.is_dir():
         raise GenerationError("目标必须是现有插件安装的绝对路径，不得包含符号链接")
@@ -46,21 +86,35 @@ def _check_target(root: Path, config_files: tuple[str, ...] = CONFIG_FILES) -> d
     if record.get("status") in {"installing", "failed", "uninstalled"}:
         raise GenerationError("客户端安装尚未就绪")
     services = record.get("services", [])
-    expected = {"client"} if _application(root) else {"client", "gateway"}
+    windows = os.name == "nt" and _application(root)
+    expected = {"open-llm-vtuber-client"} if windows else {"client"} if _application(root) else {"client", "gateway"}
     if (not isinstance(services, list) or len(services) != len(expected)
             or {s.get("name") for s in services if isinstance(s, dict)} != expected
             or any(type(s.get("port")) is not int or not 1 <= s["port"] <= 65535 for s in services)):
         raise GenerationError("客户端服务登记不完整")
+    from chatcopilot.core import storage_files
     for relative in config_files:
-        path = relative_file(root, relative)
-        info = path.stat()
-        if info.st_uid != os.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
+        path = _config_path(root, relative)
+        if relative == "application/user-prompts.json" and not path.exists():
+            continue
+        info = storage_files.lstat(path)
+        if info.st_uid != storage_files.getuid() or info.st_nlink != 1 or info.st_mode & 0o077:
             raise GenerationError("客户端配置必须为当前用户的私有普通文件")
     return record
 
 
 def require_stopped(root: Path, record: dict) -> None:
     installed = _application(root)
+    if os.name == "nt":
+        from chatcopilot.deployment.windows_runtime import observe
+        if installed is None or observe(installed.root)["state"] != "stopped":
+            raise GenerationError("应用角色前请先停止 Windows 桌宠")
+        for service in record["services"]:
+            with socket.socket() as connection:
+                connection.settimeout(1)
+                if connection.connect_ex(("127.0.0.1", service["port"])) == 0:
+                    raise GenerationError("客户端端口仍在使用")
+        return
     prefix = f"agentstrata-app-{installed.bot_id}" if installed else "agentstrata-plugin"
     for service in record.get("services", []):
         name = service["name"]
@@ -79,16 +133,17 @@ def require_stopped(root: Path, record: dict) -> None:
 
 @contextmanager
 def target_lock(root: Path):
-    if root.resolve() != root or not root.is_dir() or root.stat().st_uid != os.getuid():
-        raise GenerationError("目标安装目录必须属于当前用户且不得包含符号链接")
-    fd = os.open(root / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-    with os.fdopen(fd, "w") as lock:
-        if os.fstat(lock.fileno()).st_nlink != 1:
-            raise GenerationError("安装锁无效")
-        try:
-            fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError:
-            raise GenerationError("客户端已有安装或导入操作") from None
+    if not root.is_dir():
+        raise GenerationError("目标安装目录不存在")
+    with ExitStack() as stack:
+        stack.enter_context(exclusive_file(root / ".lock", "客户端已有安装或导入操作"))
+        if os.name == "nt":
+            installed = _application(root)
+            if installed is None:
+                raise GenerationError("角色应用需要绑定现有 Windows 桌宠安装")
+            stack.enter_context(exclusive_file(installed.control / "supervisor.lock", "请先停止 Windows 桌宠"))
+            path = _config_path(root, "application/user-prompts.json")
+            stack.enter_context(exclusive_file(path.with_suffix(".lock"), "应用人设正在保存"))
         yield
 
 
@@ -108,20 +163,22 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None, presentat
     root = root.expanduser().absolute()
     with target_lock(root):
         persona = details is not None and not presentation_only
-        if _application(root) and persona:
+        installed = _application(root)
+        native = os.name == "nt" and installed is not None
+        if installed and persona and not native:
             raise GenerationError("应用的 Agent profile 由应用管理；导入角色请显式选择 --presentation-only（外观与声音）")
-        config_files = CHARACTER_CONFIG_FILES if persona else CONFIG_FILES
+        config_files = (NATIVE_CHARACTER_CONFIG if native else CHARACTER_CONFIG_FILES) if persona else CONFIG_FILES
         record = _check_target(root, config_files)
         require_stopped(root, record)
-        if persona:
+        if persona and not details["identity"].strip():
+            raise GenerationError("应用角色前请填写身份描述并保存版本")
+        if persona and not native:
             from chatcopilot.core.application_configuration import load_application_spec
             application = load_application_spec(relative_file(root, "config/bot.yaml"))
             prompts = application.agent_profile.raw.get("prompts", {})
             if (prompts.get("schema_version") != 2 or prompts.get("identity") != "identity.md"
                     or prompts.get("response_style") != "response-style.md"):
                 raise GenerationError("客户端人设文件绑定已修改，请先恢复标准 identity/style 绑定")
-            if not details["identity"].strip():
-                raise GenerationError("应用角色前请填写身份描述并保存版本")
         journal = root / "config/pending-model-import.json"
         if journal.exists():
             raise GenerationError("存在中断的模型导入，请先执行 restore 恢复备份")
@@ -168,8 +225,24 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None, presentat
             upstream["character_config"].update(live2d_model_name=name, character_name=display_name)
             if details is not None:
                 tts = upstream["character_config"].setdefault("tts_config", {})
-                tts["tts_model"] = "edge_tts"
-                tts.setdefault("edge_tts", {})["voice"] = details["voice"]["voice"]
+                if details["voice"]["provider"] == "gpt_sovits":
+                    if not native:
+                        raise GenerationError("训练音色仅能在启用了角色制作的 Windows 桌宠中应用")
+                    from .preset_files import read_json
+                    from .voice_assets import resolve_voice
+                    studio = installed.root / ".agentstrata-data/plugins/live2d-generator"
+                    recipe = read_json(relative_file(studio, "config/voice.json"))
+                    identifier = details["voice"]["voice"]
+                    library = studio / "data/characters"
+                    if Path(recipe["library"]) != library:
+                        raise GenerationError("角色库安装绑定不匹配")
+                    resolve_voice(library, identifier)
+                    tts["tts_model"] = "gpt_sovits_tts"
+                    tts.setdefault("gpt_sovits_tts", {}).update(api_url=f"http://127.0.0.1:{recipe['port']}/tts",
+                        ref_audio_path=identifier, prompt_text="", prompt_lang="auto", text_lang="auto")
+                else:
+                    tts["tts_model"] = "edge_tts"
+                    tts.setdefault("edge_tts", {})["voice"] = details["voice"]["voice"]
             values = [json.dumps(dictionary, ensure_ascii=False, indent=2).encode(),
                       json.dumps(adapter, ensure_ascii=False, indent=2).encode(),
                       yaml.safe_dump(upstream, allow_unicode=True, sort_keys=False).encode()]
@@ -177,16 +250,20 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None, presentat
                 # Style is optional in a character preset, but a Bot prompt layer must be nonempty.
                 # Resolve that omission at handoff; keep the immutable preset and its hashes intact.
                 style = details["response_style"] if details["response_style"].strip() else DEFAULT_RESPONSE_STYLE
-                values.extend([details["identity"].encode(), style.encode()])
+                if native:
+                    values.append(_native_prompts(root, details["identity"], style))
+                else:
+                    values.extend([details["identity"].encode(), style.encode()])
             backup_id = uuid4().hex
             backup = private_directory(root / "data/live2d/backups" / backup_id)
             before = {}
             after = {}
             for relative, value in zip(config_files, values, strict=True):
-                original = (root / relative).read_bytes()
-                write_bytes(backup / relative, original)
-                before[relative] = hashlib.sha256(original).hexdigest()
-                after[relative] = hashlib.sha256(value).hexdigest()
+                original = _configuration(root, relative)
+                if original is not None:
+                    write_bytes(backup / relative, original)
+                before[relative] = _config_hash(original)
+                after[relative] = _config_hash(value)
             receipt = {"backup": backup_id, "root": str(root), "model": name, "before": before, "after": after}
             write_json(backup / "receipt.json", receipt)
             write_json(journal, {"backup": backup_id})
@@ -195,12 +272,13 @@ def _install(bundle: Path, root: Path, *, details: dict | None = None, presentat
                 if not reused:
                     extracted.rename(target)
                 for relative, value in zip(config_files, values, strict=True):
-                    write_bytes(root / relative, value)
+                    _set_configuration(root, relative, value)
                 journal.unlink()
             except BaseException:
                 # Keep the journal if recovery itself fails; the client refuses startup while pending.
                 for relative in config_files:
-                    write_bytes(root / relative, (backup / relative).read_bytes())
+                    original = (backup / relative).read_bytes() if before[relative] is not None else None
+                    _set_configuration(root, relative, original)
                 journal.unlink()
                 if not reused and target.exists():
                     shutil.rmtree(target)
@@ -219,21 +297,22 @@ def restore_bundle(root: Path, identifier: str) -> dict:
         receipt = json.loads((backup / "receipt.json").read_text())
         config_files = tuple(receipt.get("before", {}))
         if (receipt.get("root") != str(root) or set(config_files) not in (
-                set(CONFIG_FILES), set(CHARACTER_CONFIG_FILES))
+                set(CONFIG_FILES), set(CHARACTER_CONFIG_FILES), set(NATIVE_CHARACTER_CONFIG))
                 or set(receipt.get("after", {})) != set(config_files)):
             raise GenerationError("备份身份不匹配")
         _check_target(root, config_files)
         originals = {}
         for relative in config_files:
-            payload = relative_file(backup, relative).read_bytes()
-            current = hashlib.sha256((root / relative).read_bytes()).hexdigest()
-            if (hashlib.sha256(payload).hexdigest() != receipt["before"][relative]
+            payload = (relative_file(backup, relative).read_bytes()
+                       if receipt["before"][relative] is not None else None)
+            current = _config_hash(_configuration(root, relative))
+            if (_config_hash(payload) != receipt["before"][relative]
                     or current not in {receipt["before"][relative], receipt["after"][relative]}):
                 raise GenerationError("备份损坏或配置已有后续修改，拒绝覆盖")
             originals[relative] = payload
         journal = root / "config/pending-model-import.json"
         write_json(journal, {"backup": identifier})
         for relative, payload in originals.items():
-            write_bytes(root / relative, payload)
+            _set_configuration(root, relative, payload)
         journal.unlink()
         return {"restored": identifier, "model_assets_retained": True}

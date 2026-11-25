@@ -54,7 +54,8 @@ def native_inputs(manifest, bot_id):
             return name.startswith(f"bots/{bot_id}/")
         if name.startswith("integrations/"):
             if bot_id == "live2d-desktop":
-                return name.startswith(("integrations/live2d_desktop/", "integrations/open_llm_vtuber/"))
+                return name.startswith(("integrations/live2d_desktop/", "integrations/open_llm_vtuber/",
+                                        "integrations/live2d_generator/"))
             return (name in native_bootstrap or name == "integrations/desktop_app/bridge.py"
                     or name.startswith(f"integrations/{bot_id}/"))
         return name.startswith(("src/chatcopilot/", "deploy/", "third_party/")) or name in {

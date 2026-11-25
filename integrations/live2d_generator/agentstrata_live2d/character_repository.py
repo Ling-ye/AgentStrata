@@ -1,10 +1,7 @@
 """Private character records and append-only revision snapshots."""
 from __future__ import annotations
 
-from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
-import os
 from pathlib import Path
 import re
 import shutil
@@ -12,7 +9,7 @@ from uuid import uuid4
 
 from .character_types import REVISION_FORMAT, character_id, profile, revision_number
 from .preset_files import copy_file, copy_tree, digest, inventory, read_json, staging, verify_inventory
-from .repository import private_directory, relative_file, write_json
+from .repository import exclusive_file, private_directory, relative_file, write_json
 from .types import GenerationError
 
 
@@ -20,17 +17,8 @@ class CharacterRepository:
     def __init__(self, root: Path):
         self.root = private_directory(root)
 
-    @contextmanager
     def lock(self):
-        fd = os.open(self.root / ".lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "w") as stream:
-            if os.fstat(fd).st_nlink != 1:
-                raise GenerationError("角色库锁无效")
-            try:
-                fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise GenerationError("角色库正在保存或备份，请稍后再试") from None
-            yield
+        return exclusive_file(self.root / ".lock", "角色库正在保存或备份，请稍后再试")
 
     def path(self, identifier: str) -> Path:
         return relative_file(self.root, character_id(identifier))
@@ -56,6 +44,7 @@ class CharacterRepository:
 
     def create(self, details: dict, *, identifier: str | None = None, origin: dict | None = None) -> dict:
         identifier = character_id(identifier or uuid4().hex)
+        self.validate_voice(profile(details))
         with staging(self.path(identifier)) as root:
             write_json(root / "character.json", {"id": identifier,
                 "created_at": datetime.now(timezone.utc).isoformat(), "origin": origin or {"kind": "local"}})
@@ -71,7 +60,9 @@ class CharacterRepository:
 
     def save_draft(self, identifier: str, details: dict) -> dict:
         self.editable(identifier)
-        write_json(self.path(identifier) / "draft.json", profile(details))
+        details = profile(details)
+        self.validate_voice(details)
+        write_json(self.path(identifier) / "draft.json", details)
         return self.read(identifier)
 
     def save_inputs(self, identifier: str, job: str, files: dict[str, Path]) -> None:
@@ -95,8 +86,15 @@ class CharacterRepository:
                 or manifest["version"] != version):
             raise GenerationError("角色版本记录无效")
         verify_inventory(root, manifest["files"], omit={"revision.json"})
-        profile(read_json(root / "profile.json"))
+        self.validate_voice(profile(read_json(root / "profile.json")))
         return root, manifest
+
+    def validate_voice(self, details: dict) -> str | None:
+        from .voice_assets import resolve_voice, voice_reference
+        identifier = voice_reference(details)
+        if identifier:
+            resolve_voice(self.root, identifier)
+        return identifier
 
     def find_job(self, job: str) -> dict | None:
         for record in self.list():
@@ -113,6 +111,7 @@ class CharacterRepository:
         record = self.read(identifier)
         version = revision_number(version if version is not None else max(record["versions"], default=0) + 1)
         target = relative_file(self.path(identifier), f"versions/{version}")
+        self.validate_voice(profile(details))
         with staging(target) as root:
             for name, source in files.items():
                 copy_file(source, relative_file(root, name))
@@ -128,11 +127,11 @@ class CharacterRepository:
         installed = []
         try:
             for identifier, source in sources.items():
-                with staging(self.path(identifier)) as target:
+                with staging(relative_file(self.root, identifier)) as target:
                     copy_tree(source, target)
                 installed.append(identifier)
         except BaseException:
             for identifier in installed:
-                shutil.rmtree(self.path(identifier))
+                shutil.rmtree(relative_file(self.root, identifier))
             raise
         return installed

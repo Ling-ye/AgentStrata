@@ -12,7 +12,7 @@ MAX_EXPANDED = 256 * 1024 * 1024
 MAX_FILES = 256
 MAX_PIXELS = 4096 * 4096
 INPUT_SUFFIXES = {".png", ".jpg", ".jpeg", ".webp", ".psd", ".zip"}
-TERMINAL = {"completed", "failed", "cancelled"}
+TERMINAL = {"completed", "failed", "cancelled", "waiting_voice_input"}
 
 
 class GenerationError(ValueError):

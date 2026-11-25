@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
-import fcntl
 import hashlib
 import json
 import os
@@ -19,6 +18,9 @@ from .types import GenerationError, MAX_EXPANDED, MAX_FILES, MAX_PIXELS, MAX_UPL
 
 def private_directory(path: Path) -> Path:
     path = path.expanduser().absolute()
+    if os.name == "nt":
+        from chatcopilot.core.private_sqlite import private_directory as native_directory
+        return native_directory(path)
     if path.resolve() != path:
         raise GenerationError("工作目录不得包含符号链接")
     path.mkdir(parents=True, exist_ok=True, mode=0o700)
@@ -40,9 +42,28 @@ def write_bytes(path: Path, value: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as output:
             output.write(value)
+        restrict(Path(temporary))
         os.replace(temporary, path)
     finally:
         Path(temporary).unlink(missing_ok=True)
+
+
+def restrict(path: Path) -> None:
+    if os.name == "nt":
+        from chatcopilot.core.storage_files import tighten
+        tighten(path)
+    else:
+        path.chmod(0o600)
+
+
+@contextmanager
+def exclusive_file(path: Path, busy: str):
+    from chatcopilot.core.private_sqlite import private_lock
+    try:
+        with private_lock(path):
+            yield
+    except BlockingIOError:
+        raise GenerationError(busy) from None
 
 
 def relative_file(root: Path, name: str) -> Path:
@@ -53,6 +74,9 @@ def relative_file(root: Path, name: str) -> Path:
     if relative.is_absolute() or any(p in {"..", ".", ""} for p in name.split("/")):
         raise GenerationError("资产路径越界")
     path = root / relative
+    if os.name == "nt":
+        from chatcopilot.core.windows_storage import reject_reparse
+        reject_reparse(path)
     if not path.resolve().is_relative_to(root.resolve()) or any(
             (root / Path(*relative.parts[:n])).is_symlink() for n in range(1, len(relative.parts) + 1)):
         raise GenerationError("资产路径不得包含符号链接")
@@ -207,7 +231,7 @@ def make_archive(root: Path, destination: Path) -> None:
                     archive.write(path, path.relative_to(root).as_posix())
         if temporary.stat().st_size > MAX_UPLOAD:
             raise GenerationError("完成包超过 48 MiB，请降低输入分辨率")
-        temporary.chmod(0o600)
+        restrict(temporary)
         temporary.rename(destination)
     finally:
         temporary.unlink(missing_ok=True)
@@ -220,13 +244,19 @@ class JobRepository:
     def path(self, identifier: str) -> Path:
         return relative_file(self.root, job_id(identifier))
 
-    def create(self, request: dict, source: Path | None) -> str:
+    def create(self, request: dict, source: Path | None, *, identifier: str | None = None) -> str:
         if source is not None and (source.is_symlink() or not source.is_file() or source.stat().st_size > MAX_UPLOAD):
             raise GenerationError("输入文件不存在、是符号链接或超过 48 MiB")
-        identifier = uuid4().hex
-        root = private_directory(self.path(identifier))
+        identifier = job_id(identifier) if identifier else uuid4().hex
+        target = self.path(identifier)
+        target.mkdir(mode=0o700)
+        if os.name == "nt":
+            restrict(target)
+        root = private_directory(target)
         if source is not None:
-            shutil.copyfile(source, root / ("input" + source.suffix.lower()))
+            copied = root / ("input" + source.suffix.lower())
+            shutil.copyfile(source, copied)
+            restrict(copied)
         write_json(root / "request.json", request)
         self.save(identifier, {"id": identifier, "name": request["name"], "status": "queued", "stage": "queued"})
         return identifier
@@ -242,13 +272,5 @@ class JobRepository:
                                                  reverse=True) if re.fullmatch(r"[a-f0-9]{32}", p.name)
                 and p.is_dir() and not p.is_symlink() and (p / "job.json").is_file()]
 
-    @contextmanager
     def exclusive(self):
-        path = self.root / ".worker.lock"
-        fd = os.open(path, os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "w") as lock:
-            try:
-                fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                raise GenerationError("该数据目录已有生成器进程") from None
-            yield
+        return exclusive_file(self.root / ".worker.lock", "该数据目录已有生成器进程")

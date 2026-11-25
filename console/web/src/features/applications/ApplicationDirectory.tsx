@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Empty, Input, Modal, Select, Space, Spin, Tabs } from "@arco-design/web-react";
 import { IconApps, IconBook, IconList, IconMessage, IconRobot, IconTool } from "@arco-design/web-react/icon";
 import { applicationsApi, openApplicationUrl, ApplicationRequestError, type ApplicationView, type DraftRequest } from "./api";
@@ -33,26 +33,26 @@ export function AppIcon({ app }: { app: Pick<ApplicationView, "icon" | "type" | 
   );
 }
 const pendingKey = "agentstrata.studio.application-draft";
-function ReleaseActions({ app }: { app: ApplicationView }) {
-  return <span className="studio-release-actions" onClick={event => event.stopPropagation()}>
-    <a href={openApplicationUrl(app.id)} target="_blank" rel="noopener noreferrer">打开应用</a>
-    <a href={applicationHref(app.id, "use")}>下载与部署</a>
-  </span>;
-}
 const initial = () => ({ name: "", requirement: "", icon: "box" });
 
 export default function ApplicationDirectory({
+  archived = false,
   create = false,
   connect = false,
 }: {
+  archived?: boolean;
   create?: boolean;
   connect?: boolean;
 }) {
   const client = useQueryClient();
   const list = useQuery({
-    queryKey: ["applications"],
-    queryFn: ({ signal }) => applicationsApi.list(signal),
+    queryKey: ["applications", archived],
+    queryFn: ({ signal }) => applicationsApi.list(signal, archived),
     refetchInterval: 10000,
+  });
+  const archive = useMutation({
+    mutationFn: (change: { id: string; archived: boolean }) => applicationsApi.setArchived(change.id, change.archived),
+    onSettled: () => client.invalidateQueries({ queryKey: ["applications"] }),
   });
   const [search, setSearch] = useState(""),
     [grid, setGrid] = useState(false),
@@ -150,16 +150,38 @@ export default function ApplicationDirectory({
       a.id,
       a.source === "release" ? "use" : a.first_plan && !["ready", "applied"].includes(a.plan_state || "") ? "improve" : "overview",
     );
+  const archiveLabel = archived ? "移回我的应用" : "归档";
+  const actions = (app: ApplicationView) => (
+    <span className="studio-app-actions" onClick={event => event.stopPropagation()}>
+      {app.source === "release" && <>
+        <a href={openApplicationUrl(app.id)} target="_blank" rel="noopener noreferrer">打开应用</a>
+        <a href={applicationHref(app.id, "use")}>下载与部署</a>
+      </>}
+      <Button
+        type="text"
+        size="mini"
+        aria-label={archiveLabel + " " + app.name}
+        loading={archive.isPending && archive.variables?.id === app.id}
+        disabled={archive.isPending}
+        onClick={() => archive.mutate({ id: app.id, archived: !archived })}
+      >
+        {archiveLabel}
+      </Button>
+    </span>
+  );
   return (
     <main className="studio-directory">
-      <h1>我的应用</h1>
+      <h1>{archived ? "已归档应用" : "我的应用"}</h1>
       <section className="studio-paper">
         <div className="studio-toolbar">
           <Space wrap>
-            <Button type="primary" href="#create">
-              ＋ 创建应用
+            {!archived && <>
+              <Button type="primary" href="#create">＋ 创建应用</Button>
+              <Button href="#connect">接入已有应用</Button>
+            </>}
+            <Button href={archived ? "#applications" : "#applications?archived=1"}>
+              {archived ? "返回我的应用" : "已归档"}
             </Button>
-            <Button href="#connect">接入已有应用</Button>
           </Space>
           <Space wrap>
             <Input.Search
@@ -187,6 +209,7 @@ export default function ApplicationDirectory({
             </Button>
           </Space>
         </div>
+        {archive.isError && <Alert type="error" content={String(archive.error)} />}
         {list.isPending ? (
           <Spin />
         ) : list.error ? (
@@ -196,13 +219,15 @@ export default function ApplicationDirectory({
             action={<Button onClick={() => void list.refetch()}>重试</Button>}
           />
         ) : !apps.length ? (
-          <Empty description={all.length ? "没有匹配的应用" : "还没有应用，点击创建应用开始。"} />
+          <Empty description={all.length ? "没有匹配的应用" : archived ? "没有已归档的应用" : "还没有应用，点击创建应用开始。"} />
         ) : grid ? (
           <div className="studio-app-grid">
-            {apps.map(a => {
-              const card = <a key={a.id} href={href(a)}><AppIcon app={a} /><strong>{a.name}</strong><small>{status(a)}</small></a>;
-              return a.source === "release" ? <div className="studio-release-card" key={a.id}>{card}<ReleaseActions app={a} /></div> : card;
-            })}
+            {apps.map(app => (
+              <div className="studio-app-card" key={app.id}>
+                <a href={href(app)}><AppIcon app={app} /><strong>{app.name}</strong><small>{status(app)}</small></a>
+                {actions(app)}
+              </div>
+            ))}
           </div>
         ) : (
           <table className="studio-app-table">
@@ -228,7 +253,7 @@ export default function ApplicationDirectory({
                   </td>
                   <td>
                     <a href={href(a)}>{a.name}</a>
-                    {a.source === "release" && <ReleaseActions app={a} />}
+                    {actions(a)}
                   </td>
                   <td>{typeLabel(a.type)}</td>
                   <td>{status(a)}</td>

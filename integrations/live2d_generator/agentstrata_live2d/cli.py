@@ -55,7 +55,20 @@ def main(argv: list[str] | None = None) -> int:
             if args.operation == "serve":
                 import uvicorn
                 from .web import create_app
-                uvicorn.run(create_app(runtime), host="127.0.0.1", port=runtime.config.port, log_level="warning")
+                import asyncio
+                from chatcopilot.core.process_shutdown import watch_shutdown
+                server = uvicorn.Server(uvicorn.Config(create_app(runtime), host="127.0.0.1",
+                                                       port=runtime.config.port, log_level="warning"))
+
+                async def serve():
+                    stop = asyncio.create_task(watch_shutdown(lambda: setattr(server, "should_exit", True)))
+                    try:
+                        await server.serve()
+                    finally:
+                        stop.cancel()
+                        await asyncio.gather(stop, return_exceptions=True)
+
+                asyncio.run(serve())
                 return 0
             with runtime:
                 if args.operation == "retry":

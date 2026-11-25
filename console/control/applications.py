@@ -9,7 +9,8 @@ import time
 import threading
 from urllib.parse import quote
 from uuid import UUID
-from chatcopilot.core.private_sqlite import private_lock
+from chatcopilot.core.install_artifacts import write_private
+from chatcopilot.core.private_sqlite import private_file, private_lock
 
 from console.control.discovery import discover_observable_instances, repo_root
 from console.control import operations
@@ -22,6 +23,7 @@ class Applications:
         self.root = Path(root or repo_root())
         self.state_dir = Path(home or os.environ.get("AGENTSTRATA_STUDIO_HOME", Path.home() / ".local/share/agentstrata/studio"))
         self.model_path = model_path or self.state_dir / "models.json"
+        self._archive_path = self.state_dir / "application-archive.json"
         self._discover = discover or (lambda: discover_observable_instances(self.root))
         self._studio = None
         self._guide = None
@@ -125,6 +127,32 @@ class Applications:
             row["message"] = "从 Windows 桌宠客户端使用；后台在线时可查看记录和调整配置。"
             rows.append(row)
         return rows
+
+    def _archived_ids(self) -> set[str]:
+        try:
+            private_file(self._archive_path)
+            values = json.loads(self._archive_path.read_text(encoding="utf-8"))
+        except FileNotFoundError:
+            return set()
+        if not isinstance(values, list) or not all(isinstance(value, str) for value in values):
+            raise ValueError("应用归档记录无效")
+        return set(values)
+
+    def directory(self, *, archived: bool = False):
+        archived_ids = self._archived_ids()
+        return [row for row in self.catalog() if (row["id"] in archived_ids) == archived]
+
+    def set_archived(self, ident: str, archived: bool):
+        self.require(ident)
+        with private_lock(self._archive_path.with_suffix(".lock"), timeout=10):
+            archived_ids = self._archived_ids()
+            if archived != (ident in archived_ids):
+                if archived:
+                    archived_ids.add(ident)
+                else:
+                    archived_ids.remove(ident)
+                write_private(self._archive_path, json.dumps(sorted(archived_ids)) + "\n")
+        return {"id": ident, "archived": archived}
 
     def get(self, ident):
         return next((row for row in self.catalog() if row["id"] == ident), None)

@@ -41,9 +41,11 @@ def profile(value: dict) -> dict:
         raise GenerationError("角色名称不能为空")
     voice = result["voice"]
     if (not isinstance(voice, dict) or set(voice) != {"provider", "voice"}
-            or voice["provider"] != "edge_tts" or not isinstance(voice["voice"], str)
-            or not re.fullmatch(r"[A-Za-z0-9-]{1,120}", voice["voice"])):
-        raise GenerationError("声音首版支持 Edge TTS 音色 ID，不接受端点或凭据")
+            or not isinstance(voice["voice"], str) or not isinstance(voice["provider"], str)):
+        raise GenerationError("声音必须使用已登记的音色")
+    pattern = {"edge_tts": r"[A-Za-z0-9-]{1,120}", "gpt_sovits": r"[a-f0-9]{64}"}.get(voice["provider"])
+    if pattern is None or not re.fullmatch(pattern, voice["voice"]):
+        raise GenerationError("声音必须使用 Edge TTS 音色或本机训练资产标识")
     return result
 
 

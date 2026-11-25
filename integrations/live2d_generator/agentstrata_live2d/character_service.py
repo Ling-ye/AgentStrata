@@ -40,6 +40,14 @@ class CharacterService:
         root, _ = self.repository.revision(identifier, version)
         return root / "preview.png"
 
+    def voice_preview(self, identifier: str, version: int, sample: str) -> Path:
+        from .voice_assets import resolve_voice, voice_reference
+        details = self.revision(identifier, version)["profile"]
+        voice = voice_reference(details)
+        if not voice or sample not in {"preview.wav", "preview-2.wav"}:
+            raise GenerationError("该角色版本没有指定的试听")
+        return resolve_voice(self.repository.root, voice) / sample
+
     def generation_profile(self, identifier: str) -> dict:
         return self.repository.editable(identifier)["draft"]
 
@@ -91,6 +99,12 @@ class CharacterService:
         state.update(character_id=saved["id"], character_version=saved["version"])
         state.pop("library_error", None)
         self.jobs.save(state["id"], state)
+        if state.get("voice_id") and state["character_id"] == saved["id"]:
+            draft = self.repository.editable(saved["id"])["draft"]
+            snapshot = read_json(self.jobs.path(state["id"]) / "character-profile.json")
+            if draft["voice"] == snapshot["voice"]:
+                self.repository.save_draft(saved["id"], draft | {
+                    "voice": {"provider": "gpt_sovits", "voice": state["voice_id"]}})
         return saved
 
     def collect_job(self, job: str, identifier: str | None = None) -> dict:
@@ -120,8 +134,18 @@ class CharacterService:
             snapshot = root / "character-profile.json"
             if state.get("character_id") == identifier and snapshot.is_file():
                 details = profile(read_json(snapshot))
+            if state.get("voice_id"):
+                details = profile(details | {"voice": {"provider": "gpt_sovits", "voice": state["voice_id"]}})
+                if (root / "voice-request.json").is_file():
+                    voice_request = read_json(root / "voice-request.json")
+                    if voice_request.get("base_version") is not None:
+                        base, _ = self.repository.revision(identifier, voice_request["base_version"])
+                        saved = self.repository.save_revision(identifier, details, self._files(base), source_job=job)
+                        return self._remember_job(state, saved)
             selected = {"avatar.zip": root / "model.zip", "preview.png": root / "model/preview.png",
-                        "sources/request.json": root / "request.json"}
+                         "sources/request.json": root / "request.json"}
+            if (root / "voice-request.json").is_file():
+                selected["sources/voice-request.json"] = root / "voice-request.json"
             for name in ("illustration.png", "layers.psd"):
                 if (root / name).is_file():
                     selected["sources/" + name] = root / name
@@ -185,19 +209,34 @@ class CharacterService:
                         shutil.rmtree(self.repository.path(identifier))
                     raise
 
+    @staticmethod
+    def _voice_references(repository: CharacterRepository, identifiers: list[str]) -> set[str]:
+        references = set()
+        for item in identifiers:
+            record = repository.read(item)
+            reference = repository.validate_voice(record["draft"])
+            if reference:
+                references.add(reference)
+            for version in record["versions"]:
+                root, _ = repository.revision(item, version)
+                reference = repository.validate_voice(profile(read_json(root / "profile.json")))
+                if reference:
+                    references.add(reference)
+        return references
+
     def backup(self, destination: Path, identifier: str | None = None) -> dict:
         destination = destination.expanduser().absolute()
         if destination.is_relative_to(self.repository.root):
             raise GenerationError("备份目标须位于角色库之外")
         with self.repository.lock():
             identifiers = [character_id(identifier)] if identifier else [r["id"] for r in self.list()]
-            for item in identifiers:
-                record = self.get(item)
-                for version in record["versions"]:
-                    self.repository.revision(item, version)
+            voice_refs = self._voice_references(self.repository, identifiers)
             with staging(destination) as target:
                 for item in identifiers:
                     copy_tree(self.repository.path(item), target / item)
+                for voice in sorted(voice_refs):
+                    relative = ".voices/" + voice
+                    copy_tree(self.repository.root / relative, target / relative)
                 manifest = {"format": BACKUP_FORMAT, "characters": identifiers, "files": inventory(target)}
                 write_json(target / "backup.json", manifest)
         return {"path": str(destination), "characters": identifiers, "files": len(manifest["files"])}
@@ -212,11 +251,15 @@ class CharacterService:
         if len(set(identifiers)) != len(identifiers):
             raise GenerationError("备份角色 ID 重复")
         verify_inventory(source, manifest["files"], omit={"backup.json"})
-        if any(Path(name).parts[0] not in identifiers for name in manifest["files"]):
-            raise GenerationError("备份包含角色之外的文件")
+
         # Read through the same validators without taking ownership or creating files in the backup.
         reader = object.__new__(CharacterRepository)
         reader.root = source
+        voice_refs = self._voice_references(reader, identifiers)
+        for name in manifest["files"]:
+            parts = Path(name).parts
+            if parts[0] not in identifiers and not (len(parts) == 3 and parts[0] == ".voices" and parts[1] in voice_refs):
+                raise GenerationError("备份包含角色之外的文件")
         for item in identifiers:
             record = reader.read(item)
             for version in record["versions"]:
@@ -226,6 +269,14 @@ class CharacterService:
                 image_info(root / "preview.png")
         with self.repository.lock():
             pending, skipped = {}, []
+            for voice in sorted(voice_refs):
+                relative = ".voices/" + voice
+                target = relative_file(self.repository.root, relative)
+                if target.exists():
+                    from .voice_assets import resolve_voice
+                    resolve_voice(self.repository.root, voice)
+                else:
+                    pending[relative] = source / relative
             for item in identifiers:
                 target = self.repository.path(item)
                 if target.exists():
@@ -235,7 +286,7 @@ class CharacterService:
                 else:
                     pending[item] = source / item
             installed = self.repository.restore_directories(pending)
-        return {"restored": installed, "unchanged": skipped}
+        return {"restored": [item for item in installed if item in identifiers], "unchanged": skipped}
 
     def apply(self, identifier: str, version: int, target: Path, *, presentation_only: bool = False) -> dict:
         from .install import install_character

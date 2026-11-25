@@ -21,7 +21,7 @@ from chatcopilot.deployment.windows_plugin_inputs import (
 
 MEMBER = "windows-runtime-requirements.json"
 _DESKTOP = "integrations/live2d_desktop/"
-_VTUBER = "integrations/open_llm_vtuber/"
+_PLUGINS = ("integrations/open_llm_vtuber/", "integrations/live2d_generator/")
 
 
 def build_runtime_requirements(payload: Path, manifest: dict, bot_relative: str, application_id: str) -> bytes:
@@ -81,7 +81,7 @@ def build_runtime_requirements(payload: Path, manifest: dict, bot_relative: str,
     add("tools", (name for name in (_DESKTOP+"windows-runtime.lock.json", _DESKTOP+"windows-mcp.lock.json") if name in manifest),
         ["tool-images-and-bootstrap-verifier-not-admitted"])
     if bot_root + "components.yaml" in manifest:
-        add("plugin-components", (name for name in manifest if name == bot_root+"components.yaml" or name.startswith(_VTUBER)
+        add("plugin-components", (name for name in manifest if name == bot_root+"components.yaml" or name.startswith(_PLUGINS)
             or name == PYTHON_INPUTS),
             ["plugin-python-wheel-and-asset-closures-unverified", "plugin-native-loading-unverified"])
         bind_python_scope()

@@ -49,6 +49,10 @@ def main(argv=None) -> int:
     login = commands.add_parser("login", help="Explicitly authenticate this application's ChatGPT model connection")
     login.add_argument("--root", type=Path, required=True)
     login.add_argument("--method", choices=("browser", "device"), default="browser")
+    for name in ("character-apply", "character-restore"):
+        action = commands.add_parser(name, help="Apply or restore a role in this Windows installation")
+        action.add_argument("--root", type=Path, required=True)
+        action.add_argument("--save", action="store_true", required=True, help="Read the role selection from stdin")
     for name in ("start", "stop"):
         action = commands.add_parser(name, help="Control the registered services of this installation")
         action.add_argument("--root", type=Path, required=True)
@@ -111,6 +115,9 @@ def main(argv=None) -> int:
         elif args.command == "model-settings":
             from chatcopilot.deployment.application_models import model_settings
             value = model_settings(args.root, json.load(sys.stdin) if args.save else None)
+        elif args.command in {"character-apply", "character-restore"}:
+            from chatcopilot.plugins.windows_application import change_character
+            value = change_character(args.root, args.command, json.load(sys.stdin))
         elif args.command == "login":
             from chatcopilot.external_tools.codex_cli.auth_cli import CodexAuthOperatorConfig, login_lanes
             from chatcopilot.core.settings import load_local_env_values

@@ -26,6 +26,7 @@ def create(applications):
 
 def test_read_does_not_create_state(applications):
     assert applications.catalog() == []
+    assert applications.directory() == applications.directory(archived=True) == []
     assert not applications.state_dir.exists()
 
 
@@ -193,6 +194,34 @@ def test_api_rejects_remote_cross_origin_and_secret_echo(applications):
         response = client.post(f"/api/applications/{ident}/configuration",
                                json={"name": "test", "app_secret": {"nested": "DO-NOT-ECHO"}})
         assert response.status_code == 422 and "DO-NOT-ECHO" not in response.text
+
+
+def test_archive_persists_by_exact_app_identity_and_can_be_restored(applications, tmp_path):
+    repo = BotInstance("desktop", str(tmp_path / "repo.yaml"), display_name="Desk")
+    plugin = BotInstance("plugin:desktop", str(tmp_path / "plugin.yaml"), display_name="Desk",
+                         origin={"kind": "plugin", "plugin_id": "open-llm-vtuber"})
+    applications._discover = lambda: [repo, plugin]
+    index = "/api/applications"
+    plugin_id = "plugin:plugin:desktop"
+    detail = f"{index}/{plugin_id}"
+    with client_for(applications) as client:
+        assert client.put(detail + "/archive", json={"archived": True},
+                          headers={"Origin": "https://elsewhere.invalid"}).status_code == 403
+        assert client.put(f"{index}/missing/archive", json={"archived": True}).status_code == 404
+        for _ in range(2):
+            assert client.put(detail + "/archive", json={"archived": True}).json() == {
+                "id": plugin_id, "archived": True,
+            }
+
+    restored = Applications(applications.root, applications.state_dir, discover=applications._discover)
+    with client_for(restored) as client:
+        assert [row["id"] for row in client.get(index).json()["applications"]] == ["repo:desktop"]
+        assert [row["id"] for row in client.get(index, params={"archived": True}).json()["applications"]] == [plugin_id]
+        row = client.get(detail).json()
+        assert row["source"] == "plugin" and not row["capabilities"]["control"]
+        assert client.put(detail + "/archive", json={"archived": False}).status_code == 200
+        assert [row["id"] for row in client.get(index).json()["applications"]] == ["repo:desktop", plugin_id]
+        assert client.get(index, params={"archived": True}).json() == {"applications": []}
 
 
 def test_unsupported_and_unknown_actions_cannot_reach_runtime(applications, monkeypatch):

@@ -6,6 +6,7 @@ const labels = {
   completed: "已完成",
   failed: "未完成",
   cancelled: "已取消",
+  waiting_voice_input: "待补音源",
 };
 const phases = [
   "illustration",
@@ -13,6 +14,7 @@ const phases = [
   "rigging",
   "validation",
   "packaging",
+  "voice_sources", "voice_dataset", "voice_features", "voice_sovits", "voice_gpt", "voice_preview",
 ];
 let selected = null,
   busy = false,
@@ -69,6 +71,34 @@ function encode(file) {
     reader.readAsDataURL(file);
   });
 }
+let confirmedVoice = null;
+let sourceRecording = null;
+let selectedJob = null;
+
+async function registerVoice() {
+  const file = $("voice-source-file").files[0];
+  if (!file || file.size > 48 * 1024 * 1024) throw new Error("请选择 48 MiB 以内的录音");
+  const source = {artist: $("voice-source-artist").value, title: $("voice-source-title").value,
+    language: $("voice-source-language").value, kind: $("voice-source-kind").value};
+  confirmedVoice = await jsonApi("voice-inputs", {source, permission: $("voice-source-permission").value,
+    input: {filename: file.name, data: await encode(file)}});
+  sourceRecording = file;
+  $("voice-input-status").textContent = "已登记：" + confirmedVoice.title;
+}
+for (const field of ["file", "artist", "title", "language", "kind", "permission"]) {
+  $("voice-source-" + field).onchange = () => {
+    confirmedVoice = null;
+    sourceRecording = null;
+    $("voice-input-status").textContent = "";
+  };
+}
+$("register-voice").onclick = () => action($("register-voice"), registerVoice);
+async function requestedSources() {
+  const file = $("voice-source-file").files[0];
+  if (file && file !== sourceRecording) await registerVoice();
+  return confirmedVoice ? [confirmedVoice] : [];
+}
+
 $("form").onsubmit = async (event) => {
   event.preventDefault();
   if (busy) return;
@@ -94,6 +124,15 @@ $("form").onsubmit = async (event) => {
     };
     if ($("generation-character").value) payload.character_id = $("generation-character").value;
     if (file) payload.input = { filename: file.name, data: await encode(file) };
+    if ($("with-voice").checked) {
+      if (file) throw new Error("可以先绑定已有分层素材，再从角色版本重训音色。");
+      const role = await jsonApi("character-jobs", {name: $("name").value, identity: $("voice-identity").value,
+        response_style: $("voice-style").value, artwork: $("prompt").value, sources: await requestedSources()});
+      selected = role.id;
+      shownPreview = null;
+      await refresh();
+      return;
+    }
     const job = await (
       await api("jobs", {
         method: "POST",
@@ -111,43 +150,47 @@ $("form").onsubmit = async (event) => {
   }
 };
 async function show(job) {
+  selectedJob = job;
   $("badge").textContent = labels[job.status] || job.status;
   $("result-title").textContent = job.name;
   $("cancel").hidden = !["queued", "running"].includes(job.status);
-  $("download").hidden = job.status !== "completed";
+  const hasModel = job.status === "completed" || Boolean(job.model_sha256);
+  $("download").hidden = !hasModel;
   $("collect-job").hidden = job.status !== "completed";
-  $("retry-job").hidden = !["failed", "cancelled"].includes(job.status);
+  $("retry-job").hidden = !["failed", "cancelled", "waiting_voice_input"].includes(job.status);
   $("retry-job").disabled = busy;
   $("retry-advice").hidden = $("retry-job").hidden;
   $("retry-advice").textContent = (job.retry_at
     ? `服务建议重试时间：${new Date(job.retry_at).toLocaleString()}。` : "") +
-    "重试会创建新任务，保留原失败记录；拆层失败时复用已生成的立绘。";
+    "重试会创建新任务，从上次校验通过的阶段继续。";
   $("import-help").hidden = job.status !== "completed";
   const index = phases.indexOf(job.stage);
   document.querySelectorAll("[data-stage]").forEach((el, i) => {
+    if (el.dataset.stage.startsWith("voice_")) el.hidden = !job.voice_job;
     el.classList.toggle("done", job.status === "completed" || i < index);
     el.classList.toggle("active", job.status === "running" && i === index);
   });
-  $("result-message").textContent =
-    job.error || job.library_error ||
-    (job.status === "completed"
-      ? `已生成 ${job.result.generation.layers} 个图层、${job.result.generation.parameters} 个参数。模型包已通过文件完整性检查；这是可继续精修的自动绑定初稿。`
-      : "生成通常需要几分钟，可保持页面打开或稍后回来查看。");
-  if (job.status === "completed" && shownPreview !== job.id) {
+  const rig = job.result?.generation;
+  const statusText = {
+    completed: job.voice_job
+      ? "音色已生成。可以在角色库打开这个版本并试听。"
+      : rig
+        ? `已生成 ${rig.layers} 个图层、${rig.parameters} 个参数。模型包已通过文件完整性检查。`
+        : "模型包已通过文件完整性检查。",
+    running: job.stage.startsWith("voice_") ? "语音训练在后台进行，可以稍后查看。" : "正在生成角色。",
+  };
+  $("result-message").textContent = job.error || job.library_error || statusText[job.status] || "";
+  if (hasModel && shownPreview !== job.id) {
     const response = await api(`jobs/${job.id}/preview.png`);
     const blob = await response.blob();
     if (selected !== job.id) return;
     if (previewUrl) URL.revokeObjectURL(previewUrl);
     previewUrl = URL.createObjectURL(blob);
     $("preview").src = previewUrl;
-    $("preview").hidden = false;
-    $("empty").hidden = true;
     shownPreview = job.id;
   }
-  if (job.status !== "completed") {
-    $("preview").hidden = true;
-    $("empty").hidden = false;
-  }
+  $("preview").hidden = !hasModel;
+  $("empty").hidden = hasModel;
 }
 async function refresh() {
   try {
@@ -157,6 +200,8 @@ async function refresh() {
     $("source-status").textContent = state.legal.source_configured
       ? ""
       : " · 对应源码尚未配置";
+    $("voice-production").hidden = !state.training;
+    $("train-character-voice").hidden = !state.training;
     const caps = state.capabilities;
     const image = caps.image_service
       ? `绘图：${caps.image_model} · ${caps.image_service}`
@@ -212,7 +257,8 @@ $("retry-job").onclick = async () => {
   $("retry-job").disabled = true;
   notice("");
   try {
-    const job = await (await api(`jobs/${selected}/retry`, {method: "POST"})).json();
+    const sources = selectedJob?.voice_job ? await requestedSources() : [];
+    const job = await jsonApi(`jobs/${selected}/retry`, sources.length ? {sources} : {});
     selected = job.id;
     shownPreview = null;
     await refresh();
@@ -249,17 +295,22 @@ setInterval(refresh, 2500);
 
 
 let currentCharacter = null, characterPreviewUrl = null, lastSavedCharacter = null;
+const voiceUrls = [];
 const presetUrls = [];
 const profileFields = {name: "character-name", description: "character-description", identity: "character-identity",
   response_style: "character-style", author: "character-author", license: "character-license", source: "character-source"};
 function profileInput() {
   const value = Object.fromEntries(Object.entries(profileFields).map(([key, id]) => [key, $(id).value]));
-  value.voice = {provider: "edge_tts", voice: $("character-voice").value};
+  value.voice = {provider: $("character-voice").dataset.provider || "edge_tts", voice: $("character-voice").value};
   return value;
 }
 function showProfile(value) {
   for (const [key, id] of Object.entries(profileFields)) $(id).value = value[key] || "";
-  $("character-voice").value = value.voice.voice;
+  const field = $("character-voice");
+  field.value = value.voice.voice;
+  field.dataset.provider = value.voice.provider;
+  field.readOnly = value.voice.provider === "gpt_sovits";
+  $("character-voice-label").textContent = field.readOnly ? "本机训练音色" : "Edge TTS 音色";
 }
 async function jsonApi(path, value = {}) {
   return (await api(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(value)})).json();
@@ -317,16 +368,48 @@ async function showCharacter(identifier, selectedVersion = null) {
   showProfile(item.draft);
   if (item.versions.length) {
     const version = Number(versions.value);
-    if (item.read_only || selectedVersion !== null) showProfile((await (await api(`characters/${identifier}/versions/${version}`)).json()).profile);
+    const root = "characters/" + identifier + "/versions/" + version;
+    const saved = (await (await api(root)).json()).profile;
+    if (currentCharacter?.id !== identifier || Number(versions.value) !== version) return;
+    if (item.read_only || selectedVersion !== null) showProfile(saved);
+    const controls = $("voice-preview");
+    controls.replaceChildren();
+    voiceUrls.splice(0).forEach(url => URL.revokeObjectURL(url));
+    $("export-character").disabled = saved.voice.provider === "gpt_sovits";
+    if (saved.voice.provider === "gpt_sovits") {
+      for (const [index, sample] of ["preview.wav", "preview-2.wav"].entries()) {
+        const audio = document.createElement("audio");
+        const blob = await (await api(root + "/audio/" + sample)).blob();
+        if (currentCharacter?.id !== identifier || Number(versions.value) !== version) return;
+        audio.controls = true;
+        audio.setAttribute("aria-label", "试听 " + (index + 1));
+        audio.src = URL.createObjectURL(blob);
+        voiceUrls.push(audio.src);
+        controls.append(audio);
+      }
+    }
     const image = await api(`characters/${identifier}/versions/${version}/preview.png`);
     if (currentCharacter?.id !== identifier || Number(versions.value) !== version) return;
     if (characterPreviewUrl) URL.revokeObjectURL(characterPreviewUrl);
     characterPreviewUrl = URL.createObjectURL(await image.blob());
     $("character-preview").src = characterPreviewUrl;
     $("character-preview").hidden = false;
-  } else $("character-preview").hidden = true;
+  } else {
+    $("character-preview").hidden = true;
+    $("voice-preview").replaceChildren();
+    voiceUrls.splice(0).forEach(url => URL.revokeObjectURL(url));
+  }
+  $("train-character-voice").disabled = item.read_only || !item.versions.length;
   await refreshCharacters();
 }
+$("train-character-voice").onclick = () => action($("train-character-voice"), async () => {
+  if (!currentCharacter) return;
+  const job = await jsonApi(versionPath() + "/train-voice", {sources: await requestedSources()});
+  selected = job.id;
+  shownPreview = null;
+  switchView("generation");
+  await refresh();
+});
 $("character-version").onchange = () => {
   if (currentCharacter) showCharacter(currentCharacter.id, Number($("character-version").value)).catch(error => notice(error.message));
 };

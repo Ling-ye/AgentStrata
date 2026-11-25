@@ -10,6 +10,17 @@ servers:
     allowed_tools: [list_actions, set_expression, play_motion, apply_pose]
     retry_on_timeout: false
     stateless_http: true
+  - id: character-studio
+    transport: streamable_http
+    url: "${AGENTSTRATA_CHARACTER_MCP_URL}"
+    headers:
+      Authorization: "${AGENTSTRATA_CHARACTER_MCP_AUTH}"
+    exposure: main
+    risk: write
+    allowed_tools: [character_generate, character_train_voice, character_job_status]
+    max_concurrency: 1
+    retry_on_timeout: false
+    stateless_http: true
   - id: windows-desktop
     transport: stdio
     command: python

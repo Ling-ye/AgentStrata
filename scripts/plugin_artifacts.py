@@ -35,7 +35,8 @@ RESOURCES = {"upstream.json", "artifacts.json", "requirements.lock", "build.lock
 
 
 GENERATOR_RESOURCES = {"config.example.json", "isekaijoucho.example.json", ".env.example",
-                       "requirements.lock", "build.lock", "index.html", "app.js", "style.css"}
+                       "requirements.lock", "build.lock", "index.html", "app.js", "style.css",
+                       "gpt-sovits.lock.json", "windows-generator.lock", "windows-voice.lock"}
 
 
 def layout(source: Path) -> tuple[str, set[str], set[str], str]:

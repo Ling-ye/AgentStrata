@@ -177,3 +177,46 @@ time.sleep(60)
                 win32process.TerminateProcess(handle, 0)
             finally:
                 handle.Close()
+
+@pytest.mark.skipif(sys.platform != "win32", reason="Native Windows job listener ownership")
+def test_windows_job_owns_listener_in_child(tmp_path):
+    import socket
+
+    from chatcopilot.core.windows_process import ProcessJob, owns_listener
+
+    server = """
+import socket
+import time
+with socket.socket() as listener:
+    listener.bind(('127.0.0.1', 0))
+    listener.listen()
+    print(listener.getsockname()[1], flush=True)
+    time.sleep(60)
+"""
+    launcher = "import subprocess, sys; subprocess.run([sys.executable, '-c', sys.argv[1]], check=True)"
+    output = tmp_path / "listener.log"
+    job = ProcessJob()
+    child = None
+    try:
+        with output.open("wb") as stream:
+            child = job.spawn([sys.executable, "-c", launcher, server], cwd=tmp_path,
+                              env=dict(os.environ), output=stream)
+        deadline = time.monotonic() + 10
+        while not output.read_bytes().strip():
+            assert child.poll() is None
+            assert time.monotonic() < deadline
+            time.sleep(.05)
+        port = int(output.read_text())
+        assert not owns_listener(child.pid, port)
+        assert job.owns_listener(port)
+        with socket.socket() as unrelated:
+            unrelated.bind(("127.0.0.1", 0))
+            unrelated.listen()
+            assert not job.owns_listener(unrelated.getsockname()[1])
+    finally:
+        job.close()
+        if child is not None:
+            try:
+                child.wait(timeout=5)
+            finally:
+                child.close()

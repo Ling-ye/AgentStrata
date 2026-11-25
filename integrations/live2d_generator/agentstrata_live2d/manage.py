@@ -77,12 +77,20 @@ def check(request: dict, *, online: bool = False) -> dict:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("operation", choices=("prepare", "check", "doctor"))
+    parser.add_argument("operation", choices=("prepare", "check", "doctor", "prepare-windows"))
     parser.add_argument("--request", type=Path, required=True)
     args = parser.parse_args(argv)
     try:
         request = json.loads(args.request.read_text())
-        result = prepare(request) if args.operation == "prepare" else check(request, online=args.operation == "doctor")
+        if args.operation == "prepare-windows":
+            from .native_prepare import prepare as prepare_windows
+            from chatcopilot.core.settings import load_local_env_values
+            application = Path(request["application"])
+            environment = load_local_env_values(application / ".agentstrata-versions/runtime.env", expand_home=True)
+            prepare_windows(Path(request["plugin"]), application, request["options"], environment)
+            result = {"ok": True}
+        else:
+            result = prepare(request) if args.operation == "prepare" else check(request, online=args.operation == "doctor")
         print(json.dumps(result, ensure_ascii=False))
         return 0
     except Exception as exc:

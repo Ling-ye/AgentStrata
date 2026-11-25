@@ -3,6 +3,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import secrets
 from urllib.parse import urlsplit
 
 from chatcopilot.core.application_installation import installation
@@ -24,7 +25,8 @@ def prepare_python_imports(root):
         return
     from chatcopilot.core.storage_files import long_path
     for environment in (root / ".venv", root / "windows-mcp/venv",
-                        root / ".agentstrata-data/plugins/open-llm-vtuber/runtime/venv"):
+                        root / ".agentstrata-data/plugins/open-llm-vtuber/runtime/venv",
+                        root / ".agentstrata-data/plugins/live2d-generator/runtime/venv"):
         packages = environment / "Lib/site-packages"
         if packages.is_dir():
             ordinary = os.path.normcase(str(packages))
@@ -63,8 +65,33 @@ def setup(root, prepare_plugins, *, artifacts=None, dry_run=False, trial=False):
     for requirement in requirements:
         if requirement["id"] == "open-llm-vtuber":
             values[spec.gateway.port_env] = str(requirement["options"]["gateway_port"])
+    for requirement in requirements:
+        if requirement["id"] != "live2d-generator":
+            continue
+        options = requirement["options"]
+        previous = installed.control / "runtime.env"
+        saved = load_local_env_values(previous, expand_home=True) if previous.is_file() else {}
+        if trial:
+            if saved.get("AGENTSTRATA_CHARACTER_MCP_URL") and saved.get("AGENTSTRATA_GPT_SOVITS_URL"):
+                options.update(port=urlsplit(saved["AGENTSTRATA_CHARACTER_MCP_URL"]).port,
+                               voice_port=urlsplit(saved["AGENTSTRATA_GPT_SOVITS_URL"]).port)
+            else:
+                selected = trial_ports({}, spec.gateway.port_env)
+                options.update(port=selected["port"], voice_port=selected["gateway_port"])
+        for name in ("port", "voice_port"):
+            if type(options.get(name)) is not int or not 1 <= options[name] <= 65535:
+                raise ValueError("Character studio ports must be explicit loopback ports")
+        values.update(AGENTSTRATA_CHARACTER_MCP_URL=f"http://127.0.0.1:{options['port']}/agentstrata/mcp/",
+                      AGENTSTRATA_GPT_SOVITS_URL=f"http://127.0.0.1:{options['voice_port']}/tts")
+        for name in ("AGENTSTRATA_CHARACTER_MCP_AUTH", "AGENTSTRATA_GPT_SOVITS_AUTH"):
+            values[name] = saved.get(name) or "Bearer " + secrets.token_urlsafe(48)
+    local_settings = installed.control / "character-providers.env"
+    if local_settings.is_file():
+        provider_values = load_local_env_values(local_settings, expand_home=True)
+        for name in ("TAVILY_API_KEY", "BRAVE_API_KEY", "SEARXNG_BASE_URL"):
+            if name in provider_values:
+                values[name] = provider_values[name]
     if not requirements and spec.gateway:
-        import secrets
         previous = installed.control / "runtime.env"
         saved = load_local_env_values(previous, expand_home=True) if previous.is_file() else {}
         for client in spec.gateway.clients:
@@ -85,6 +112,9 @@ def setup(root, prepare_plugins, *, artifacts=None, dry_run=False, trial=False):
     private_directory(root / ".agentstrata-data/workspace")
     private_directory(root / ".agentstrata-data/gateway")
     environment = deployment_environment(spec, values, source_root=root, home=Path.home())
+    environment.update({name: value for name, value in values.items()
+                        if name.startswith(("AGENTSTRATA_CHARACTER_", "AGENTSTRATA_GPT_SOVITS_"))
+                        or name in {"AGENTSTRATA_INDEX_TTS_URL", "AGENTSTRATA_INDEX_TTS_AUTH"}})
     write_private(control / "runtime.env", "\n".join(key + "=" + json.dumps(value, ensure_ascii=False)
                                                    for key, value in environment.items()) + "\n")
     return prepare_plugins(root, artifacts=artifacts, requirements=requirements)

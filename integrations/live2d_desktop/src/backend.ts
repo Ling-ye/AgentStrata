@@ -51,10 +51,12 @@ export class NativeBackend implements Backend {
     const client = application.plugins.find((value: any) => value.id === 'open-llm-vtuber');
     if (!client || client.status !== 'ready' || typeof client.installed_version !== 'string')
       throw new Error('Live2D 尚未准备完成，请在设置中准备本机应用。');
-    return [{...client, url: localUrl(client.url)}];
+    return application.plugins.filter((value: Plugin) => value.status === "ready").map((value: Plugin) =>
+      ({...value, url: localUrl(value.url)}));
   }
   async start(id: PluginId): Promise<void> {
-    if (id !== 'open-llm-vtuber') throw new Error('角色生成器尚未包含在原生运行端。');
+    if (id === 'live2d-generator' && !(await this.list()).some(plugin => plugin.id === id))
+      throw new Error('应用组件尚未安装。');
     return this.startApplication();
   }
   async startApplication(): Promise<void> {
@@ -106,8 +108,12 @@ export class NativeBackend implements Backend {
       '-BundleRoot', this.payload, '-InstallRoot', this.config.root, '-AuthOnly']);
     if ((await this.application('login')).ok !== true) throw new Error('ChatGPT 登录未完成');
   }
-  async apply(): Promise<{backup: string}> {throw new Error('角色生成器尚未包含在原生运行端。');}
-  async restore(): Promise<void> {throw new Error('角色生成器尚未包含在原生运行端。');}
+  async apply(id: string, version: number): Promise<{backup: string}> {
+    return this.application('character-apply', { id, version });
+  }
+  async restore(id: string): Promise<void> {
+    await this.application('character-restore', { id });
+  }
   private info?: {url: string; auth: string};
   private async connectionInfo() {
     if (!this.info) {

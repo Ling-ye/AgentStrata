@@ -68,7 +68,10 @@ export const applicationsApi = {
   chat: (id: string, signal?: AbortSignal) => request<TrialChat>(path(id) + "/chat", { signal }),
   sendChat: (id: string, messageId: string, text: string) => request<TrialChat>(path(id) + "/chat", { method: "POST", body: JSON.stringify({ id: messageId, text }) }),
   chatAction: (id: string, messageId: string, action: "retry" | "abort") => request<TrialChat>(path(id) + "/chat/" + encodeURIComponent(messageId) + "/" + action, { method: "POST", body: "{}" }),
-  list: (signal?: AbortSignal) => request<{ applications: ApplicationView[] }>("", { signal }),
+  list: (signal?: AbortSignal, archived = false) =>
+    request<{ applications: ApplicationView[] }>(archived ? "?archived=true" : "", { signal }),
+  setArchived: (id: string, archived: boolean) =>
+    request<{ id: string; archived: boolean }>(path(id) + "/archive", { method: "PUT", body: JSON.stringify({ archived }) }),
   get: (id: string, signal?: AbortSignal) => request<ApplicationView>(path(id), { signal }),
   create: (id: string, type: string) => request<ApplicationView>("", { method: "POST", body: JSON.stringify({ id, type }) }),
   configuration: (id: string, signal?: AbortSignal) => request<Configuration>(path(id) + "/configuration", { signal }),

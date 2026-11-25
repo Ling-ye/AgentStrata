@@ -75,10 +75,11 @@ export default function ApplicationsPage({
   connect?: boolean;
 }) {
   const { id, tab } = applicationLocation(hash);
+  const archived = new URLSearchParams(hash.split("?")[1]).get("archived") === "1";
   return id ? (
     <ApplicationWorkspace key={id} id={id} tab={tab} hash={hash} />
   ) : (
-    <ApplicationDirectory create={create} connect={connect} />
+    <ApplicationDirectory key={String(archived)} archived={archived} create={create} connect={connect} />
   );
 }
 const menuGroups: [string, [ApplicationTab, string][]][] = [

@@ -10,7 +10,7 @@ from typing import Literal
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.routing import APIRoute
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 from console.control.applications import Applications
 from studio.first_plan import DeliveryPlan
@@ -89,9 +89,19 @@ def call(operation):
         raise HTTPException(503, "本机应用数据暂不可用") from None
 
 
+class Archive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    archived: StrictBool
+
+
 @router.get("")
-def listing(request: Request):
-    return call(lambda: {"applications": service(request).catalog()})
+def listing(request: Request, archived: bool = False):
+    return call(lambda: {"applications": service(request).directory(archived=archived)})
+
+
+@router.put("/{application_id}/archive")
+def set_archive(request: Request, application_id: str, body: Archive):
+    return call(lambda: service(request).set_archived(application_id, body.archived))
 
 
 @router.post("")

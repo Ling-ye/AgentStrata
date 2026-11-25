@@ -95,7 +95,7 @@ Windows 桌面入口见下节；浏览器和 CLI 仍可独立使用。
 `integrations/live2d_desktop` 的 `0.3.0` 面向 Windows 11 x64。透明桌宠、Gateway、
 自有 LangGraph Agent、VTuber 和 Windows-MCP 均在 Windows 本机运行，不要求安装 WSL。
 应用仍使用 `bots/live2d-desktop` 的唯一 Agent profile 与 Gateway；VTuber 负责输入和呈现。
-开发侧 Harness/Eval 保持 Linux，Windows 首版不提供 M5 启用/撤回及角色生成工作台。
+开发侧 Harness/Eval 保持 Linux。Windows 桌宠可在独立安装中使用角色工作台和本机语音训练。
 
 1. 安装或解压带有匹配运行载荷的 Windows 桌面包，打开 `AgentStrata Live2D Native.exe`。
 2. 设置页默认使用 `%USERPROFILE%\.agentstrata\applications\live2d-desktop-native`。
@@ -236,6 +236,44 @@ python scripts/check_vtuber_compat.py
 
 真实验收单独覆盖多轮文字、按键录音、TTS、口型、表情、动作、停止及断线恢复，记录模型
 与音频设备。录音文件输入、模拟浏览器回执和实体麦克风/扬声器应分别报告。
+
+## 在 Windows 制作角色与训练声音
+
+用包含[已准入运行载荷](../reference/delivery.md#独立运行接受与更新日志)的 Windows 安装器准备独立副本。
+角色工作台与桌宠共用任务和持久角色库。
+在该副本的角色生成器 `config/generator.json` 中配置现有绘图和拆层端点，凭据写入同目录
+的私有 `runtime.env`。若要让桌宠搜索公开素材，在应用控制目录
+`.agentstrata-versions/character-providers.env` 配置既有搜索连接的凭据，如
+`TAVILY_API_KEY` 或 `BRAVE_API_KEY`，再重新准备该独立应用。
+
+桌宠 Owner 可提出「创建一个角色」，由 AI 撰写身份、回复风格和立绘提示，调用
+`character_generate` 提交。后台任务编号用于查询进度。可核实来源的公开直链与
+工作台登记的录音可以用于训练。歌曲以主唱分离和本地转写后的片段作为输入。
+需要补素材时，可在同一任务的工作台登记录音后重试，已校验的立绘和模型可复用。
+从角色版本页可单独选择重训，并试听两段合成样本。通过桌宠的角色应用入口启用选定版本。
+
+本机训练需要可用的 NVIDIA CUDA 12.1 运行环境。推理使用独立 CPU 进程，应用的
+角色制作目录保存训练和解码日志。模型产物、语音样本与实际桌面呈现分别验收。
+完整角色备份见[角色库指南](character-presets.md)。
+
+### 用 IndexTTS 做本机对话配音
+
+IndexTTS 1.5 从一段本机口播参考生成中文或英语对话。使用独立的 Windows Python 3.10 环境和
+官方 `v1.5.0` 源码。模型目录只需要 `gpt.pth`、`bigvgan_generator.pth`、`bpe.model` 和 `config.yaml`。
+Windows 的文本归一化沿用上游的 `wetext` 分支。项目桥接入口会核对四个文件的固定摘要。
+[官方源码](https://github.com/index-tts/index-tts/releases/tag/v1.5.0) · [官方权重](https://huggingface.co/IndexTeam/IndexTTS-1.5/tree/25851a6036dfd3095bb70fb3c8f49217104672c3)
+
+在该推理环境中让 Python 能导入上游的 `indextts` 和本项目的 `agentstrata_vtuber`。将私有
+`AGENTSTRATA_INDEX_TTS_AUTH` 设为 `Bearer` 加随机令牌，再启动回环服务。
+
+```powershell
+python -m agentstrata_vtuber.index_tts_bridge --model-dir .\checkpoints --reference .\reference.wav --port 9915
+```
+
+在桌宠 BotSpec 同目录的私有 `local.env` 中登记同一个凭据和
+`AGENTSTRATA_INDEX_TTS_URL=http://127.0.0.1:9915/tts`。桌宠的 `tts_config` 复用
+`gpt_sovits_tts` 的 HTTP 协议，`api_url` 指向这个地址，`ref_audio_path` 填入参考 WAV 的
+SHA-256 小写十六进制摘要，`text_lang` 可设为 `zh`。先在独立安装副本试听，再应用到角色。
 
 ## 生成自己的角色
 

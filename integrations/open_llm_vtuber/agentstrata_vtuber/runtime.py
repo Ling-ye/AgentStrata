@@ -47,6 +47,8 @@ def install(app, *, host: str) -> None:
         handler.setFormatter(logging.Formatter("%(levelname)s %(name)s: %(message)s"))
         logger.addHandler(handler)
         logger.propagate = False
+    from .managed_voice import install as install_voice
+    install_voice()
     config, controller = services()
     install_control(app, config, controller, observer=observer())
     if os.environ.get("AGENTSTRATA_APPLICATION_ROOT"):

@@ -49,6 +49,38 @@ def upload_file(value: dict, destination: Path) -> Path:
 def register(app, runtime):
     characters, presets = runtime.characters, runtime.presets
 
+    @app.post("/api/voice-inputs")
+    async def voice_input(request: Request):
+        from .voice_sources import upload_audio
+        value = await body(request, {"input", "source", "permission"}, upload=True)
+        media = value.get("input")
+        if not isinstance(media, dict) or not isinstance(media.get("filename"), str):
+            raise GenerationError("请选择音源文件")
+        suffix = Path(media["filename"]).suffix.lower()
+        with tempfile.TemporaryDirectory(prefix=".voice-upload-", dir=runtime.repository.root) as temporary:
+            source = upload_file(media, Path(temporary) / ("audio" + suffix))
+            return await run_in_threadpool(upload_audio, characters.repository.root, source, value.get("source"),
+                                           value.get("permission"))
+
+    @app.post("/api/character-jobs")
+    async def generate(request: Request):
+        from .voice_jobs import generate as submit
+        value = await body(request, {"name", "identity", "response_style", "artwork", "sources", "request_id"})
+        try:
+            return await run_in_threadpool(submit, runtime, **value)
+        except TypeError:
+            raise GenerationError("角色制作输入不完整") from None
+
+    @app.post("/api/characters/{identifier}/versions/{version}/train-voice")
+    async def train_voice(identifier: str, version: int, request: Request):
+        from .voice_jobs import train_voice as submit
+        value = await body(request, {"sources", "request_id"})
+        return await run_in_threadpool(submit, runtime, character=identifier, version=version, **value)
+
+    @app.get("/api/characters/{identifier}/versions/{version}/audio/{sample}")
+    def voice_preview(identifier: str, version: int, sample: str):
+        return FileResponse(characters.voice_preview(identifier, version, sample), media_type="audio/wav")
+
     @app.get("/api/characters")
     def listing():
         return {"characters": characters.list()}
